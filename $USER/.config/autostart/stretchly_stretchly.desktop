@@ -1,0 +1,10 @@
+[Desktop Entry]
+X-SnapInstanceName=stretchly
+Name=Stretchly
+Exec=env BAMF_DESKTOP_FILE_HINT=/var/lib/snapd/desktop/applications/stretchly_stretchly.desktop /snap/bin/stretchly %U
+Terminal=false
+Type=Application
+Icon=/snap/stretchly/42/meta/gui/icon.png
+StartupWMClass=Stretchly
+Comment=The break time reminder app
+Categories=Utility;

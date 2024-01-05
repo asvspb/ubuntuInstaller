@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<application-state>
+  <context id="">
+    <application id="gnome-weather_gnome-weather.desktop" score="1.25" last-seen="1693952525"/>
+    <application id="org.gnome.FileRoller.desktop" score="6" last-seen="1693993035"/>
+    <application id="gnome-session-properties.desktop" score="1" last-seen="1693951913"/>
+    <application id="google-chrome.desktop" score="46.75" last-seen="1693982767"/>
+    <application id="org.gnome.tweaks.desktop" score="15" last-seen="1693952006"/>
+    <application id="gnome-control-center.desktop" score="9586964.078125" last-seen="1693951788"/>
+    <application id="org.gnome.gedit.desktop" score="10.6875" last-seen="1693992534"/>
+    <application id="org.gnome.eog.desktop" score="3.5" last-seen="1693951156"/>
+    <application id="update-manager.desktop" score="0" last-seen="1693765878"/>
+    <application id="apport-gtk.desktop" score="0" last-seen="1693906060"/>
+    <application id="grub-customizer.desktop" score="0" last-seen="1693983215"/>
+    <application id="snap-store_ubuntu-software.desktop" score="31.6875" last-seen="1693982513"/>
+    <application id="telegram-desktop_telegram-desktop.desktop" score="6.40625" last-seen="1693951792"/>
+    <application id="gnome-initial-setup.desktop" score="0.03125" last-seen="1693776441"/>
+    <application id="org.gnome.Nautilus.desktop" score="166.375" last-seen="1693993695"/>
+    <application id="org.gnome.Terminal.desktop" score="130.53125" last-seen="1693993700"/>
+    <application id="firefox_firefox.desktop" score="357.84375" last-seen="1693993571"/>
+    <application id="org.gnome.DiskUtility.desktop" score="2.6875" last-seen="1693944299"/>
+    <application id="org.gnome.Calculator.desktop" score="0" last-seen="1693766780"/>
+    <application id="code.desktop" score="8.78125" last-seen="1693951797"/>
+    <application id="stretchly_stretchly.desktop" score="0.75" last-seen="1693993827"/>
+    <application id="org.gnome.Extensions.desktop" score="78.5" last-seen="1693980447"/>
+  </context>
+</application-state>

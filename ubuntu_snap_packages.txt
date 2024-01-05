@@ -1,0 +1,13 @@
+cups
+bare
+firefox
+gnome-weather
+onlyoffice-desktopeditors
+stretchly
+telegram-desktop
+thonny
+vlc
+wonderwall
+chromium
+fbreader
+okular
