@@ -1,6 +1,5 @@
 cups
 bare
-firefox
 gnome-weather
 onlyoffice-desktopeditors
 stretchly
