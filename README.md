@@ -13,8 +13,8 @@
  	- Установит полный пакет программ для ежедневных задач программиста
  - 5_ubuntuVbox:
  	- Установит среду виртуализации Virtualbox
- - jetbraInstaller.sh:
-    - Установит Jetbrains phpstorm и pycharm
+ - 6_jetbraInstaller.sh:
+    - Установит и крякнет phpstorm и pycharm
  - $USER содержит минимальные настройки Ubuntu
  - Для распаковки архива нужен -ssh
  - common.code-profile - профиль vscode
