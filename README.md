@@ -15,6 +15,8 @@
  	- Установит среду виртуализации Virtualbox
  - 6_jetbraInstaller.sh:
     - Установит и крякнет phpstorm и pycharm
+ - 7_coronaFail.sh:
+    - Перезапускает проект корона и систему
  - $USER содержит минимальные настройки Ubuntu
  - Для распаковки архива нужен -ssh
  - asv.code-profile - профиль vscode
