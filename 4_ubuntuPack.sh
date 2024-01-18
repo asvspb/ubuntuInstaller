@@ -41,6 +41,13 @@ echo "Установка окружения для программиирова�
 echo "--------------------------------------------------------------"
 sudo apt update -y
 
+# Проверка последней версии Python
+latest_python_version=$(curl -s https://www.python.org/downloads/ | grep -oE 'Python [0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '3\.[0-9]+')
+
+
+# Вывод последней версии Python
+echo "Последняя версия Python: $latest_python_version"
+
 # установка python java
 sudo apt install code gcc python3 python3-pip python3-venv python3-tk pythonpy python3.10 python3.11 python3.12 default-jdk -y
 # закрепляем версию 3.11 питона в системе
