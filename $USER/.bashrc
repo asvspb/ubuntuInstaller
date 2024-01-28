@@ -123,6 +123,7 @@ alias cmu="cd ~/Dev/coronachess && make up"
 alias cmd="cd ~/Dev/coronachess && make down"
 alias cms="cd ~/Dev/coronachess && make start"
 alias cmr="cd ~/Dev/coronachess && make restart"
+alias cdr='sudo systemctl stop docker && cd ~/Dev/coronachess && make down && docker pull registry.gitlab.com/cidious/coronachess/app && sleep 5 && sudo reboot'
 alias stt="speedtest"
 alias smon="sudo btop"
 alias nmon="sudo iftop -i wlp34s0"
@@ -139,6 +140,7 @@ echo 'cmu - запускает виртуалку короны на локаль
 echo 'cmd - торомзит виртуалку короны на локальном докере'
 echo 'cmr - торомзит и запускает виртуалку короны на локальном докере'
 echo 'cms - заново компилирует корону на локальном докере'
+echo 'cdr - тормозит докер, обновляет реестр, перегружает'
 echo 'smon - миниторинг процессов'
 echo 'nmon - миниторинг сетевых процессов'
 echo 'stt - консольный замер скорости'
