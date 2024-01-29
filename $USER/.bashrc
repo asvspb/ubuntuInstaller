@@ -127,7 +127,7 @@ alias cdr='sudo systemctl stop docker && cd ~/Dev/coronachess && make down && do
 alias stt="speedtest"
 alias smon="sudo btop"
 # Get network adapter name
-NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE '[^:]+')
+NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias myhelp="echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'

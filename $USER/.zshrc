@@ -84,7 +84,9 @@ alias cmr="cd ~/Dev/coronachess && make restart"
 alias cdr='sudo systemctl stop docker && cd ~/Dev/coronachess && make down && docker pull registry.gitlab.com/cidious/coronachess/app && sleep 5 && sudo reboot'
 alias stt="speedtest"
 alias smon="sudo btop"
-alias nmon="sudo iftop -i wlp34s0"
+# Get network adapter name
+NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
+alias nmon="sudo iftop -i $NET_ADAPTER"
 alias myhelp="echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
 echo 'vu - включение vpn'
