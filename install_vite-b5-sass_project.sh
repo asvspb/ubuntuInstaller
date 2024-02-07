@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Имя проекта
-project_name="b5-sass-project"
+project_name="b5-sass-jquery-project"
 
 # Создаем папку проекта и инициализируем npm
 mkdir $project_name && cd $project_name
