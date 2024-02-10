@@ -73,11 +73,10 @@ cat <<EOF > src/js/main.js
 import '../scss/styles.scss';
 import * as bootstrap from 'bootstrap';
 import \$ from 'jquery';
-
-\$(document).ready(function () {
-    \$("button").click(function () {
-        \$(this).hide()
-    });
+\$(function () {
+\$("button").on("click", function () {
+\$(this).hide();
+});
 });
 EOF
 
