@@ -18,10 +18,10 @@ mkdir -p ~/Programs
 # Находим архивы, содержащие ключевые слова
 find "$archives_dir" -type f -name "*pycharm*" -o -name "*PhpStorm*" -o -name "*Postman*" -o -name "*jetbra*" -o -name "*aqua*" | while read -r archive; do
     echo "Разархивирование архива: $archive"
-    
+
     # Определяем тип архива с помощью команды 'file'
     archive_type=$(file -b --mime-type "$archive")
-    
+
     # Проверяем тип архива и разархивируем, если директория jetbra не существует
     if [ ! -d "$install_dir" ]; then
         if [[ "$archive_type" == "application/zip" ]]; then
@@ -45,7 +45,7 @@ bin_found=false
 # Проверяем каждую папку на наличие директории 'bin' и наличие директории 'jetbra' внутри 'bin'
 for folder in $folder_list; do
     if [ -d "$folder/bin" ]; then
-        
+
         # Проверяем наличие директории 'jetbra' внутри 'bin'
         if [ ! -d "$folder/bin/jetbra" ]; then
             cp -r ~/Programs/jetbra -d "$folder/bin/"
@@ -71,7 +71,7 @@ for folder in $folder_list; do
                 fi
             fi
         fi
-        
+
         # Устанавливаем флаг, что 'bin' была найдена
         bin_found=true
     fi

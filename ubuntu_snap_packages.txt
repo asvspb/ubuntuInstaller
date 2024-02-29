@@ -10,3 +10,6 @@ wonderwall
 chromium
 fbreader
 okular
+obsidian
+discord
+firefox
