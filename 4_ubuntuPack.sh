@@ -35,44 +35,30 @@ curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo 
 wget -O- https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg
 echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.microsoft.com/repos/vscode stable main | sudo tee /etc/apt/sources.list.d/vscode.list
 
-
+sudo apt update -y
 echo " "
 echo "Установка окружения для программиирования"
 echo "--------------------------------------------------------------"
-sudo apt update -y
 
 # Проверка последней версии Python
-latest_python_version=$(curl -s https://www.python.org/downloads/ | grep -oE 'Python [0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '3\.[0-9]+')
+python3 ./py-versions.py 
 
-
-# Вывод последней версии Python
-echo "Последняя версия Python: $latest_python_version"
-
-# установка python java
-sudo apt install code gcc python3 python3-pip python3-venv python3-tk pythonpy python3.10 python3.11 python3.12 default-jdk -y
-# закрепляем версию 3.11 питона в системе
-#sudo ln -s /usr/bin/python3.11 /usr/bin/python
-
+# установка vsc java
+sudo apt install code gcc default-jdk -y
 # установка системных пакетов
-sudo apt install btop iftop htop neofetch rpm wireguard jq guake copyq syncthing thorium-browser -y
+sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq syncthing thorium-browser -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
 sudo apt install grub-customizer gparted gsmartcontrol synaptic openrgb ufw timeshift nala smartgit -y
 
-# speedtest
-## If migrating from prior bintray install instructions please first...
-# sudo rm /etc/apt/sources.list.d/speedtest.list
-# sudo apt-get update
-# sudo apt-get remove speedtest
-## Other non-official binaries will conflict with Speedtest CLI
-# Example how to remove using apt-get
-# sudo apt-get remove speedtest-cli
-sudo apt-get install curl
+echo " "
+echo "Установка speedtest"
+echo "--------------------------------------------------------------"
 curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
 sudo apt-get install speedtest
 
 #запуск syncthing
 echo " "
-echo "Запуск syncthing"
+echo "Установка syncthing"
 echo "--------------------------------------------------------------"
 sudo systemctl start syncthing@$USER
 sudo systemctl enable syncthing@$USER

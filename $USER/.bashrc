@@ -105,18 +105,11 @@ alias trm='bash -c  "$(wget -qO- https://git.io/vQgMr)"'
 #
 alias lan="echo -e '\n---------\nlan test\n---------' && echo 192.168.1.{1..254}|xargs -n1 -P0 ping -c1|grep 'bytes from'"
 alias nettest="echo -e '\n---------\nping test\n---------' && ping -c 5 8.8.8.8 && lan && speedtest"
-alias ghA="gh auth login"
-alias ghX="gh repo create"
-alias vu="sudo wg-quick up wg0 && ip"
-alias vd="sudo wg-quick down wg0 && ip"
-alias chU="sudo mount.cifs -o rw,username=ubuntu,password=123,uid=$USER '\\\\192.168.1.160\\homes' /media/coronachess && echo 'coronachess is mounted'"
-alias chD="sudo umount /media/coronachess && echo 'coronachess disabled'"
 alias ip="curl -s https://ipinfo.io/json | jq -r '\"Current IP: \" + .ip, \
     \"City: \" + .city, \
     \"Region: \" + .region, \
     \"Country: \" + .country'"
-alias upd="python3 /home/asv-spb/Documents/FSOget-data.py"
-alias svm="/home/asv-spb/Documents/startVMcorona.sh"
+alias fso="python3 /home/asv-spb/Documents/FSOget-data.py"
 alias gca="git add . && git commit -m'Auto-commit' && git push"
 alias cls="sudo apt autoremove -y && sudo apt clean && sudo journalctl --vacuum-time=2weeks"
 alias cmu="cd ~/Dev/coronachess && make up"
@@ -126,21 +119,16 @@ alias cmr="cd ~/Dev/coronachess && make restart"
 alias cdr='sudo systemctl stop docker && cd ~/Dev/coronachess && make down && docker pull registry.gitlab.com/cidious/coronachess/app && sleep 5 && sudo reboot'
 alias stt="speedtest"
 alias smon="sudo btop"
-# Get network adapter name
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
-alias myhelp="echo 'lan - показывает список IP в локальной сети'
+alias lmstop='sudo pkill -9 llama && sudo pkill -9 llama-service && sync && sudo sysctl -w vm.drop_caches=3'
+alias jsupd="bash /home/asv-spb/Dev/ubuntu-installer/6_js-update.sh"
+
+alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
+echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
-echo 'vu - включение vpn'
-echo 'vd - выключение vpn'
-echo 'chU - примонтирование диска короначез'
-echo 'chD - отмонтирование диска короначез'
 echo 'ip - показывает текущий IP'
-echo 'upd - проверяет очередь ФСО'
-echo 'svm - запускает виртуалку короны на вируталке и конектится с ней'
-echo 'cmu - запускает виртуалку короны на локальном докере'
-echo 'cmd - торомзит виртуалку короны на локальном докере'
-echo 'cmr - торомзит и запускает виртуалку короны на локальном докере'
+echo 'fso - проверяет очередь ФСО'
 echo 'cms - заново компилирует корону на локальном докере'
 echo 'cdr - тормозит докер, обновляет реестр, перегружает'
 echo 'smon - миниторинг процессов'
@@ -148,10 +136,11 @@ echo 'nmon - миниторинг сетевых процессов'
 echo 'stt - консольный замер скорости'
 echo 'fzf - консольный поисковик'
 echo 'tldr - упрощенный хелпер линукс'
+echo 'ranger - консольный файловый менеджер'
+echo 'ncdu - показывает размеры директорий'
 echo 'cls - очистка от мусора'
-echo 'gca - автокомит  и пуш на репозиторий'
-echo 'ghA - авторизация на github'
-echo 'ghX - создание ветки'"
+echo 'jsupd - обновление js'
+echo 'gca - автокомит  и пуш на репозиторий'"
 
 # Alias definitions.
 # You may want to put all your additions into a separate file like
