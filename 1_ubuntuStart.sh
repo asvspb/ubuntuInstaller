@@ -38,16 +38,14 @@ sudo apt update -y
 sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make yarn apt-transport-https gpg gnupg -y
 
 echo "                                                              "
-echo "Устанавливаем nodejs"
+echo "Устанавливаем python & nodejs"
 echo "--------------------------------------------------------------"
+# устанавливаем python
+bash ./5_py-update.sh
+
 # устанавливаем nvm + node
-nvm_version=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep -oP '"tag_name": "\K.*?(?=")')
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/$nvm_version/install.sh" | bash
-source ~/.nvm/nvm.sh 	# инициализация
-source ~/.bashrc 	# перезапуск оболочки
-nvm list
-npm install -g npm@latest
-nvm install node
+bash ./6_js-update.sh
+
 
 # установка расширений гном
 sudo apt install gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
