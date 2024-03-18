@@ -105,7 +105,7 @@ alias trm='bash -c  "$(wget -qO- https://git.io/vQgMr)"'
 #
 alias lan="echo -e '\n---------\nlan test\n---------' && echo 192.168.1.{1..254}|xargs -n1 -P0 ping -c1|grep 'bytes from'"
 alias nettest="echo -e '\n---------\nping test\n---------' && ping -c 5 8.8.8.8 && lan && speedtest"
-alias ip="curl -s https://ipinfo.io/json | jq -r '\"Current IP: \" + .ip, \
+alias myip="curl -s https://ipinfo.io/json | jq -r '\"Current IP: \" + .ip, \
     \"City: \" + .city, \
     \"Region: \" + .region, \
     \"Country: \" + .country'"
@@ -127,7 +127,7 @@ alias jsupd="bash /home/asv-spb/Dev/ubuntu-installer/6_js-update.sh"
 alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
 echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
-echo 'ip - показывает текущий IP'
+echo 'myip - показывает текущий IP'
 echo 'fso - проверяет очередь ФСО'
 echo 'cms - заново компилирует корону на локальном докере'
 echo 'cdr - тормозит докер, обновляет реестр, перегружает'
@@ -165,3 +165,5 @@ fi
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+PATH=~/.console-ninja/.bin:$PATH
