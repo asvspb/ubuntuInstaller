@@ -37,7 +37,7 @@ echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.
 
 sudo apt update -y
 echo " "
-echo "Установка окружения для программиирования"
+echo "Установка окружения для программирования"
 echo "--------------------------------------------------------------"
 
 # установка vsc java
@@ -46,6 +46,8 @@ sudo apt install code gcc default-jdk -y
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq syncthing thorium-browser -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
 sudo apt install grub-customizer gparted gsmartcontrol synaptic openrgb ufw timeshift nala smartgit -y
+# плагин для js quokka
+npm install jsdom-quokka-plugin
 
 echo " "
 echo "Установка speedtest"

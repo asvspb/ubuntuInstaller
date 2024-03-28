@@ -17,8 +17,8 @@ npm install bootstrap @popperjs/core
 npm install --save-dev sass jquery
 
 # Создаем структуру папок и файлов
-mkdir -p src/js src/scss
-touch src/index.html src/js/main.js src/scss/styles.scss vite.config.js
+mkdir -p dist src/js src/scss src/scss/base src/scss/abstracts src/scss/components src/scss/layout src/scss/pages src/scss/themes src/scss/vendors src/scss/utilities
+touch src/index.html src/js/main.js src/scss/styles.scss vite.config.js src/scss/base/_index.scss src/scss/abstracts/_index.scss src/scss/components/_index.scss src/scss/layout/_index.scss src/scss/pages/_index.scss src/scss/themes/_index.scss src/scss/vendors/_index.scss src/scss/utilities/_index.scss
 
 # Конфигурируем Vite
 echo "const path = require('path')
