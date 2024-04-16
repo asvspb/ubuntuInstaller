@@ -81,6 +81,7 @@ NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias lmstop='sudo pkill -9 llama && sudo pkill -9 llama-service && sync && sudo sysctl -w vm.drop_caches=3'
 alias jsupd="bash /home/asv-spb/Dev/ubuntu-installer/6_js-update.sh"
+alias vsc="sudo apt install --only-upgrade code"
 
 alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
 echo 'lan - показывает список IP в локальной сети'
@@ -98,6 +99,7 @@ echo 'ranger - консольный файловый менеджер'
 echo 'ncdu - показывает размеры директорий'
 echo 'cls - очистка от мусора'
 echo 'jsupd - обновление js'
+echo 'vsc - обновление vscode'
 echo 'gca - автокомит  и пуш на репозиторий'"
 
 #
