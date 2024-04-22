@@ -11,12 +11,12 @@
  	- Установит coronachess
  - 4_ubuntuPack:
  	- Установит полный пакет программ для ежедневных задач программиста
- - 5_ubuntuVbox:
- 	- Установит среду виртуализации Virtualbox
- - 6_jetbraInstaller.sh:
-    - Установит и крякнет phpstorm и pycharm
- - 7_coronaFail.sh:
-    - Перезапускает проект корона и систему
+ - 5_py-update:
+ 	- Установит актуальные версии Python
+ - 6_js-update:
+ 	- Установит актуальную среду JS
+ - 7_ollama-install:
+ 	- Установка локального ИИ
  - $USER содержит минимальные настройки Ubuntu
  - Для распаковки архива нужен -ssh
  - asv.code-profile - профиль vscode
