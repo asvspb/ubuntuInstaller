@@ -60,6 +60,7 @@ alias dcam="sudo usbmuxd;iproxy 4747 4747 &;droidcam-cli 127.0.0.1 4747"
 
 
 
+
 #
 # MY ALIASES
 #
@@ -86,6 +87,7 @@ alias jsupd="bash /home/asv-spb/Dev/ubuntuInstaller/6_js-update.sh"
 alias vsc="sudo apt install --only-upgrade code"
 alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
+alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 
 alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
 echo 'lan - показывает список IP в локальной сети'
@@ -102,6 +104,7 @@ echo 'tldr - упрощенный хелпер линукс'
 echo 'ranger - консольный файловый менеджер'
 echo 'ncdu - показывает размеры директорий'
 echo 'cls - очистка от мусора'
+echo 'obsid - сохранение obsidian'
 echo 'jsupd - обновление js'
 echo 'vsc - обновление vscode'
 echo 'sysupd - обновление репозиториев'
