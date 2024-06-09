@@ -6,24 +6,30 @@ echo " "
 echo "Настройка паролей"
 echo "--------------------------------------------------------------"
 # чтоб не спрашивал пароль при sudo
-sudo bash -c 'echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd'
+echo "${USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-nopasswd
 
 # чтоб не ждал подтверждения при установке
 export DEBIAN_FRONTEND=noninteractive
 if [ -f /etc/needrestart/needrestart.conf ]; then
+  # Update existing config file
   sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
   sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
 else
+  # Create new config file
   sudo mkdir -p /etc/needrestart
-  echo '$nrconf{restart}' = \'a\'';' > nrconf
-  sudo cp nrconf /etc/needrestart/needrestart.conf
-  rm nrconf
+  cat <<EOF | sudo tee /etc/needrestart/needrestart.conf
+$nrconf{restart} = 'a'
+EOF
 fi
 
 # чтоб не спрашивал authenticity of host gitlab.com
 mkdir -p ~/.ssh
 chmod 0700 ~/.ssh
-echo -e "Host gitlab.com\n   StrictHostKeyChecking no\n   UserKnownHostsFile=/dev/null" > ~/.ssh/config
+cat <<EOF > ~/.ssh/config
+Host gitlab.com
+  StrictHostKeyChecking no
+  UserKnownHostsFile=/dev/null
+EOF
 
 echo " "
 echo "Установка времени"
@@ -41,10 +47,10 @@ echo "                                                              "
 echo "Устанавливаем python & nodejs"
 echo "--------------------------------------------------------------"
 # устанавливаем python
-bash ./5_py-update.sh
+sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 
 # устанавливаем nvm + node
-bash ./6_js-update.sh
+sudo apt install npm nodejs -y
 
 
 # установка расширений гном
