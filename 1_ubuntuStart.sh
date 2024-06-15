@@ -37,6 +37,9 @@ echo "--------------------------------------------------------------"
 sudo timedatectl set-local-rtc 1 --adjust-system-clock
 sudo timedatectl
 
+# сворачивание приложение по клику в доке
+gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
+
 echo "                                                              "
 echo "Устанавливаем системные приложения"
 echo "--------------------------------------------------------------"

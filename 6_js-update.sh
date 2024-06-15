@@ -11,3 +11,5 @@ nvm list
 npm install -g npm@latest
 nvm install node
 
+# плагин для js quokka
+sudo npm install -g jsdom-quokka-plugin
