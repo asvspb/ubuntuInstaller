@@ -89,6 +89,10 @@ alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 
+alias pbcopy='xclip -selection clipboard'
+alias pbpaste='xclip -selection clipboard -o'
+alias py="python3"
+
 alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
 echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
