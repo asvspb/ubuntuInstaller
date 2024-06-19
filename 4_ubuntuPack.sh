@@ -26,7 +26,7 @@ echo "--------------------------------------------------------------"
 # установка vsc java
 sudo apt install code gcc default-jdk -y
 # установка системных пакетов
-sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq -y
+sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala -y
 
