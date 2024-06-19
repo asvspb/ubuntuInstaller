@@ -1,0 +1,3 @@
+NAME                    	ID          	SIZE  	MODIFIED     
+llama3:latest           	365c0bd3c000	4.7 GB	7 hours ago 	
+deepseek-coder-v2:latest	6d3369b54a0e	8.9 GB	24 hours ago	

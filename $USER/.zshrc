@@ -84,7 +84,7 @@ NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias lmstop='sudo pkill -9 llama && sudo pkill -9 llama-service && sync && sudo sysctl -w vm.drop_caches=3'
 alias jsupd="bash /home/asv-spb/Dev/ubuntuInstaller/6_js-update.sh"
-alias vsc="sudo apt install --only-upgrade code"
+alias vsc="sudo apt update && sudo apt install --only-upgrade code"
 alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
@@ -137,3 +137,4 @@ export NVM_DIR="$HOME/.nvm"
 
 
 PATH=~/.console-ninja/.bin:$PATH
+if [ -f "/home/asv-spb/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/asv-spb/.config/fabric/fabric-bootstrap.inc"; fi
