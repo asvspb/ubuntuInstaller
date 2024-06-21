@@ -135,6 +135,18 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
-
 PATH=~/.console-ninja/.bin:$PATH
+
+# Created by `pipx` on 2024-06-19 07:42:30
+export PATH="$PATH:/home/asv-spb/.local/bin"
 if [ -f "/home/asv-spb/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/asv-spb/.config/fabric/fabric-bootstrap.inc"; fi
+
+# Shell-GPT integration BASH v0.2
+_sgpt_bash() {
+if [[ -n "$READLINE_LINE" ]]; then
+    READLINE_LINE=$(sgpt --shell <<< "$READLINE_LINE" --no-interaction)
+    READLINE_POINT=${#READLINE_LINE}
+fi
+}
+bind -x '"\C-l": _sgpt_bash'
+# Shell-GPT integration BASH v0.2
