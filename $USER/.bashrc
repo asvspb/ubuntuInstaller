@@ -187,6 +187,7 @@ PATH=~/.console-ninja/.bin:$PATH
 export PATH="$PATH:/home/asv-spb/.local/bin"
 if [ -f "/home/asv-spb/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/asv-spb/.config/fabric/fabric-bootstrap.inc"; fi
 
+
 # Shell-GPT integration BASH v0.2
 _sgpt_bash() {
 if [[ -n "$READLINE_LINE" ]]; then
@@ -194,5 +195,5 @@ if [[ -n "$READLINE_LINE" ]]; then
     READLINE_POINT=${#READLINE_LINE}
 fi
 }
-bind -x '"\C-l": _sgpt_bash'
+bind -x '"\C-g": _sgpt_bash'
 # Shell-GPT integration BASH v0.2
