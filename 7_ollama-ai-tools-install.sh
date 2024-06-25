@@ -33,7 +33,7 @@ docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_API_BASE_
 echo "                                                              "
 echo "Устанавливаем fabric & pbpaste && shell-gpt"
 echo "--------------------------------------------------------------"
-sudo apt-get install xclip pipx fmpeg -y
+sudo apt-get install xclip pipx ffmpeg -y
 pip install shell-gpt[litellm]
 
 

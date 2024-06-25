@@ -7,9 +7,7 @@ telegram-desktop
 thonny
 vlc
 wonderwall
-chromium
 fbreader
 okular
 obsidian
 discord
-firefox
