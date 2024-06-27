@@ -57,7 +57,7 @@ sudo apt install npm nodejs -y
 
 
 # установка расширений гном
-sudo apt install gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
+sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
 
 echo "                                                              "
 echo "Установка telegram"

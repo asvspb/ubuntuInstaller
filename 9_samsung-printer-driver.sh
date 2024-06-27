@@ -16,3 +16,6 @@ sudo bash install.sh
 sudo ln -sf /usr/lib/sane/libsane-smfp.so* /usr/lib/x86_64-linux-gnu/sane/
 
 sudo apt install libusb-0.1-4
+
+cd ~/Downloads
+rm uld_V1.00.39_01.17.tar.gz
