@@ -88,6 +88,7 @@ alias vsc="sudo apt update && sudo apt install --only-upgrade code"
 alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
+alias oll="curl -fsSL https://ollama.com/install.sh | sh"
 
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
@@ -111,9 +112,11 @@ echo 'cls - очистка от мусора'
 echo 'obsid - сохранение obsidian'
 echo 'jsupd - обновление js'
 echo 'vsc - обновление vscode'
+echo 'oll - обновление ollama'
 echo 'sysupd - обновление репозиториев'
 echo 'sysupg - апгрейд всей системы'
 echo 'gca - автокомит  и пуш на репозиторий'"
+
 
 
 #
