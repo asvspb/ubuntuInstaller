@@ -89,7 +89,7 @@ alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias oll="curl -fsSL https://ollama.com/install.sh | sh"
-
+alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias py="python3"
@@ -115,6 +115,7 @@ echo 'vsc - обновление vscode'
 echo 'oll - обновление ollama'
 echo 'sysupd - обновление репозиториев'
 echo 'sysupg - апгрейд всей системы'
+echo 'bigfiles - покажет размеры самых больших фалов'
 echo 'gca - автокомит  и пуш на репозиторий'"
 
 
