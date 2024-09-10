@@ -29,12 +29,14 @@ echo "Устанавливаем вебинтерфейс ollama"
 echo "--------------------------------------------------------------"
 docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name open-webui --restart always ghcr.io/open-webui/open-webui:main
 
-# install fabric & pbpaste & shell-gpt 
+# install fabric & pbpaste & shell-gpt
 echo "                                                              "
-echo "Устанавливаем fabric & pbpaste && shell-gpt"
+echo "Устанавливаем fabric & pbpaste && shell-gpt && aider"
 echo "--------------------------------------------------------------"
 sudo apt-get install xclip pipx ffmpeg -y
+python3 -m pip install --upgrade pip
 pip install shell-gpt[litellm]
+pip install aider-chat
 
 
 cd Dev
