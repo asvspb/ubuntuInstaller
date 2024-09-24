@@ -33,14 +33,14 @@ def get_latest_virtualbox_version():
     url = "https://www.virtualbox.org/wiki/Downloads"
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
-    
+
     version_pattern = r'https://download\.virtualbox\.org/virtualbox/(\d+\.\d+\.\d+)/'
     versions = soup.find_all(href=re.compile(version_pattern))
-    
+
     if versions:
         latest_version = max(re.search(version_pattern, v['href']).group(1) for v in versions)
         return latest_version
-    
+
     return None
 
 VIRTUALBOX_VERSION = get_latest_virtualbox_version() or "7.1.0"
@@ -61,7 +61,7 @@ distros = {
 
 def get_download_url(version, distro_choice):
     base_url = f"https://download.virtualbox.org/virtualbox/{version}/"
-    
+
     urls = {
         "1": f"{base_url}VirtualBox-{version}-1.el9.x86_64.rpm",  # Oracle Linux 9 / RHEL 9
         "2": f"{base_url}VirtualBox-{version}-1.el8.x86_64.rpm",  # Oracle Linux 8 / RHEL 8
@@ -75,7 +75,7 @@ def get_download_url(version, distro_choice):
         "10": f"{base_url}VirtualBox-{version}-1.fc36.x86_64.rpm",  # Fedora 36-39
         "11": f"{base_url}VirtualBox-{version}.tar.bz2"  # All distributions (source)
     }
-    
+
     return urls.get(distro_choice)
 
 def print_menu():
@@ -91,26 +91,26 @@ def run_command(command):
 def install_dependencies():
     print("\nUpdating package list...")
     run_command("sudo apt-get update")
-    
+
     print("\nInstalling dependencies...")
     run_command("sudo apt-get install -y libxcb-cursor0")
 
 def install_virtualbox(filename):
     print("\nInstalling VirtualBox...")
     output, error, return_code = run_command(f"sudo dpkg -i {filename}")
-    
+
     if return_code != 0:
         print("An error occurred during installation. Attempting to fix...")
         run_command("sudo apt-get install -f -y")
         output, error, return_code = run_command(f"sudo dpkg -i {filename}")
-    
+
     if return_code == 0:
         print("Installation completed successfully.")
     else:
         print("Installation failed. Please check the error messages above.")
         print("Error output:")
         print(error)
-        
+
 def verify_url(url):
     try:
         response = requests.head(url)
@@ -149,13 +149,13 @@ def download_file(url, distro_name=None):
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
-        
+
         total_size = int(response.headers.get('content-length', 0))
         block_size = 1024  # 1 Kibibyte
         with open(filepath, "wb") as f:
             for data in response.iter_content(block_size):
                 size = f.write(data)
-        
+
         print("Download completed. File saved to:", filepath)
         return filepath
     except requests.RequestException as e:
@@ -166,7 +166,7 @@ def main():
     print(f"\nLatest VirtualBox version: {VIRTUALBOX_VERSION}")
     print_menu()
     choice = input("\nEnter your choice (1-11): ")
-    
+
     if choice in distros:
         distro_name = distros[choice]
         url = get_download_url(VIRTUALBOX_VERSION, choice)
@@ -184,7 +184,7 @@ def main():
             print("An error occurred while getting the download URL.")
     else:
         print("Invalid choice. Please choose a number from 1 to 11.")
-        
+
     # Add user to vboxusers group
     add_user_to_vboxusers()
     # Run vboxconfig
@@ -211,7 +211,7 @@ def install_extension_pack(filepath):
     print("Installing VirtualBox Extension Pack...")
     command = f"echo y | sudo VBoxManage extpack install --replace {filepath}"
     output, error, return_code = run_command(command)
-    
+
     if return_code == 0:
         print("Extension Pack installed successfully.")
     else:
