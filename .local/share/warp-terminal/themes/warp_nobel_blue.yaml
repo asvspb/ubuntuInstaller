@@ -3,9 +3,9 @@
 # Передний план: Белый
 # Палитра: Пользовательская с бежевыми и пастельными тонами
 
-accent: "#589dff"        # Яркий синий из палитры, используется как акцентный
-background: "#002b55"    # Цвет фона по умолчанию
-foreground: "#ffffff"    # Цвет текста по умолчанию
+accent: "#589dff"
+background: "#002b55"
+foreground: "#ffffff"
 details: "darker"        # Тип темы - тёмная
 terminal_colors:
   normal:
@@ -14,15 +14,15 @@ terminal_colors:
     green: "#c4a484"
     yellow: "#b2957b"
     blue: "#005faf"
-    magenta: "#af5fff"
+    magenta: "#ff59ce"
     cyan: "#589dff"
     white: "#cccccc"
   bright:
     black: "#5f5f5f"
-    red: "#ff8787"
+    red: "#ff59ce"
     green: "#d7ffaf"
-    yellow: "#ffffaf"
+    yellow: "#ff9f5a"
     blue: "#87afff"
-    magenta: "#d7afff"
+    magenta: "#ff59ce"
     cyan: "#87ffff"
     white: "#ffffff"
