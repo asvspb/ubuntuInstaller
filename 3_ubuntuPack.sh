@@ -14,8 +14,9 @@ echo " "
 echo "Установка ключей"
 echo "--------------------------------------------------------------"
 
+
 #vscode
-wget -O- https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg
+curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/vscode.gpg
 echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.microsoft.com/repos/vscode stable main | sudo tee /etc/apt/sources.list.d/vscode.list
 
 sudo apt update -y
@@ -28,7 +29,16 @@ sudo apt install code gcc default-jdk -y
 # установка системных пакетов
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
+
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor -y
+
+
+echo " "
+echo "Установка Warp Terminal"
+echo "--------------------------------------------------------------"
+wget https://app.warp.dev/download?package=deb -O warp.deb
+sudo apt install ./warp.deb -y
+rm warp.deb
 
 
 echo " "

@@ -7,6 +7,7 @@ echo "Настройка паролей"
 echo "--------------------------------------------------------------"
 # чтоб не спрашивал пароль при sudo
 sudo bash -c 'echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd'
+sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 
 # чтоб не ждал подтверждения при установке
 export DEBIAN_FRONTEND=noninteractive

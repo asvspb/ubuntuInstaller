@@ -5,8 +5,10 @@ set -e
 echo " "
 echo "Настройка паролей"
 echo "--------------------------------------------------------------"
+
 # чтоб не спрашивал пароль при sudo
 echo "${USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-nopasswd
+sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 
 # чтоб не ждал подтверждения при установке
 export DEBIAN_FRONTEND=noninteractive
@@ -44,7 +46,7 @@ echo "                                                              "
 echo "Устанавливаем системные приложения"
 echo "--------------------------------------------------------------"
 sudo apt update -y
-sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make yarn apt-transport-https gpg gnupg -y
+sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg -y
 
 echo "                                                              "
 echo "Устанавливаем python & nodejs"
@@ -52,8 +54,9 @@ echo "--------------------------------------------------------------"
 # устанавливаем python
 sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 
+
 # устанавливаем nvm + node
-sudo apt install npm nodejs -y
+sudo apt install nvm npm nodejs -y
 
 
 # установка расширений гном
