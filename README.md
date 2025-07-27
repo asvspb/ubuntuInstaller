@@ -16,6 +16,8 @@
 	- Will install recommended snap applications
  - 7_samsung-printer-driver:
 	- Will install the driver for Samsung printers
+ - 8_zerotier-client_en
+	- will install the ZeroTier client for Ubuntu
  - $USER contains minimal Ubuntu settings
  - To unpack the archive, you need -ssh
  - asv.code-profile - vscode profile
