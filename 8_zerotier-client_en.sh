@@ -54,8 +54,8 @@ echo "!!! for network $NETWORK_ID"
 
 echo "=== Waiting for authorization..."
 while ! sudo zerotier-cli listnetworks | grep "$NETWORK_ID" | grep -q "OK"; do
-  sleep 10
-  echo "Still waiting for authorization... (checking every 10s)"
+  sleep 30
+  echo "Still waiting for authorization... (checking every 30s)"
 done
 
 # Change client configuration
@@ -72,6 +72,3 @@ sleep 5
 
 echo "=== Current networks:"
 sudo zerotier-cli listnetworks
-
-echo "=== Checking public IP address..."
-curl ipinfo.io
