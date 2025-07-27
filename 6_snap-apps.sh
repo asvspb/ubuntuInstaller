@@ -16,4 +16,5 @@ while IFS= read -r package; do
 done < "$PACKAGE_FILE"
 
 sudo snap install obsidian --classic
-sudo snap install gitkraken --classic
+
+if lspci | grep -q "NVIDIA"; then sudo snap install mesa-2404; fi

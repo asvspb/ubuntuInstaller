@@ -1,7 +1,6 @@
 gnome-46-2404
 core24
 kf6-core24
-mesa-2404
 cups
 bare
 gnome-weather
