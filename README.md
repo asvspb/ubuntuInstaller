@@ -1,27 +1,26 @@
 # Ubuntu installer
  - 1_ubuntuStart:
-	- Установит правильно системное время
-	- Установит минимальный пакет программ для сетевого взаимодействия
-	- Установит Хром и телеграм
-	- Отключит запрос пароля sudo (chmod 0440 для sudoers)
+	- Will set the system time correctly
+	- Will install a minimal package of programs for network interaction
+	- Will install Chrome and Telegram
+	- Will disable the sudo password prompt (chmod 0440 for sudoers)
  - 2_ubuntuDocker:
-	- Установит докер и среду разработки, попросит перезагрузку
+	- Will install Docker and the development environment, will ask for a reboot
  - 3_ubuntuPack:
-	- Установит полный пакет программ для ежедневных задач программиста
+	- Will install a full package of programs for the daily tasks of a programmer
  - 4_py-update:
-	- Установит актуальные версии Python
+	- Will install the latest versions of Python
  - 5_js-update:
-	- Установит актуальную среду JS
+	- Will install the latest JS environment
  - 6_snap-apps:
-	- Установит рекомендуемые snap-приложения
+	- Will install recommended snap applications
  - 7_samsung-printer-driver:
-	- Установит драйвер для принтеров Samsung
- - $USER содержит минимальные настройки Ubuntu
- - Для распаковки архива нужен -ssh
- - asv.code-profile - профиль vscode
- - в папке music три ссылки на радио
- - в папке .local цветовые схемы warp
+	- Will install the driver for Samsung printers
+ - $USER contains minimal Ubuntu settings
+ - To unpack the archive, you need -ssh
+ - asv.code-profile - vscode profile
+ - in the music folder there are three links to the radio
+ - in the .local folder there are warp color schemes
 ****************************************************************************
-				ПРИЯТНОЙ НАСТРОЙКИ UBUNTU!
+				ENJOY SETTING UP UBUNTU!
 ****************************************************************************
-

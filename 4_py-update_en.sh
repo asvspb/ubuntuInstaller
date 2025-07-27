@@ -1,19 +1,19 @@
 #!/bin/bash
 
 echo ""
-echo "Устанавливаем стандартный python"
+echo "Installing standard python"
 echo "--------------------------------------------------------------"
 
 sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 # install libs
 pip install requests beautifulsoup4
 
-# закрепляем версию 3.11 питона в системе
+# fix python version 3.11 in the system
 #sudo ln -s /usr/bin/python3.11 /usr/bin/python
 
 # run python extended versions list
 echo ""
-echo "Проверяем расширенные версии python..."
+echo "Checking extended python versions..."
 echo "--------------------------------------------------------------"
 python3 ./py-versions.py
 
@@ -51,6 +51,5 @@ if [[ -n "$python3_bugfix" ]]; then
 fi
 
 echo ""
-echo "Python в актуальном состоянии!"
+echo "Python is up to date!"
 echo "--------------------------------------------------------------"
-

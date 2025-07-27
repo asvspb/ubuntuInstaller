@@ -3,14 +3,14 @@
 set -e
 
 echo " "
-echo "Настройка паролей"
+echo "Setting up passwords"
 echo "--------------------------------------------------------------"
 
-# чтоб не спрашивал пароль при sudo
+# so that it does not ask for a password with sudo
 echo "${USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-nopasswd
 sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 
-# чтоб не ждал подтверждения при установке
+# so that it does not wait for confirmation during installation
 export DEBIAN_FRONTEND=noninteractive
 if [ -f /etc/needrestart/needrestart.conf ]; then
   # Update existing config file
@@ -24,7 +24,7 @@ $nrconf{restart} = 'a'
 EOF
 fi
 
-# чтоб не спрашивал authenticity of host gitlab.com
+# so that it does not ask for authenticity of host gitlab.com
 mkdir -p ~/.ssh
 chmod 0700 ~/.ssh
 cat <<EOF > ~/.ssh/config
@@ -34,41 +34,41 @@ Host gitlab.com
 EOF
 
 echo " "
-echo "Установка времени"
+echo "Setting the time"
 echo "--------------------------------------------------------------"
 sudo timedatectl set-local-rtc 1 --adjust-system-clock
 sudo timedatectl
 
-# сворачивание приложение по клику в доке
+# minimize application on click in the dock
 gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
 
 echo "                                                              "
-echo "Устанавливаем системные приложения"
+echo "Installing system applications"
 echo "--------------------------------------------------------------"
 sudo apt update -y
 sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg -y
 
 echo "                                                              "
-echo "Устанавливаем python & nodejs"
+echo "Installing python & nodejs"
 echo "--------------------------------------------------------------"
-# устанавливаем python
+# install python
 sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 
 
-# устанавливаем nvm + node
+# install nvm + node
 sudo apt install npm nodejs -y
 
 
-# установка расширений гном
+# install gnome extensions
 sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
 
 echo "                                                              "
-echo "Установка telegram"
+echo "Installing telegram"
 echo "--------------------------------------------------------------"
 snap install telegram-desktop
 
 echo "                                                              "
-echo "Установка Chrome"
+echo "Installing Chrome"
 echo "--------------------------------------------------------------"
 wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 sudo dpkg -i ./google-chrome*.deb
@@ -78,5 +78,5 @@ sudo rm ./google-chrome*.deb
 sudo apt -f install
 
 echo "                                                              "
-echo "Можно копировать системные файлы в: /$HOME"
+echo "You can copy system files to: /$HOME"
 echo "--------------------------------------------------------------"

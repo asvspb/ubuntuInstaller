@@ -3,7 +3,7 @@
 set -e
 
 echo " "
-echo "Установка репозиториев"
+echo "Installing repositories"
 echo "--------------------------------------------------------------"
 sudo add-apt-repository ppa:thopiekar/openrgb -y
 sudo add-apt-repository ppa:trebelnik-stefina/grub-customizer -y
@@ -11,7 +11,7 @@ sudo add-apt-repository ppa:ubuntuhandbook1/rhythmbox -y
 sudo add-apt-repository -y ppa:deadsnakes/ppa -y #python
 
 echo " "
-echo "Установка ключей"
+echo "Installing keys"
 echo "--------------------------------------------------------------"
 
 
@@ -21,12 +21,12 @@ echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.
 
 sudo apt update -y
 echo " "
-echo "Установка окружения для программирования"
+echo "Installing programming environment"
 echo "--------------------------------------------------------------"
 
-# установка vsc java
+# install vsc java
 sudo apt install code gcc default-jdk -y
-# установка системных пакетов
+# install system packages
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
 
@@ -34,7 +34,7 @@ sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dco
 
 
 echo " "
-echo "Установка Warp Terminal"
+echo "Installing Warp Terminal"
 echo "--------------------------------------------------------------"
 wget https://app.warp.dev/download?package=deb -O warp.deb
 sudo apt install ./warp.deb -y
@@ -42,15 +42,15 @@ rm warp.deb
 
 
 echo " "
-echo "Установка speedtest"
+echo "Installing speedtest"
 echo "--------------------------------------------------------------"
 curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
 sudo apt-get install speedtest
 
 echo " "
-echo "Установка wireguard"
+echo "Installing wireguard"
 echo "--------------------------------------------------------------"
-# Путь к файлу конфигурации WireGuard
+# Path to the WireGuard configuration file
 wg_conf="/etc/wireguard/wg0.conf"
 sudo touch "$wg_conf"
 
@@ -59,5 +59,5 @@ sudo systemctl start wg-quick@wg0.service
 sudo ln -sf /usr/bin/resolvectl /usr/local/bin/resolvconf
 
 echo "--------------------------------------------------------------"
-echo "Установка завершена успешно"
+echo "Installation completed successfully"
 echo "--------------------------------------------------------------"

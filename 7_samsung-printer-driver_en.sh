@@ -1,6 +1,6 @@
 #!/bin/bash
 echo " "
-echo "Установка МФУ Samsung M2070"
+echo "Installing Samsung M2070 MFP"
 echo "--------------------------------------------------------------"
 
 cd ~/Downloads

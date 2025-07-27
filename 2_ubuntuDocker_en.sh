@@ -3,13 +3,13 @@
 set -e
 
 echo " "
-echo "Настройка паролей"
+echo "Setting up passwords"
 echo "--------------------------------------------------------------"
-# чтоб не спрашивал пароль при sudo
+# so that it does not ask for a password with sudo
 sudo bash -c 'echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd'
 sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 
-# чтоб не ждал подтверждения при установке
+# so that it does not wait for confirmation during installation
 export DEBIAN_FRONTEND=noninteractive
 if [ -f /etc/needrestart/needrestart.conf ]; then
   sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
@@ -21,36 +21,36 @@ else
   rm nrconf
 fi
 
-# чтоб не спрашивал authenticity of host gitlab.com
+# so that it does not ask for authenticity of host gitlab.com
 mkdir -p ~/.ssh
 chmod 0700 ~/.ssh
 echo -e "Host gitlab.com\n   StrictHostKeyChecking no\n   UserKnownHostsFile=/dev/null" > ~/.ssh/config
 
 echo " "
-echo "Предварительное удаление старых версий докер"
+echo "Preliminary removal of old versions of docker"
 echo "--------------------------------------------------------------"
-# удаляем всё ненужное
+# remove everything unnecessary
 for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do sudo apt-get remove $pkg; done
 
 echo " "
-echo "Установка докер"
+echo "Installing docker"
 echo "--------------------------------------------------------------"
 sudo apt install -y apt-transport-https ca-certificates curl software-properties-common wget gpg gnupg
 
-# добавляем ключ для докера
+# add key for docker
 sudo rm -f /etc/apt/keyrings/docker.gpg
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-# добавляем докеровский реп
+# add docker repository
 echo \
   "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
   "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt update
 
-# пакеты для докер
+# packages for docker
 sudo apt update
 sudo apt install -y gawk m4 libpcre3-dev libxerces-c-dev libspdlog-dev libuchardet-dev libssh-dev libssl-dev libsmbclient-dev libnfs-dev libneon27-dev libarchive-dev cmake g++ -y
 
@@ -58,18 +58,18 @@ sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
 echo " "
-echo "Установка докер-композ"
+echo "Installing docker-compose"
 echo "--------------------------------------------------------------"
-# ставим Docker Compose
+# install Docker Compose
 if [ ! -f /usr/local/bin/docker-compose ]; then
   sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-`uname -s`-`uname -m`" -o /usr/local/bin/docker-compose
   sudo chmod +x /usr/local/bin/docker-compose
 fi
 
 echo " "
-echo "Установка far2l"
+echo "Installing far2l"
 echo "--------------------------------------------------------------"
-# ставим far2l
+# install far2l
 if [ ! -d ~/far2l ]; then
   cd
   rm -f ~/far2l || true
@@ -82,7 +82,7 @@ if [ ! -d ~/far2l ]; then
 fi
 
 echo " "
-echo "Установка lazydocker"
+echo "Installing lazydocker"
 echo "--------------------------------------------------------------"
 # Get the latest version tag of Lazydocker release from GitHub
 LAZYDOCKER_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" | grep -Po '"tag_name": "v\K[0-9.]+')
@@ -96,12 +96,12 @@ lazydocker --version
 
 
 echo " "
-echo "Создание папки Dev"
+echo "Creating Dev folder"
 echo "--------------------------------------------------------------"
 mkdir -p ~/Dev
 
 echo " "
-echo "Создание группы docker. Потребуется перезагрузка!"
+echo "Creating docker group. Reboot required!"
 echo "--------------------------------------------------------------"
 sudo usermod -aG docker $USER
 sudo systemctl start docker

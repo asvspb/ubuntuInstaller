@@ -1,15 +1,15 @@
 #!/bin/bash
 echo "                                                              "
-echo "Устанавливаем nodejs"
+echo "Installing nodejs"
 echo "--------------------------------------------------------------"
-# устанавливаем nvm + node
+# install nvm + node
 nvm_version=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep -oP '"tag_name": "\K.*?(?=")')
 curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/$nvm_version/install.sh" | bash
-source ~/.nvm/nvm.sh 	# инициализация
-source ~/.bashrc 	# перезапуск оболочки
+source ~/.nvm/nvm.sh 	# initialization
+source ~/.bashrc 	# restart shell
 nvm list
 npm install -g npm@latest
 nvm install node
 
-# плагин для js quokka
+# plugin for js quokka
 sudo npm install -g jsdom-quokka-plugin
