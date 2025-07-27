@@ -56,7 +56,7 @@ sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 
 
 # устанавливаем nvm + node
-sudo apt install nvm npm nodejs -y
+sudo apt install npm nodejs -y
 
 
 # установка расширений гном
