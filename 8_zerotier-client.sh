@@ -11,19 +11,8 @@ else
     echo "=== ZeroTier is already installed."
 fi
 
-# check if zerotier-one service is running
-if systemctl is-active --quiet zerotier-one; then
-    echo "=== ZeroTier service is running."
-else
-    echo "=== ZeroTier service is not running. Starting..."
-    sudo systemctl start zerotier-one
-    if systemctl is-active --quiet zerotier-one; then
-        echo "=== ZeroTier service started successfully."
-    else
-        echo "=== Failed to start ZeroTier service. Exiting."
-        exit 1
-    fi
-fi
+# You can manually start the ZeroTier service with:
+# sudo systemctl start zerotier-one
 
 # Get a list of networks and filter unauthorized ones
 unauthorized_networks=$(sudo zerotier-cli listnetworks | grep -E "ACCESS_DENIED|NOT_FOUND" | awk '{print $3}')
@@ -66,11 +55,10 @@ sudo zerotier-cli set "$NETWORK_ID" allowDNS=1
 sudo zerotier-cli set "$NETWORK_ID" allowDefault=1
 sudo zerotier-cli set "$NETWORK_ID" allowGlobal=1
 
-echo "=== Restarting ZeroTier service..."
-sudo systemctl restart zerotier-one
-
-echo "=== Waiting for ZeroTier to connect..."
-sleep 5
+echo "=== You may need to restart the ZeroTier service for the changes to take effect:"
+echo "=== sudo systemctl restart zerotier-one"
 
 echo "=== Current networks:"
 sudo zerotier-cli listnetworks
+
+sudo systemctl disable zerotier-one.service
