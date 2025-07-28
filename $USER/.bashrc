@@ -124,35 +124,99 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
-alias ztup='sudo systemctl start zerotier-one'
-alias ztd='sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service'
+
+# Starts ZeroTier and waits for the public IP to change.
+ztup() {
+    echo "Getting initial IP address..."
+    local initial_ip
+    initial_ip=$(curl -s https://ipinfo.io/ip)
+    if [[ -z "$initial_ip" ]]; then
+        echo "Error: Could not get the initial IP address." >&2
+        return 1
+    fi
+    echo "Initial IP: $initial_ip"
+
+    echo "Starting ZeroTier..."
+    sudo systemctl start zerotier-one && sudo systemctl status zerotier-one
+
+    echo -n "Waiting for IP address to change"
+    for i in {1..15}; do
+        local current_ip
+        current_ip=$(curl -s https://ipinfo.io/ip)
+        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
+            echo -e "\n\nSuccess! IP address has changed."
+            myip
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+    done
+
+    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
+    echo "Current IP:"
+    myip
+    return 1
+}
+
+# Stops ZeroTier and waits for the public IP to revert.
+ztd() {
+    echo "Getting current IP address..."
+    local initial_ip
+    initial_ip=$(curl -s https://ipinfo.io/ip)
+    if [[ -z "$initial_ip" ]]; then
+        echo "Error: Could not get the initial IP address." >&2
+        return 1
+    fi
+    echo "Current IP (before stopping): $initial_ip"
+
+    echo "Stopping ZeroTier..."
+    sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service && sudo systemctl status zerotier-one
+
+    echo -n "Waiting for IP address to change"
+    for i in {1..15}; do
+        local current_ip
+        current_ip=$(curl -s https://ipinfo.io/ip)
+        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
+            echo -e "\n\nSuccess! IP address has changed."
+            myip
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+    done
+
+    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
+    echo "Current IP:"
+    myip
+    return 1
+}
 
 # Defines a single function 'myhelp' to display a cheat sheet of custom commands.
 # This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
 myhelp() {
     cat <<-'EOF'
-lan       - показывает список IP в локальной сети
-nettest   - проверка пинга, опрос локальной сети, замер скорости интернета
-myip      - показывает текущий IP
-smon      - миниторинг процессов
-nmon      - миниторинг сетевых процессов
-stt       - консольный замер скорости
-fzf       - консольный поисковик
-tldr      - упрощенный хелпер линукс
-ranger    - консольный файловый менеджер
-ncdu      - показывает размеры директорий
-cls       - очистка от мусора
-obsid     - сохранение obsidian
-jsup      - обновление js
-pyup      - обновление python
-vsc       - обновление vscode
-sysupg    - апгрейд всей системы
-bigfiles  - покажет размеры самых больших фалов
-gca       - автокомит и пуш на репозиторий
-pbcopy    - скопировать в буфер обмена
-pbpaste   - вставить из буфера обмена
-ztup      - включить zerotier
-ztd       - выключить zerotier
+lan       - shows a list of IPs on the local network
+nettest   - runs a ping test, scans the local network, and measures internet speed
+myip      - shows the current public IP and location info
+smon      - system process monitor (btop)
+nmon      - network traffic monitor (iftop)
+stt       - command-line internet speed test
+fzf       - command-line fuzzy finder
+tldr      - simplified man pages
+ranger    - console file manager
+ncdu      - disk usage analyzer
+cls       - cleans up system (apt autoremove, clean, journal)
+obsid     - commit and push Obsidian vault changes
+jsup      - update JS development environment
+pyup      - update Python development environment
+vsc       - update Visual Studio Code
+sysupg    - update and upgrade all system packages
+bigfiles  - find largest files/directories in the current path
+gca       - git add, commit, and push all changes
+pbcopy    - copy to clipboard
+pbpaste   - paste from clipboard
+ztup      - start ZeroTier and wait for IP change
+ztd       - stop ZeroTier and wait for IP change
 EOF
 }
 
@@ -180,4 +244,3 @@ fi
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-

@@ -84,8 +84,72 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
-alias ztup='sudo systemctl start zerotier-one'
-alias ztd='sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service'
+
+# Starts ZeroTier and waits for the public IP to change.
+ztup() {
+    echo "Getting initial IP address..."
+    local initial_ip
+    initial_ip=$(curl -s https://ipinfo.io/ip)
+    if [[ -z "$initial_ip" ]]; then
+        echo "Error: Could not get the initial IP address." >&2
+        return 1
+    fi
+    echo "Initial IP: $initial_ip"
+
+    echo "Starting ZeroTier..."
+    sudo systemctl start zerotier-one && sudo systemctl status zerotier-one
+
+    echo -n "Waiting for IP address to change"
+    for i in {1..15}; do
+        local current_ip
+        current_ip=$(curl -s https://ipinfo.io/ip)
+        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
+            echo -e "\n\nSuccess! IP address has changed."
+            myip
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+    done
+
+    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
+    echo "Current IP:"
+    myip
+    return 1
+}
+
+# Stops ZeroTier and waits for the public IP to revert.
+ztd() {
+    echo "Getting current IP address..."
+    local initial_ip
+    initial_ip=$(curl -s https://ipinfo.io/ip)
+    if [[ -z "$initial_ip" ]]; then
+        echo "Error: Could not get the initial IP address." >&2
+        return 1
+    fi
+    echo "Current IP (before stopping): $initial_ip"
+
+    echo "Stopping ZeroTier..."
+    sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service && sudo systemctl status zerotier-one
+
+    echo -n "Waiting for IP address to change"
+    for i in {1..15}; do
+        local current_ip
+        current_ip=$(curl -s https://ipinfo.io/ip)
+        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
+            echo -e "\n\nSuccess! IP address has changed."
+            myip
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+    done
+
+    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
+    echo "Current IP:"
+    myip
+    return 1
+}
 
 # Defines a single function 'myhelp' to display a cheat sheet of custom commands.
 # This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
