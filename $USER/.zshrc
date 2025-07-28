@@ -60,7 +60,6 @@ alias dcam="sudo usbmuxd;iproxy 4747 4747 &;droidcam-cli 127.0.0.1 4747"
 
 
 
-
 #
 # MY ALIASES
 #
@@ -70,37 +69,25 @@ alias myip="curl -s https://ipinfo.io/json | jq -r '\"Current IP: \" + .ip, \
     \"City: \" + .city, \
     \"Region: \" + .region, \
     \"Country: \" + .country'"
-alias fso="python3 /home/asv-spb/Documents/FSOget-data.py"
 alias gca="git add . && git commit -m'Auto-commit' && git push"
 alias cls="sudo apt autoremove -y && sudo apt clean && sudo journalctl --vacuum-time=2weeks"
-alias cmu="cd ~/Dev/coronachess && make up"
-alias cmd="cd ~/Dev/coronachess && make down"
-alias cms="cd ~/Dev/coronachess && make start"
-alias cmr="cd ~/Dev/coronachess && make restart"
-alias cdr='sudo systemctl stop docker && cd ~/Dev/coronachess && make down && docker pull registry.gitlab.com/cidious/coronachess/app && sleep 5 && sudo reboot'
 alias stt="speedtest"
 alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
-alias lmstop='sudo pkill -9 llama && sudo pkill -9 llama-service && sync && sudo sysctl -w vm.drop_caches=3'
-alias jsupd="bash /home/asv-spb/Dev/ubuntuInstaller/6_js-update.sh"
+export UBUNTU_INSTALLER_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/.. && pwd)
+alias jsup="bash $UBUNTU_INSTALLER_DIR/5_js-update.sh"
+alias pyup="bash $UBUNTU_INSTALLER_DIR/4_py-update.sh"
 alias vsc="sudo apt update && sudo apt install --only-upgrade code"
-alias sysupd="sudo apt update && sudo apt list --upgradable"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
-alias oll="curl -fsSL https://ollama.com/install.sh | sh"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
-alias py="python3"
 
-alias myhelp="echo 'lmstop - остановка ollama и очистка памяти'
-echo 'lan - показывает список IP в локальной сети'
+alias myhelp="echo 'lan - показывает список IP в локальной сети'
 echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
 echo 'myip - показывает текущий IP'
-echo 'fso - проверяет очередь ФСО'
-echo 'cms - заново компилирует корону на локальном докере'
-echo 'cdr - тормозит докер, обновляет реестр, перегружает'
 echo 'smon - миниторинг процессов'
 echo 'nmon - миниторинг сетевых процессов'
 echo 'stt - консольный замер скорости'
@@ -110,10 +97,9 @@ echo 'ranger - консольный файловый менеджер'
 echo 'ncdu - показывает размеры директорий'
 echo 'cls - очистка от мусора'
 echo 'obsid - сохранение obsidian'
-echo 'jsupd - обновление js'
+echo 'jsup - обновление js'
+echo 'pyup - обновление python'
 echo 'vsc - обновление vscode'
-echo 'oll - обновление ollama'
-echo 'sysupd - обновление репозиториев'
 echo 'sysupg - апгрейд всей системы'
 echo 'bigfiles - покажет размеры самых больших фалов'
 echo 'gca - автокомит  и пуш на репозиторий'"
