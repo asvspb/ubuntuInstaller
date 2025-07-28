@@ -60,6 +60,7 @@ alias dcam="sudo usbmuxd;iproxy 4747 4747 &;droidcam-cli 127.0.0.1 4747"
 
 
 
+
 #
 # MY ALIASES
 #
@@ -83,28 +84,38 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
+alias ztup='sudo systemctl start zerotier-one'
+alias ztd='sudo systemctl stop zerotier-one'
 
-alias myhelp="echo 'lan - показывает список IP в локальной сети'
-echo 'nettest - проверка пинга, опрос локальной сети, замер скорости интернета'
-echo 'myip - показывает текущий IP'
-echo 'smon - миниторинг процессов'
-echo 'nmon - миниторинг сетевых процессов'
-echo 'stt - консольный замер скорости'
-echo 'fzf - консольный поисковик'
-echo 'tldr - упрощенный хелпер линукс'
-echo 'ranger - консольный файловый менеджер'
-echo 'ncdu - показывает размеры директорий'
-echo 'cls - очистка от мусора'
-echo 'obsid - сохранение obsidian'
-echo 'jsup - обновление js'
-echo 'pyup - обновление python'
-echo 'vsc - обновление vscode'
-echo 'sysupg - апгрейд всей системы'
-echo 'bigfiles - покажет размеры самых больших фалов'
-echo 'gca - автокомит  и пуш на репозиторий'
-echo 'pbcopy - скопировать в буфер обмена'
-echo 'pbpaste - вставить из буфера обмена'
-"
+# Defines a single function 'myhelp' to display a cheat sheet of custom commands.
+# This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
+myhelp() {
+    cat <<-'EOF'
+lan       - показывает список IP в локальной сети
+nettest   - проверка пинга, опрос локальной сети, замер скорости интернета
+myip      - показывает текущий IP
+smon      - миниторинг процессов
+nmon      - миниторинг сетевых процессов
+stt       - консольный замер скорости
+fzf       - консольный поисковик
+tldr      - упрощенный хелпер линукс
+ranger    - консольный файловый менеджер
+ncdu      - показывает размеры директорий
+cls       - очистка от мусора
+obsid     - сохранение obsidian
+jsup      - обновление js
+pyup      - обновление python
+vsc       - обновление vscode
+sysupg    - апгрейд всей системы
+bigfiles  - покажет размеры самых больших фалов
+gca       - автокомит и пуш на репозиторий
+pbcopy    - скопировать в буфер обмена
+pbpaste   - вставить из буфера обмена
+ztup      - включить zerotier
+ztd       - выключить zerotier
+EOF
+}
+
 
 
 
