@@ -1,53 +1,83 @@
 #!/bin/bash
 
 echo ""
-echo "Installing standard python"
+echo "Installing standard python and dependencies"
 echo "--------------------------------------------------------------"
 
-sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
-# install libs
-pip install requests beautifulsoup4
+# Install necessary system packages for Python
+sudo apt install python3 python3-pip python3-venv python3-tk -y
 
-# fix python version 3.11 in the system
-#sudo ln -s /usr/bin/python3.11 /usr/bin/python
+# Python script to be executed
+PYTHON_SCRIPT='''
+import urllib.request
+import json
 
-# run python extended versions list
+def get_python_versions():
+    """
+    Fetches python versions from the official CPython GitHub repository tags.
+    """
+    try:
+        url = "https://api.github.com/repos/python/cpython/tags"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status != 200:
+                return
+            data = response.read()
+            tags = json.loads(data.decode("utf-8"))
+
+        minor_versions = set()
+        for tag in tags:
+            tag_name = tag["name"]
+            if tag_name.startswith("v"):
+                parts = tag_name[1:].split(".")
+                if len(parts) == 3 and all(p.isdigit() for p in parts):
+                    minor_version = f"{parts[0]}.{parts[1]}"
+                    major, minor = int(parts[0]), int(parts[1])
+                    if major == 3 and minor >= 7:
+                        minor_versions.add(minor_version)
+        
+        for v in sorted(list(minor_versions)):
+             print(f"Python version {v} is in bugfix")
+
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    get_python_versions()
+'''
+
 echo ""
 echo "Checking extended python versions..."
 echo "--------------------------------------------------------------"
-python3 ./py-versions.py
 
 # Get the output of the Python script
-versions=$(python3 ./py-versions.py)
+versions=$(python3 -c "$PYTHON_SCRIPT")
 
-# Initialize variables
-python3_security=""
-python3_bugfix=""
+if [ -z "$versions" ]; then
+    echo "Could not retrieve Python versions. Exiting."
+    exit 1
+fi
+
+# Initialize variable to hold all bugfix versions
+python3_bugfix_versions=""
 
 # Parse the output of the Python script to extract relevant information
 while read -r line; do
-    # Extract version and maintenance status
     version=$(echo "$line" | awk '{print $3}')
     maintenance_status=$(echo "$line" | awk '{print $6}')
 
-    # Check maintenance status and assign version accordingly
-    if [[ "$maintenance_status" == "security" ]]; then
-        python3_security=$version
-    elif [[ "$maintenance_status" == "bugfix" ]]; then
-        python3_bugfix=$version
+    if [[ "$maintenance_status" == "bugfix" ]]; then
+        python3_bugfix_versions="$python3_bugfix_versions $version"
     fi
 done <<< "$versions"
 
-# Update package lists
-#sudo apt update
-
 # Install Python versions based on maintenance status
-if [[ -n "$python3_security" ]]; then
-    sudo apt install "$python3_security" -y
-fi
-
-if [[ -n "$python3_bugfix" ]]; then
-    sudo apt install "$python3_bugfix" -y
+if [[ -n "$python3_bugfix_versions" ]]; then
+    for v in $python3_bugfix_versions; do
+        package_name="python$v"
+        echo "Installing bugfix-supported Python version: $package_name"
+        sudo apt install "$package_name" -y
+    done
 fi
 
 echo ""
