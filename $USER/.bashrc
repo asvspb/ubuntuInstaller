@@ -125,74 +125,90 @@ alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 
+# --- Configuration ---
+# Timeout in seconds to wait for the IP to change.
+readonly _ZT_TIMEOUT_SECONDS=30
+# Interval in seconds between IP checks.
+readonly _ZT_POLL_INTERVAL_SECONDS=2
+# URL to check for the public IP address.
+readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
+# --- End Configuration ---
+
+# Private helper function to wait for the public IP address to change.
+# This function is not intended to be called directly by the user.
+#
+# Usage: _zt_wait_for_ip_change <initial_ip>
+_zt_wait_for_ip_change() {
+    local initial_ip="$1"
+    local retries=$((_ZT_TIMEOUT_SECONDS / _ZT_POLL_INTERVAL_SECONDS))
+
+    printf "Waiting for IP address to change"
+    for ((i = 0; i < retries; i++)); do
+        # Fetch current IP, with a 5-second timeout for the request.
+        local current_ip
+        current_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
+
+        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
+            printf "\n\nSuccess! IP address has changed.\n"
+            myip
+            return 0
+        fi
+        printf "."
+        sleep "$_ZT_POLL_INTERVAL_SECONDS"
+    done
+
+    printf "\n\nTimeout! IP address did not change within %d seconds.\n" "$_ZT_TIMEOUT_SECONDS"
+    printf "Current IP:\n"
+    myip
+    return 1
+}
+
 # Starts ZeroTier and waits for the public IP to change.
 ztup() {
     echo "Getting initial IP address..."
     local initial_ip
-    initial_ip=$(curl -s https://ipinfo.io/ip)
+    initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
     if [[ -z "$initial_ip" ]]; then
-        echo "Error: Could not get the initial IP address." >&2
+        echo "Error: Could not get the initial IP address from $_ZT_IP_CHECK_URL." >&2
         return 1
     fi
     echo "Initial IP: $initial_ip"
 
     echo "Starting ZeroTier..."
-    sudo systemctl start zerotier-one && sudo systemctl status zerotier-one
+    if ! sudo systemctl start zerotier-one; then
+        echo "Error: Failed to start ZeroTier service." >&2
+        sudo systemctl status zerotier-one >&2
+        return 1
+    fi
+    sudo systemctl status zerotier-one
 
-    echo -n "Waiting for IP address to change"
-    for i in {1..15}; do
-        local current_ip
-        current_ip=$(curl -s https://ipinfo.io/ip)
-        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
-            echo -e "\n\nSuccess! IP address has changed."
-            myip
-            return 0
-        fi
-        echo -n "."
-        sleep 2
-    done
-
-    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
-    echo "Current IP:"
-    myip
-    return 1
+    _zt_wait_for_ip_change "$initial_ip"
 }
 
 # Stops ZeroTier and waits for the public IP to revert.
 ztd() {
     echo "Getting current IP address..."
     local initial_ip
-    initial_ip=$(curl -s https://ipinfo.io/ip)
+    initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
     if [[ -z "$initial_ip" ]]; then
-        echo "Error: Could not get the initial IP address." >&2
+        echo "Error: Could not get the initial IP address from $_ZT_IP_CHECK_URL." >&2
         return 1
     fi
     echo "Current IP (before stopping): $initial_ip"
 
     echo "Stopping ZeroTier..."
-    sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service && sudo systemctl status zerotier-one
+    # Use a subshell to group commands and check the overall result.
+    if ! (sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service); then
+        echo "Error: Failed to stop or disable ZeroTier service." >&2
+        sudo systemctl status zerotier-one >&2
+        return 1
+    fi
+    sudo systemctl status zerotier-one
 
-    echo -n "Waiting for IP address to change"
-    for i in {1..15}; do
-        local current_ip
-        current_ip=$(curl -s https://ipinfo.io/ip)
-        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
-            echo -e "\n\nSuccess! IP address has changed."
-            myip
-            return 0
-        fi
-        echo -n "."
-        sleep 2
-    done
-
-    echo -e "\n\nTimeout! IP address did not change within 30 seconds."
-    echo "Current IP:"
-    myip
-    return 1
+    _zt_wait_for_ip_change "$initial_ip"
 }
 
-# Defines a single function 'myhelp' to display a cheat sheet of custom commands.
-# This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
+# Function to display help information.
 myhelp() {
     cat <<-'EOF'
 lan       - shows a list of IPs on the local network
