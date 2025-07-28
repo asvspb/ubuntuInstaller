@@ -52,10 +52,12 @@ sudo zerotier-cli join "$NETWORK_ID"
 echo "!!! Please go to https://my.zerotier.com/network/ and authorize this new node"
 echo "!!! for network $NETWORK_ID"
 
-echo "=== Waiting for authorization..."
+# press enter to continue
+read -p "=== Press 'Enter' to continue after authorizing the node on the ZeroTier network..."
+
 while ! sudo zerotier-cli listnetworks | grep "$NETWORK_ID" | grep -q "OK"; do
   sleep 30
-  echo "Still waiting for authorization... (checking every 30s)"
+  echo "=== Still waiting for authorization... (checking every 30s)"
 done
 
 # Change client configuration
