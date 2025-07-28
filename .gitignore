@@ -1,61 +1,38 @@
-# Compiled source #
-######################
-*.com
-*.class
-*.dll
-*.exe
+# Compiled source
 *.o
 *.so
 *.qodo
 
-# Packages #
-############
-# it's better to unpack these files and commit the unpacked source
-# rather than committing the package files themselves
+# Packages
 *.7z
-*.apk
-*.arj
 *.bz2
-*.egg
 *.gz
 *.iso
-*.jar
 *.rar
 *.tar
 *.tar.gz
 *.tgz
 *.zip
 
-# Logs and databases #
-######################
+# Logs and databases
 *.log
 *.sql
 *.sqlite
 *.sqlite3
 
-# OS generated files #
-######################
+# OS generated files
 .DS_Store
 ._*
-*.swp
-*.swo
 .Spotlight-V100
 .Trashes
 ehthumbs.db
 Thumbs.db
 
-# IDE #
-#######
+# Editor/IDE specific
 .idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-
-# node_modules #
-################
-node_modules/
-
-# Temporary files #
-##################
+*.swp
+*.swo
 *~
+
+# Dependencies
+node_modules/
