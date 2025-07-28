@@ -125,7 +125,7 @@ alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias ztup='sudo systemctl start zerotier-one'
-alias ztd='sudo systemctl stop zerotier-one'
+alias ztd='sudo systemctl stop zerotier-one && sudo systemctl disable zerotier-one.service'
 
 # Defines a single function 'myhelp' to display a cheat sheet of custom commands.
 # This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
@@ -181,19 +181,3 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
-PATH=~/.console-ninja/.bin:$PATH
-
-# Created by `pipx` on 2024-06-19 07:42:30
-export PATH="$PATH:/home/asv-spb/.local/bin"
-if [ -f "/home/asv-spb/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/asv-spb/.config/fabric/fabric-bootstrap.inc"; fi
-
-
-# Shell-GPT integration BASH v0.2
-_sgpt_bash() {
-if [[ -n "$READLINE_LINE" ]]; then
-    READLINE_LINE=$(sgpt --shell <<< "$READLINE_LINE" --no-interaction)
-    READLINE_POINT=${#READLINE_LINE}
-fi
-}
-bind -x '"\C-g": _sgpt_bash'
-# Shell-GPT integration BASH v0.2
