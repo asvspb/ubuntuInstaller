@@ -51,24 +51,13 @@ sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools
 echo "                                                              "
 echo "Installing python & nodejs"
 echo "--------------------------------------------------------------"
-# install python
-sudo apt install python3 python3-pip python3-venv python3-tk python3-py -y
 
+./4_py-update.sh
+./5_js-update.sh
 
-# install latest version of nodejs, nvm, and npm
-LATEST_NVM_VERSION=$(curl -s "https://api.github.com/repos/nvm-sh/nvm/releases/latest" | grep -Po '"tag_name": "\K.*?(?=")')
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/$LATEST_NVM_VERSION/install.sh" | bash
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-nvm install node
-nvm use node
-nvm alias default node
-npm install -g npm@latest
-npm install -g jsdom-quokka-plugin
-npm install -g eslint
-
-
-# install gnome extensions
+echo "                                                              "
+echo "install gnome extensions"
+echo "--------------------------------------------------------------"
 sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
 
 echo "                                                              "

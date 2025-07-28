@@ -2,14 +2,14 @@
 echo "                                                              "
 echo "Installing nodejs"
 echo "--------------------------------------------------------------"
-# install nvm + node
-nvm_version=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep -oP '"tag_name": "\K.*?(?=")')
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/$nvm_version/install.sh" | bash
-source ~/.nvm/nvm.sh 	# initialization
-source ~/.bashrc 	# restart shell
-nvm list
-npm install -g npm@latest
+# install latest version of nodejs, nvm, and npm
+LATEST_NVM_VERSION=$(curl -s "https://api.github.com/repos/nvm-sh/nvm/releases/latest" | grep -Po '"tag_name": "\K.*?(?=")')
+curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/$LATEST_NVM_VERSION/install.sh" | bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 nvm install node
-
-# plugin for js quokka
-sudo npm install -g jsdom-quokka-plugin
+nvm use node
+nvm alias default node
+npm install -g npm@latest
+npm install -g jsdom-quokka-plugin
+npm install -g eslint
