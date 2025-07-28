@@ -116,9 +116,8 @@ alias stt="speedtest"
 alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
-export UBUNTU_INSTALLER_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/.. && pwd)
-alias jsup="bash $UBUNTU_INSTALLER_DIR/5_js-update.sh"
-alias pyup="bash $UBUNTU_INSTALLER_DIR/4_py-update.sh"
+alias jsup="bash $HOME/Dev/ubuntuInstaller/5_js-update.sh"
+alias pyup="bash $HOME/Dev/ubuntuInstaller/4_py-update.sh"
 alias vsc="sudo apt update && sudo apt install --only-upgrade code"
 alias sysupg="sudo apt update && sudo apt upgrade"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
@@ -143,7 +142,10 @@ echo 'pyup - обновление python'
 echo 'vsc - обновление vscode'
 echo 'sysupg - апгрейд всей системы'
 echo 'bigfiles - покажет размеры самых больших фалов'
-echo 'gca - автокомит  и пуш на репозиторий'"
+echo 'gca - автокомит  и пуш на репозиторий'
+echo 'pbcopy - скопировать в буфер обмена'
+echo 'pbpaste - вставить из буфера обмена'
+"
 
 
 # Alias definitions.
