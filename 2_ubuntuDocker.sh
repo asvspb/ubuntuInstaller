@@ -67,21 +67,6 @@ if [ ! -f /usr/local/bin/docker-compose ]; then
 fi
 
 echo " "
-echo "Installing far2l"
-echo "--------------------------------------------------------------"
-# install far2l
-if [ ! -d ~/far2l ]; then
-  cd
-  rm -f ~/far2l || true
-  git clone https://github.com/elfmz/far2l
-  mkdir -p far2l/_build
-  cd far2l/_build
-  cmake -DUSEWX=no -DCMAKE_BUILD_TYPE=Release -DEACP=no -DPYTHON=no ..
-  cmake --build . -j$(nproc --all)
-  sudo cmake --install .
-fi
-
-echo " "
 echo "Installing lazydocker"
 echo "--------------------------------------------------------------"
 # Get the latest version tag of Lazydocker release from GitHub
