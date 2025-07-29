@@ -84,6 +84,7 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
+alias zts='sudo systemctl status zerotier-one'
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
@@ -194,6 +195,7 @@ pbcopy    - скопировать в буфер обмена
 pbpaste   - вставить из буфера обмена
 ztup      - включить zerotier
 ztd       - выключить zerotier
+zts       - показать статус zerotier
 EOF
 }
 

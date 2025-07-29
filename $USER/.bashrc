@@ -124,6 +124,7 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
+alias zts='sudo systemctl status zerotier-one'
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
@@ -211,30 +212,32 @@ ztd() {
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
-lan       - shows a list of IPs on the local network
-nettest   - runs a ping test, scans the local network, and measures internet speed
-myip      - shows the current public IP and location info
-smon      - system process monitor (btop)
-nmon      - network traffic monitor (iftop)
-stt       - command-line internet speed test
-fzf       - command-line fuzzy finder
-tldr      - simplified man pages
-ranger    - console file manager
-ncdu      - disk usage analyzer
-cls       - cleans up system (apt autoremove, clean, journal)
-obsid     - commit and push Obsidian vault changes
-jsup      - update JS development environment
-pyup      - update Python development environment
-vsc       - update Visual Studio Code
-sysupg    - update and upgrade all system packages
-bigfiles  - find largest files/directories in the current path
-gca       - git add, commit, and push all changes
-pbcopy    - copy to clipboard
-pbpaste   - paste from clipboard
-ztup      - start ZeroTier and wait for IP change
-ztd       - stop ZeroTier and wait for IP change
+lan       - показывает список IP в локальной сети
+nettest   - проверка пинга, опрос локальной сети, замер скорости интернета
+myip      - показывает текущий IP
+smon      - миниторинг процессов
+nmon      - миниторинг сетевых процессов
+stt       - консольный замер скорости
+fzf       - консольный поисковик
+tldr      - упрощенный хелпер линукс
+ranger    - консольный файловый менеджер
+ncdu      - показывает размеры директорий
+cls       - очистка от мусора
+obsid     - сохранение obsidian
+jsup      - обновление js
+pyup      - обновление python
+vsc       - обновление vscode
+sysupg    - апгрейд всей системы
+bigfiles  - покажет размеры самых больших фалов
+gca       - автокомит и пуш на репозиторий
+pbcopy    - скопировать в буфер обмена
+pbpaste   - вставить из буфера обмена
+ztup      - включить zerotier
+ztd       - выключить zerotier
+zts       - показать статус zerotier
 EOF
 }
+
 
 
 # Alias definitions.
