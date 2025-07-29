@@ -1,28 +1,29 @@
-# Ubuntu installer
- - 1_ubuntuStart:
-	- Will set the system time correctly
-	- Will install a minimal package of programs for network interaction
-	- Will install Chrome and Telegram
-	- Will disable the sudo password prompt (chmod 0440 for sudoers)
- - 2_ubuntuDocker:
-	- Will install Docker and the development environment, will ask for a reboot
- - 3_ubuntuPack:
-	- Will install a full package of programs for the daily tasks of a programmer
- - 4_py-update:
-	- Will install the latest versions of Python
- - 5_js-update:
-	- Will install the latest JS environment
- - 6_snap-apps:
-	- Will install recommended snap applications
- - 7_samsung-printer-driver:
-	- Will install the driver for Samsung printers
- - 8_zerotier-client_en
-	- will install the ZeroTier client for Ubuntu
- - $USER contains minimal Ubuntu settings
- - To unpack the archive, you need -ssh
- - asv.code-profile - vscode profile
- - in the music folder there are three links to the radio
- - in the .local folder there are warp color schemes
-****************************************************************************
-				ENJOY SETTING UP UBUNTU!
-****************************************************************************
+# Ubuntu Installer
+
+This repository contains a set of scripts to automate the setup of a new Ubuntu installation.
+
+## Scripts
+
+*   `1_ubuntuStart`: Sets the system time, installs a minimal set of networking tools, Chrome, and Telegram. It also disables the sudo password prompt.
+*   `2_ubuntuDocker`: Installs Docker and a development environment. Requires a reboot after execution.
+*   `3_ubuntuPack`: Installs a comprehensive suite of applications for developers.
+*   `4_py-update`: Installs the latest versions of Python.
+*   `5_js-update`: Installs the latest JavaScript environment.
+*   `6_snap-apps`: Installs recommended Snap applications.
+*   `7_samsung-printer-driver`: Installs the driver for Samsung printers.
+*   `8_zerotier-client_en`: Installs the ZeroTier client for Ubuntu.
+
+## Additional Files
+
+*   `$USER`: Contains minimal Ubuntu settings.
+*   `asv.code-profile`: Visual Studio Code profile.
+*   `music/`: Contains links to radio streams.
+*   `.local/`: Contains Warp color schemes.
+
+## Usage
+
+To use these scripts, you will need to unpack the archive using `-ssh`.
+
+---
+
+ENJOY SETTING UP UBUNTU!
