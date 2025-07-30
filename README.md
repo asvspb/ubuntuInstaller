@@ -24,6 +24,12 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 
 To use these scripts, you will need to unpack the archive using `-ssh`.
 
+To run the Samsung printer driver script, navigate to the `scripts` directory and execute the following command:
+
+```bash
+sudo ./7_samsung-printer-driver.sh
+```
+
 ---
 
 ENJOY SETTING UP UBUNTU!
