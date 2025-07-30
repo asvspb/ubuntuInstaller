@@ -16,19 +16,19 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 ## Additional Files
 
 *   `$USER`: Contains minimal Ubuntu settings.
-*   `asv.code-profile`: Visual Studio Code profile.
+"*   `AI.code-profile`: Visual Studio Code profile."
 *   `music/`: Contains links to radio streams.
 *   `.local/`: Contains Warp color schemes.
+*   `OpenRGB`: Contains scripts for OpenRGB.
+*   `Templates`: Contains HTML, JavaScript, Python, and README files.
+*   `themes`: Contains themes for Ubuntu.
+*   `wallpapers`: Contains wallpapers for Ubuntu.
+
+*   `archive.zip`: Contains the archive file.
 
 ## Usage
 
-To use these scripts, you will need to unpack the archive using `-ssh`.
-
-To run the Samsung printer driver script, navigate to the `scripts` directory and execute the following command:
-
-```bash
-sudo ./7_samsung-printer-driver.sh
-```
+(!) To use these scripts, you will need to unpack the archive using `-ssh`.
 
 ---
 
