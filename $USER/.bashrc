@@ -125,6 +125,7 @@ alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias zts='sudo systemctl status zerotier-one'
+alias con1='ssh root@example.com'
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
