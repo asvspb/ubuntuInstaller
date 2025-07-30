@@ -16,7 +16,11 @@ install_samsung_driver() {
     info "Executing: Install via SULDR Repository"
     set -e
 
-    # Check for --dry-run flag
+    info "Checking for existing driver..."
+    if dpkg -s suld-driver2-1.00.39 &> /dev/null; then
+        echo "Samsung driver is already installed. Exiting."
+        exit 0
+    fi
     DRY_RUN=false
     if [ "$1" == "--dry-run" ]; then
         DRY_RUN=true
