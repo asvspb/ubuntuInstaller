@@ -236,6 +236,7 @@ pbpaste   - вставить из буфера обмена
 ztup      - включить zerotier
 ztd       - выключить zerotier
 zts       - показать статус zerotier
+con1      - подключиться к удаленному серверу
 EOF
 }
 
