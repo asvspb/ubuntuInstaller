@@ -16,7 +16,7 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 ## Additional Files
 
 *   `$USER`: Contains minimal Ubuntu settings.
-"*   `AI.code-profile`: Visual Studio Code profile."
+*   `AI.code-profile`: Visual Studio Code profile.
 *   `music/`: Contains links to radio streams.
 *   `.local/`: Contains Warp color schemes.
 *   `OpenRGB`: Contains scripts for OpenRGB.
