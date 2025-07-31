@@ -24,11 +24,19 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 *   `themes`: Contains themes for Ubuntu.
 *   `wallpapers`: Contains wallpapers for Ubuntu.
 
+(!) To use some of the scripts, you will need to unpack the archive using `*ssh`.
 *   `archive.zip`: Contains the archive file.
 
 ## Usage
 
-(!) To use these scripts, you will need to unpack the archive using `*ssh`.
+1.  Download the archive file from the repository.
+2.  Unpack the archive using  `*ssh`.
+    ```bash
+    unzip archive.zip
+    ```
+3.  Run the scripts in order.
+
+
 
 ---
 
