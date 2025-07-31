@@ -28,7 +28,7 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 
 ## Usage
 
-(!) To use these scripts, you will need to unpack the archive using `-ssh`.
+(!) To use these scripts, you will need to unpack the archive using `*ssh`.
 
 ---
 
