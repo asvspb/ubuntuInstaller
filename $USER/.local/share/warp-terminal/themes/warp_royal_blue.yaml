@@ -8,9 +8,9 @@ terminal_colors:
     red: "#ffd894"
     green: "#ebb677"
     yellow: "#ffd894"
-    blue: "#00386a"
+    blue: "#0058a6"
     magenta: "#ff9c4d"
-    cyan: "#58a0ff"
+    cyan: "#5ac0ff"
     white: "#f1f1f1"
   bright:
     black: "#8e8e8e"
