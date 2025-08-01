@@ -3,26 +3,26 @@
 # Передний план: Белый
 # Палитра: Пользовательская с бежевыми и пастельными тонами
 
-accent: "#589dff"
-background: "#002b55"
-foreground: "#ffffff"
-details: "darker"        # Тип темы - тёмная
+accent: '#5294e2'
+background: '#002851'
+foreground: '#ffffff'
+details: 'darker'
 terminal_colors:
   normal:
-    black: "#000000"
-    red: "#d70000"
-    green: "#c4a484"
-    yellow: "#b2957b"
-    blue: "#005faf"
-    magenta: "#ff59ce"
-    cyan: "#589dff"
-    white: "#cccccc"
+    black:   '#000000'
+    red:     '#cc3333'
+    green:   '#cdab8f'
+    yellow:  '#cdab8f'
+    blue:    '#1a5fb4'
+    magenta: '#a347ba'
+    cyan:    '#62a0ea'
+    white:   '#cccccc'
   bright:
-    black: "#8e8e8e"
-    red: "#ffc4bd"
-    green: "#d6fcb9"
-    yellow: "#10ff18"
-    blue: "#c1e3fe"
-    magenta: "#ffb1fe"
-    cyan: "#e5e6fe"
-    white: "#feffff"
+    black:   '#555555'
+    red:     '#ff9ca3'
+    green:   '#d0f0a8'
+    yellow:  '#ffc669'
+    blue:    '#99c1f1'
+    magenta: '#c17bc9'
+    cyan:    '#99ffff'
+    white:   '#ffffff'
