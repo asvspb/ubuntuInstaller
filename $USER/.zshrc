@@ -170,8 +170,7 @@ ztd() {
     _zt_wait_for_ip_change "$initial_ip"
 }
 
-# Defines a single function 'myhelp' to display a cheat sheet of custom commands.
-# This avoids cluttering the terminal on startup and provides a clean, on-demand help menu.
+# Function to display help information.
 myhelp() {
     cat <<-'EOF'
 lan       - показывает список IP в локальной сети
@@ -200,7 +199,6 @@ zts       - показать статус zerotier
 con1      - подключиться к удаленному серверу
 EOF
 }
-
 
 
 
