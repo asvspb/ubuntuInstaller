@@ -76,7 +76,7 @@ alias stt="speedtest"
 alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
-alias jsup="bash $HOME/Dev/ubuntuInstaller/5_js-update.sh"
+alias jsup="curl -qL https://www.npmjs.com/install.sh | sh"
 alias pyup="bash $HOME/Dev/ubuntuInstaller/4_py-update.sh"
 alias vsc="sudo apt update && sudo apt install --only-upgrade code"
 alias sysupg="sudo apt update && sudo apt upgrade"
@@ -84,7 +84,7 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
-alias zts='my ip && sudo systemctl status zerotier-one'
+alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@example.com'
 
 # --- Configuration ---
