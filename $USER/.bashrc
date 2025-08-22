@@ -117,9 +117,9 @@ alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias jsup="curl -qL https://www.npmjs.com/install.sh | sh"
-alias pyup="bash $HOME/Dev/ubuntuInstaller/4_py-update.sh"
-alias vsc="sudo apt update && sudo apt install --only-upgrade code"
-alias sysupg="sudo apt update && sudo apt upgrade"
+alias pyup="sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip"
+alias code="sudo apt update && sudo apt install --only-upgrade code"
+alias sysupg="sudo apt update && sudo apt upgrade -y"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
