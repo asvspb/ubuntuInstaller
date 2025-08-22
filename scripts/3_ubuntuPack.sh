@@ -16,20 +16,25 @@ echo "--------------------------------------------------------------"
 
 
 #vscode
-curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/vscode.gpg
+curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg > /dev/null
 echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.microsoft.com/repos/vscode stable main | sudo tee /etc/apt/sources.list.d/vscode.list
 
 sudo apt update -y
 echo " "
 echo "Installing programming environment"
 echo "--------------------------------------------------------------"
+# install js
+curl -qL https://www.npmjs.com/install.sh | sh
+
+# install latest python
+sudo apt install python3 python3-pip -y
+sudo pip3 install --upgrade pip
 
 # install vsc java
 sudo apt install code gcc default-jdk -y
 # install system packages
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
-
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor -y
 
 

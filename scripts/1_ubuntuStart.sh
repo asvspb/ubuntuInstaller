@@ -49,13 +49,6 @@ sudo apt update -y
 sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg -y
 
 echo "                                                              "
-echo "Installing python & nodejs"
-echo "--------------------------------------------------------------"
-
-./4_py-update.sh
-./5_js-update.sh
-
-echo "                                                              "
 echo "install gnome extensions"
 echo "--------------------------------------------------------------"
 sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
