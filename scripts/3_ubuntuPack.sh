@@ -45,6 +45,13 @@ wget https://app.warp.dev/download?package=deb -O warp.deb
 sudo apt install ./warp.deb -y
 rm warp.deb
 
+echo " "
+echo "Installing code CLI's"
+echo "--------------------------------------------------------------"
+npm install -g @google/gemini-cli@latest
+npm install -g @qwen-code/qwen-code@latest
+
+
 
 echo " "
 echo "Installing speedtest"

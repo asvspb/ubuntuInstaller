@@ -78,7 +78,8 @@ NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias jsup="curl -qL https://www.npmjs.com/install.sh | sh"
 alias pyup="sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip"
-alias code="sudo apt update && sudo apt install --only-upgrade code"
+alias code="sudo apt update && sudo apt install --only-upgrade code && npm install -g @google/gemini-cli@latest && 
+npm install -g @qwen-code/qwen-code@latest"
 alias sysupg="sudo apt update && sudo apt upgrade -y"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
