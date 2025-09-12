@@ -126,7 +126,7 @@ alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias zts='myip && sudo systemctl status zerotier-one'
-alias con1='ssh root@example.com'
+alias con1='ssh root@193.148.59.14' #hiplet server
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
