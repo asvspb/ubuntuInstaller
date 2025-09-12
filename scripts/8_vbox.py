@@ -277,6 +277,18 @@ def vbox_version() -> str:
         return ''
 
 
+def compare_versions(installed: str, latest: str) -> bool:
+    """Возвращает True, если установленная версия актуальна или новее."""
+    if not installed:
+        return False
+    # Извлечь основную версию (без суффиксов типа r123456)
+    installed_match = re.match(r'^(\d+\.\d+\.\d+)', installed)
+    if not installed_match:
+        return False
+    installed_base = installed_match.group(1)
+    return installed_base == latest
+
+
 def install_extpack(extpack_path: str) -> bool:
     if not shutil.which('VBoxManage'):
         warn('VBoxManage не найден, пропускаю установку Extension Pack')
@@ -321,6 +333,12 @@ def main():
     # Latest stable version with robust fallback
     version = get_latest_stable_version()
     info(f"Последняя стабильная версия VirtualBox: {version}")
+
+    # Check if already up to date
+    current_version = vbox_version()
+    if compare_versions(current_version, version):
+        info(f"Версия VirtualBox {current_version} уже актуальна, выход.")
+        sys.exit(0)
 
     # Strict selection of Ubuntu jammy deb
     artifacts = find_artifacts(version, distro_id, codename, arch='amd64', strict_codename=True)
