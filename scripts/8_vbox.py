@@ -324,8 +324,39 @@ def safe_unlink(path: str):
         warn(f"Не удалось удалить {path}: {e}")
 
 
+def remove_vbox():
+    info("Удаление VirtualBox...")
+    run(['sudo', 'apt-get', 'remove', '--purge', '-y', 'virtualbox*'], check=False)
+    info("VirtualBox удалён.")
+
+
 def main():
     ensure_dir(DOWNLOAD_BASE)
+
+    # Check if VirtualBox is installed
+    current_version = vbox_version()
+
+    if current_version:
+        print(f"VirtualBox установлен (версия {current_version})")
+        choice = input("Выберите: 1. Удалить VirtualBox  2. Выход: ").strip()
+        if choice == '1':
+            remove_vbox()
+            sys.exit(0)
+        elif choice == '2':
+            sys.exit(0)
+        else:
+            print("Неверный выбор")
+            sys.exit(1)
+    else:
+        print("VirtualBox не установлен")
+        choice = input("Выберите: 1. Установить VirtualBox  2. Выход: ").strip()
+        if choice == '1':
+            pass  # continue to installation
+        elif choice == '2':
+            sys.exit(0)
+        else:
+            print("Неверный выбор")
+            sys.exit(1)
 
     distro_id, codename = detect_distro_codename()
     info(f"Определён дистрибутив: {distro_id or 'unknown'}, codename: {codename}")
@@ -335,7 +366,6 @@ def main():
     info(f"Последняя стабильная версия VirtualBox: {version}")
 
     # Check if already up to date
-    current_version = vbox_version()
     if compare_versions(current_version, version):
         info(f"Версия VirtualBox {current_version} уже актуальна, выход.")
         sys.exit(0)
