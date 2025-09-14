@@ -1,12 +1,72 @@
 [core]
-packedGitLimit = 512m
-packedGitWindowSize = 512m
+	packedGitLimit = 512m
+	packedGitWindowSize = 512m
+	fsckObjects = true
+
 [pack]
-deltaCacheSize = 2047m
-packSizeLimit = 2047m
-windowMemory = 2047m
+	deltaCacheSize = 2047m
+	packSizeLimit = 2047m
+	windowMemory = 2047m
+
 [user]
 	email = asvdevpro@gmail.com
 	name = asv-spb
+
 [cola]
 	spellcheck = false
+
+[alias]
+	st = status
+	ci = commit
+	co = checkout
+	br = branch
+	df = diff
+	lg = log --oneline --graph --decorate
+	last = log -1 HEAD
+	unstage = reset HEAD --
+	amend = commit --amend
+	undo = reset --soft HEAD~1
+	standup = log --since yesterday --author $(git config user.email) --oneline
+	aliases = config --get-regexp alias
+	s = status -s
+	d = diff
+	l = log --oneline
+	a = add
+	ap = add -p
+	cm = commit -m
+	f = fetch
+	pl = pull
+	ps = push
+	rb = rebase
+	stash-unapply = stash show -p | git apply -R
+
+[color]
+	ui = auto
+
+[init]
+	defaultBranch = main
+
+[pull]
+	rebase = true
+
+[push]
+	default = current
+
+[diff]
+	tool = vimdiff
+
+[merge]
+	tool = vimdiff
+	conflictstyle = diff3
+
+[fetch]
+	prune = true
+
+[rerere]
+	enabled = true
+
+[gc]
+	auto = 256
+
+[safe]
+	directory = /mnt/BASIC/Dev/
