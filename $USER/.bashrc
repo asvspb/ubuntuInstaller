@@ -128,6 +128,9 @@ alias pbpaste='xclip -selection clipboard -o'
 alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@193.148.59.14' #hiplet server
 
+# Alias для обновления VSCode через наш скрипт
+alias vscode='~/vscode-updater.sh'
+
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
 readonly _ZT_TIMEOUT_SECONDS=30
@@ -229,6 +232,7 @@ obsid     - сохранение obsidian
 jsup      - обновление js
 pyup      - обновление python
 vsc       - обновление vscode
+vscode    - проверка и обновление vscode через наш скрипт
 sysupg    - апгрейд всей системы
 bigfiles  - покажет размеры самых больших фалов
 gca       - автокомит и пуш на репозиторий
