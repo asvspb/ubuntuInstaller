@@ -262,7 +262,7 @@ ztd() {
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
-bigfiles  - покажет размеры самых больших фалов
+bigfiles  - покажет размеры самых больших файлов
 cls       - очистка от мусора
 code      - обновление cli утилит gemini, qwen
 con1      - подключиться к удаленному серверу
