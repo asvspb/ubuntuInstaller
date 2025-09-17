@@ -118,7 +118,7 @@ NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
 alias jsup="curl -qL https://www.npmjs.com/install.sh | sh"
 alias pyup="sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip"
-alias code="sudo apt update && sudo apt install --only-upgrade code && npm install -g @google/gemini-cli@latest && 
+alias code="npm install -g @google/gemini-cli@latest && 
 npm install -g @qwen-code/qwen-code@latest"
 alias sysupg="sudo apt update && sudo apt upgrade -y"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
@@ -217,31 +217,31 @@ ztd() {
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
-lan       - показывает список IP в локальной сети
-nettest   - проверка пинга, опрос локальной сети, замер скорости интернета
-myip      - показывает текущий IP
-smon      - миниторинг процессов
-nmon      - миниторинг сетевых процессов
-stt       - консольный замер скорости
-fzf       - консольный поисковик
-tldr      - упрощенный хелпер линукс
-ranger    - консольный файловый менеджер
-ncdu      - показывает размеры директорий
-cls       - очистка от мусора
-obsid     - сохранение obsidian
-jsup      - обновление js
-pyup      - обновление python
-vsc       - обновление vscode
-vscode    - проверка и обновление vscode через наш скрипт
-sysupg    - апгрейд всей системы
 bigfiles  - покажет размеры самых больших фалов
+cls       - очистка от мусора
+code      - обновление cli утилит gemini, qwen
+con1      - подключиться к удаленному серверу
+fzf       - консольный поисковик
 gca       - автокомит и пуш на репозиторий
+jsup      - обновление js
+lan       - показывает список IP в локальной сети
+myip      - показывает текущий IP
+ncdu      - показывает размеры директорий
+nettest   - проверка пинга, опрос локальной сети, замер скорости интернета
+nmon      - миниторинг сетевых процессов
+obsid     - сохранение obsidian
 pbcopy    - скопировать в буфер обмена
 pbpaste   - вставить из буфера обмена
+pyup      - обновление python
+ranger    - консольный файловый менеджер
+smon      - миниторинг процессов
+stt       - консольный замер скорости
+sysupg    - апгрейд всей системы
+tldr      - упрощенный хелпер линукс
+vscode    - проверка и обновление версии vscode
 ztup      - включить zerotier
 ztd       - выключить zerotier
 zts       - показать статус zerotier
-con1      - подключиться к удаленному серверу
 EOF
 }
 
