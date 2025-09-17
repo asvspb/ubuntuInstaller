@@ -13,7 +13,6 @@ esac
 HISTCONTROL=ignoreboth
 
 # append to the history file, don't overwrite it
-shopt -s histappend
 
 # for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
 HISTSIZE=1000
@@ -21,7 +20,6 @@ HISTFILESIZE=2000
 
 # check the window size after each command and, if necessary,
 # update the values of LINES and COLUMNS.
-shopt -s checkwinsize
 
 # If set, the pattern "**" used in a pathname expansion context will
 # match all files and zero or more directories and subdirectories.
@@ -35,42 +33,65 @@ if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
     debian_chroot=$(cat /etc/debian_chroot)
 fi
 
-# set a fancy prompt (non-color, unless we know we "want" color)
-case "$TERM" in
-    xterm-color|*-256color) color_prompt=yes;;
-esac
+# zsh interactive configuration
+if [ -n "$ZSH_VERSION" ]; then
+  emulate -L zsh
+  # History behavior similar to bash's histappend/ignoreboth
+  setopt APPEND_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE
+  HISTFILE="$HOME/.zsh_history"
+  HISTSIZE=10000
+  SAVEHIST=20000
+  # Prompt and completion
+  setopt PROMPT_SUBST
+  autoload -Uz compinit && compinit
+  # Prompt: green user@host, blue cwd
+  if [ -n "$debian_chroot" ]; then
+    PROMPT="($debian_chroot)%F{green}%n@%m%f:%F{blue}%~%f$ "
+  else
+    PROMPT="%F{green}%n@%m%f:%F{blue}%~%f$ "
+  fi
+  # Terminal title: user@host: dir
+  precmd() { print -Pn "\e]0;%n@%m: %~\a" }
 
-# uncomment for a colored prompt, if the terminal has the capability; turned
-# off by default to not distract the user: the focus in a terminal window
-# should be on the output of commands, not on the prompt
-#force_color_prompt=yes
+  # Powerlevel10k prompt settings (from previous .zshrc)
+  POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(host user dir)
+  POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status root_indicator vcs battery time)
+  POWERLEVEL9K_PROMPT_ON_NEWLINE=true
+  POWERLEVEL9K_KUBECONTEXT_SHOW_ON_COMMAND='kubectl|helm|kubens|kubectx|oc|istioctl|kogito'
 
-if [ -n "$force_color_prompt" ]; then
-    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
-	# We have color support; assume it's compliant with Ecma-48
-	# (ISO/IEC-6429). (Lack of such support is extremely rare, and such
-	# a case would tend to support setf rather than setaf.)
-	color_prompt=yes
-    else
-	color_prompt=
+  # Zplug plugin manager and plugins (from previous .zshrc)
+  if [ ! -d "$HOME/.zplug" ]; then
+    command -v git >/dev/null 2>&1 && git clone https://github.com/b4b4r07/zplug "$HOME/.zplug" >/dev/null 2>&1 || true
+  fi
+  if [ -r "$HOME/.zplug/init.zsh" ]; then
+    source "$HOME/.zplug/init.zsh"
+    zplug romkatv/powerlevel10k, as:theme
+
+    zplug "robbyrussell/oh-my-zsh", as:plugin, use:"lib/*.zsh"
+    zplug "plugins/archlinux",         from:oh-my-zsh
+    zplug "plugins/colored-man-pages", from:oh-my-zsh
+    zplug "plugins/colorize",          from:oh-my-zsh
+    zplug "lib/completion",            from:oh-my-zsh
+    zplug "lib/history",               from:oh-my-zsh
+    zplug "lib/key-bindings",          from:oh-my-zsh
+    zplug "lib/termsupport",           from:oh-my-zsh
+    zplug "lib/directories",           from:oh-my-zsh
+    zplug "plugins/git",               from:oh-my-zsh
+    zplug "plugins/history",           from:oh-my-zsh
+
+    zplug "zsh-users/zsh-autosuggestions"
+    # zplug "zsh-users/zsh-syntax-highlighting"
+    zplug "zdharma/fast-syntax-highlighting"
+    zplug "zsh-users/zsh-completions"
+    zplug "zsh-users/zsh-history-substring-search"
+    zplug "MichaelAquilina/zsh-you-should-use"
+
+    if ! zplug check; then
+      zplug install
     fi
+    zplug load
+  fi
 fi
-
-if [ "$color_prompt" = yes ]; then
-    PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-else
-    PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
-fi
-unset color_prompt force_color_prompt
-
-# If this is an xterm set the title to user@host:dir
-case "$TERM" in
-xterm*|rxvt*)
-    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
-    ;;
-*)
-    ;;
-esac
 
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]; then
@@ -92,6 +113,10 @@ alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
 
+# sleep commands
+alias disablesleep='sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target'
+alias enablesleep='sudo systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target'
+
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert
 alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
@@ -99,6 +124,7 @@ alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo
 # New terminal scheme
 # https://gogh-co.github.io/Gogh/
 alias trm='bash -c  "$(wget -qO- https://git.io/vQgMr)"'
+
 
 
 #
@@ -133,11 +159,17 @@ alias vscode='~/vscode-updater.sh'
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
-readonly _ZT_TIMEOUT_SECONDS=30
+if [ -z "${_ZT_TIMEOUT_SECONDS+x}" ]; then
+    readonly _ZT_TIMEOUT_SECONDS=30
+fi
 # Interval in seconds between IP checks.
-readonly _ZT_POLL_INTERVAL_SECONDS=2
+if [ -z "${_ZT_POLL_INTERVAL_SECONDS+x}" ]; then
+    readonly _ZT_POLL_INTERVAL_SECONDS=2
+fi
 # URL to check for the public IP address.
-readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
+if [ -z "${_ZT_IP_CHECK_URL+x}" ]; then
+    readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
+fi
 # --- End Configuration ---
 
 # Private helper function to wait for the public IP address to change.
@@ -146,27 +178,40 @@ readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
 # Usage: _zt_wait_for_ip_change <initial_ip>
 _zt_wait_for_ip_change() {
     local initial_ip="$1"
-    local retries=$((_ZT_TIMEOUT_SECONDS / _ZT_POLL_INTERVAL_SECONDS))
+    local timeout="$_ZT_TIMEOUT_SECONDS"
+    local poll="$_ZT_POLL_INTERVAL_SECONDS"
+    local url="$_ZT_IP_CHECK_URL"
 
     printf "Waiting for IP address to change"
-    for ((i = 0; i < retries; i++)); do
-        # Fetch current IP, with a 5-second timeout for the request.
-        local current_ip
-        current_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
 
-        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
-            printf "\n\nSuccess! IP address has changed.\n"
-            myip
-            return 0
+    # Run polling in a clean child shell so tracing/verbose options from the parent don't leak into it
+    sh -c '
+      init="$1"; timeout="$2"; poll="$3"; url="$4"
+      retries=$((timeout / poll))
+      i=0
+      while [ "$i" -lt "$retries" ]; do
+        current_ip=$(curl -s --max-time 5 "$url")
+        if [ -n "$current_ip" ] && [ "$current_ip" != "$init" ]; then
+          exit 0
         fi
         printf "."
-        sleep "$_ZT_POLL_INTERVAL_SECONDS"
-    done
+        sleep "$poll"
+        i=$((i+1))
+      done
+      exit 1
+    ' _ "$initial_ip" "$timeout" "$poll" "$url"
+    local rc=$?
 
-    printf "\n\nTimeout! IP address did not change within %d seconds.\n" "$_ZT_TIMEOUT_SECONDS"
-    printf "Current IP:\n"
-    myip
-    return 1
+    if [ "$rc" -eq 0 ]; then
+        printf "\n\nSuccess! IP address has changed.\n"
+        myip
+        return 0
+    else
+        printf "\n\nTimeout! IP address did not change within %d seconds.\n" "$timeout"
+        printf "Current IP:\n"
+        myip
+        return 1
+    fi
 }
 
 # Starts ZeroTier and waits for the public IP to change.
@@ -252,21 +297,24 @@ EOF
 # ~/.bash_aliases, instead of adding them here directly.
 # See /usr/share/doc/bash-doc/examples in the bash-doc package.
 
-if [ -f ~/.bash_aliases ]; then
-    . ~/.bash_aliases
-fi
 
-# enable programmable completion features (you don't need to enable
-# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
-# sources /etc/bash.bashrc).
-if ! shopt -oq posix; then
-  if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
-  elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
-  fi
+
+# Environment from previous .zshrc
+[ -z "$TERM" ] && export TERM="xterm-256color"
+export KWIN_TRIPLE_BUFFER="${KWIN_TRIPLE_BUFFER:-1}"
+[ -z "$LC_ALL" ] && export LC_ALL="en_GB.UTF-8"
+
+# Rust cargo binaries
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# SDKMAN
+export SDKMAN_DIR="$HOME/.sdkman"
+[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+# Fancy system info on interactive zsh
+if [ -n "$ZSH_VERSION" ] && [[ $- == *i* ]] && command -v neofetch >/dev/null 2>&1; then
+  neofetch
 fi
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
