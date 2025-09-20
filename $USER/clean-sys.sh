@@ -28,6 +28,33 @@ VACUUM_SQLITE="${VACUUM_SQLITE:-1}"
 SQLITE_DB_PATHS="${SQLITE_DB_PATHS:-$HOME/Dev/my-coding/warandpeace/database/articles.db}"
 ALLOW_RM="${ALLOW_RM:-0}"                              # если нет gio и нужно удалять без корзины (по умолчанию — безопасно: пропуск)
 
+# Дополнительные (опциональные) системные чистки
+APT_CLEAN="${APT_CLEAN:-0}"
+APT_AUTOCLEAN="${APT_AUTOCLEAN:-0}"
+APT_AUTOREMOVE="${APT_AUTOREMOVE:-0}"
+
+CLEAN_TMP="${CLEAN_TMP:-1}"
+TMP_MAX_AGE_DAYS="${TMP_MAX_AGE_DAYS:-7}"
+CLEAN_VARTMP="${CLEAN_VARTMP:-1}"
+VARTMP_MAX_AGE_DAYS="${VARTMP_MAX_AGE_DAYS:-7}"
+
+CLEAN_SNAPD_CACHE="${CLEAN_SNAPD_CACHE:-1}"
+CLEAN_VAR_CRASH="${CLEAN_VAR_CRASH:-1}"
+
+CLEAN_OLD_LOG_GZ="${CLEAN_OLD_LOG_GZ:-1}"
+LOG_GZ_RETENTION_DAYS="${LOG_GZ_RETENTION_DAYS:-14}"
+
+SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-0}"
+SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
+
+NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-1}"
+NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"
+
+FLATPAK_UNUSED="${FLATPAK_UNUSED:-0}"
+
+DOCKER_PRUNE="${DOCKER_PRUNE:-0}"
+DOCKER_PRUNE_VOLUMES="${DOCKER_PRUNE_VOLUMES:-0}"
+
 log() { printf '%s %s %s\n' "$(date '+%F %T')" "$LOG_PREFIX" "$*"; }
 size_of() { du -sh "$1" 2>/dev/null | awk '{print $1}'; }
 
@@ -237,6 +264,144 @@ vacuum_sqlite() {
   unset IFS
 }
 
+# Очистка временных директорий
+cleanup_tmp_path() {
+  local path="$1" days="$2"
+  if [ "$DRY_RUN" = "1" ]; then
+    if sudo -n true 2>/dev/null; then
+      log "DRY-RUN: sudo find $path -xdev -type f -mtime +$days -delete && sudo find $path -xdev -type d -empty -delete"
+    else
+      log "DRY-RUN: find $path -xdev -type f -user $(id -u) -mtime +$days -delete && find $path -xdev -type d -user $(id -u) -empty -delete"
+    fi
+    return 0
+  fi
+  if sudo -n true 2>/dev/null; then
+    sudo find "$path" -xdev -type f -mtime +"$days" -delete || true
+    sudo find "$path" -xdev -type d -empty -delete || true
+  else
+    find "$path" -xdev -type f -user "$(id -u)" -mtime +"$days" -delete || true
+    find "$path" -xdev -type d -user "$(id -u)" -empty -delete || true
+  fi
+}
+
+apt_maintenance() {
+  if [ "$APT_CLEAN" != "1" ] && [ "$APT_AUTOCLEAN" != "1" ] && [ "$APT_AUTOREMOVE" != "1" ]; then
+    return 0
+  fi
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для apt maintenance"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    [ "$APT_CLEAN" = "1" ] && log "DRY-RUN: sudo apt clean"
+    [ "$APT_AUTOCLEAN" = "1" ] && log "DRY-RUN: sudo apt autoclean"
+    [ "$APT_AUTOREMOVE" = "1" ] && log "DRY-RUN: sudo apt autoremove --purge -y"
+  else
+    [ "$APT_CLEAN" = "1" ] && sudo apt clean || true
+    [ "$APT_AUTOCLEAN" = "1" ] && sudo apt autoclean || true
+    [ "$APT_AUTOREMOVE" = "1" ] && sudo apt autoremove --purge -y || true
+  fi
+}
+
+snap_set_retain() {
+  [ "$SNAP_SET_RETAIN" = "1" ] || return 0
+  command -v snap >/dev/null 2>&1 || { log "skip: snap не найден"; return 0; }
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для snap set system refresh.retain=$SNAP_RETAIN_N"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: sudo snap set system refresh.retain=$SNAP_RETAIN_N"
+  else
+    sudo snap set system refresh.retain="$SNAP_RETAIN_N" || true
+  fi
+}
+
+clean_snapd_cache() {
+  [ "$CLEAN_SNAPD_CACHE" = "1" ] || return 0
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для очистки /var/cache/snapd"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: sudo rm -rf /var/cache/snapd/*"
+  else
+    sudo rm -rf /var/cache/snapd/* || true
+  fi
+}
+
+clean_var_crash() {
+  [ "$CLEAN_VAR_CRASH" = "1" ] || return 0
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для очистки /var/crash"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: sudo rm -f /var/crash/*"
+  else
+    sudo rm -f /var/crash/* || true
+  fi
+}
+
+clean_old_log_gz() {
+  [ "$CLEAN_OLD_LOG_GZ" = "1" ] || return 0
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для удаления старых .gz логов в /var/log"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: sudo find /var/log -type f -name '*.gz' -mtime +$LOG_GZ_RETENTION_DAYS -delete"
+  else
+    sudo find /var/log -type f -name '*.gz' -mtime +"$LOG_GZ_RETENTION_DAYS" -delete || true
+  fi
+}
+
+npm_cache_ops() {
+  if command -v npm >/dev/null 2>&1; then
+    if [ "$NPM_CACHE_VERIFY" = "1" ]; then
+      if [ "$DRY_RUN" = "1" ]; then log "DRY-RUN: npm cache verify"; else npm cache verify || true; fi
+    fi
+    if [ "$NPM_CACHE_CLEAN" = "1" ]; then
+      if [ "$DRY_RUN" = "1" ]; then log "DRY-RUN: npm cache clean --force"; else npm cache clean --force || true; fi
+    fi
+  else
+    if [ "$NPM_CACHE_VERIFY" = "1" ] || [ "$NPM_CACHE_CLEAN" = "1" ]; then
+      log "skip: npm не найден"
+    fi
+  fi
+}
+
+flatpak_unused() {
+  [ "$FLATPAK_UNUSED" = "1" ] || return 0
+  if ! command -v flatpak >/dev/null 2>&1; then
+    log "skip: flatpak не найден"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: flatpak uninstall --unused -y"
+  else
+    flatpak uninstall --unused -y || true
+  fi
+}
+
+docker_prune() {
+  [ "$DOCKER_PRUNE" = "1" ] || return 0
+  if ! command -v docker >/dev/null 2>&1; then
+    log "skip: docker не найден"
+    return 0
+  fi
+  local vols=""
+  [ "$DOCKER_PRUNE_VOLUMES" = "1" ] && vols=" --volumes"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: docker system prune -af${vols}"
+  else
+    docker system prune -af${vols} || true
+  fi
+}
+
+clean_tmp_all()   { [ "$CLEAN_TMP" = "1" ] && cleanup_tmp_path "/tmp" "$TMP_MAX_AGE_DAYS"; }
+clean_vartmp_all(){ [ "$CLEAN_VARTMP" = "1" ] && cleanup_tmp_path "/var/tmp" "$VARTMP_MAX_AGE_DAYS"; }
+
 human() { numfmt --to=iec --suffix=B 2>/dev/null; }
 free_bytes() { df -B1 --output=avail / | tail -1 | tr -d ' '; }
 
@@ -259,8 +424,24 @@ clean_huggingface
 clean_chrome_model
 clean_vscode_caches
 clean_pyppeteer_share
+
+# Системные шаги (по возможности без пароля sudo)
 vacuum_journal
+clean_old_log_gz
+snap_set_retain
 snap_cleanup_disabled
+clean_snapd_cache
+clean_var_crash
+apt_maintenance
+clean_tmp_all
+clean_vartmp_all
+
+# Пакетные менеджеры/платформы (опционально)
+npm_cache_ops
+flatpak_unused
+docker_prune
+
+# Удаление ML-пакетов и обслуживание БД (опционально)
 uninstall_ml_packages
 vacuum_sqlite
 
