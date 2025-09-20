@@ -137,7 +137,7 @@ alias myip="curl -s https://ipinfo.io/json | jq -r '\"Current IP: \" + .ip, \
     \"Region: \" + .region, \
     \"Country: \" + .country'"
 alias gca="git add . && git commit -m'Auto-commit' && git push"
-alias cls="~/clean-sys.sh"
+alias cls="sudo ~/clean-sys.sh"
 alias stt="speedtest"
 alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
