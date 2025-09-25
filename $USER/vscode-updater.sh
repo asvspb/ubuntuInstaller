@@ -157,39 +157,6 @@ update_vscode() {
     fi
 }
 
-# Безопасная очистка Docker (контейнеры/образы/кэш)
-# Управляющие переменные (опционально):
-#   DOCKER_PRUNE_CONTAINERS_UNTIL (по умолчанию 24h)
-#   DOCKER_PRUNE_IMAGES_UNTIL    (по умолчанию 168h)
-#   DOCKER_PRUNE_BUILDER_UNTIL   (по умолчанию 168h)
-#   DOCKER_DEEP_PRUNE=true       (включает docker system prune --volumes)
-#   DOCKER_DEEP_PRUNE_UNTIL      (по умолчанию 336h)
-
-docker_prune_safe() {
-    if ! command -v docker >/dev/null 2>&1; then
-        log "INFO: Docker не установлен — очистка пропущена"
-        return 0
-    fi
-    local until_cont="${DOCKER_PRUNE_CONTAINERS_UNTIL:-24h}"
-    local until_img="${DOCKER_PRUNE_IMAGES_UNTIL:-168h}"
-    local until_builder="${DOCKER_PRUNE_BUILDER_UNTIL:-168h}"
-
-    log "INFO: Docker prune — остановленные контейнеры старше ${until_cont}"
-    docker container prune -f --filter "until=${until_cont}" >/dev/null 2>&1 || true
-
-    log "INFO: Docker prune — висячие образы (dangling)"
-    docker image prune -f >/dev/null 2>&1 || true
-
-    log "INFO: Docker builder prune — кэш старше ${until_builder}"
-    docker builder prune -af --filter "until=${until_builder}" >/dev/null 2>&1 || true
-
-    if [ "${DOCKER_DEEP_PRUNE:-false}" = "true" ]; then
-        local deep_until="${DOCKER_DEEP_PRUNE_UNTIL:-336h}"
-        log "INFO: Docker deep prune — полная очистка (включая тома) старше ${deep_until}"
-        docker system prune -af --volumes --filter "until=${deep_until}" >/dev/null 2>&1 || true
-    fi
-}
-
 # Создаем файл лога, если он не существует
 if [ ! -f "$LOG_FILE" ]; then
     touch "$LOG_FILE"
@@ -197,16 +164,10 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 # Запускаем обновление
-EXIT_CODE=0
 if update_vscode; then
     log "INFO: Скрипт выполнен успешно"
+    exit 0
 else
     log "ERROR: Скрипт завершился с ошибкой"
-    EXIT_CODE=1
+    exit 1
 fi
-
-# Всегда выполняем безопасную очистку Docker в конце
-# (ошибки очистки не влияют на код возврата скрипта)
-docker_prune_safe || true
-
-exit ${EXIT_CODE}
