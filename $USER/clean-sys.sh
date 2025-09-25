@@ -54,6 +54,13 @@ FLATPAK_UNUSED="${FLATPAK_UNUSED:-0}"
 
 DOCKER_PRUNE="${DOCKER_PRUNE:-0}"
 DOCKER_PRUNE_VOLUMES="${DOCKER_PRUNE_VOLUMES:-0}"
+# Расширенная безопасная очистка Docker (тонкая настройка)
+DOCKER_SAFE_PRUNE="${DOCKER_SAFE_PRUNE:-1}"
+DOCKER_PRUNE_CONTAINERS_UNTIL="${DOCKER_PRUNE_CONTAINERS_UNTIL:-24h}"
+DOCKER_PRUNE_IMAGES_UNTIL="${DOCKER_PRUNE_IMAGES_UNTIL:-168h}"
+DOCKER_PRUNE_BUILDER_UNTIL="${DOCKER_PRUNE_BUILDER_UNTIL:-168h}"
+DOCKER_DEEP_PRUNE="${DOCKER_DEEP_PRUNE:-0}"
+DOCKER_DEEP_PRUNE_UNTIL="${DOCKER_DEEP_PRUNE_UNTIL:-336h}"
 
 log() { printf '%s %s %s\n' "$(date '+%F %T')" "$LOG_PREFIX" "$*"; }
 size_of() { du -sh "$1" 2>/dev/null | awk '{print $1}'; }
@@ -399,6 +406,36 @@ docker_prune() {
   fi
 }
 
+docker_prune_safe() {
+  [ "$DOCKER_SAFE_PRUNE" = "1" ] || return 0
+  if ! command -v docker >/dev/null 2>&1; then
+    log "skip: docker не найден (safe prune)"
+    return 0
+  fi
+  local cont_until="$DOCKER_PRUNE_CONTAINERS_UNTIL"
+  local img_until="$DOCKER_PRUNE_IMAGES_UNTIL"
+  local builder_until="$DOCKER_PRUNE_BUILDER_UNTIL"
+
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: docker container prune -f --filter until=${cont_until}"
+    log "DRY-RUN: docker image prune -f"
+    log "DRY-RUN: docker builder prune -af --filter until=${builder_until}"
+  else
+    docker container prune -f --filter "until=${cont_until}" >/dev/null 2>&1 || true
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -af --filter "until=${builder_until}" >/dev/null 2>&1 || true
+  fi
+
+  if [ "$DOCKER_DEEP_PRUNE" = "1" ]; then
+    local deep_until="$DOCKER_DEEP_PRUNE_UNTIL"
+    if [ "$DRY_RUN" = "1" ]; then
+      log "DRY-RUN: docker system prune -af --volumes --filter until=${deep_until}"
+    else
+      docker system prune -af --volumes --filter "until=${deep_until}" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 clean_tmp_all()   { [ "$CLEAN_TMP" = "1" ] && cleanup_tmp_path "/tmp" "$TMP_MAX_AGE_DAYS"; }
 clean_vartmp_all(){ [ "$CLEAN_VARTMP" = "1" ] && cleanup_tmp_path "/var/tmp" "$VARTMP_MAX_AGE_DAYS"; }
 
@@ -439,6 +476,10 @@ clean_vartmp_all
 # Пакетные менеджеры/платформы (опционально)
 npm_cache_ops
 flatpak_unused
+# Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
+docker_prune_safe
+
+docker_prune
 docker_prune
 
 # Удаление ML-пакетов и обслуживание БД (опционально)
