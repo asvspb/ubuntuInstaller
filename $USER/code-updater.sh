@@ -15,6 +15,7 @@ print_header() {
 }
 
 print_header "Updating js && python..."
+cd ~ # Change to home directory to ensure write permissions
 curl -qL https://www.npmjs.com/install.sh | sh
 sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip
 
