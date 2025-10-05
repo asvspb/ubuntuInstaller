@@ -8,9 +8,9 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 *   `2_ubuntuDocker`: Installs Docker and a development environment. Requires a reboot after execution.
 *   `3_ubuntuPack`: Installs a comprehensive suite of applications for developers.
 *   `4_snap-apps`: Installs recommended Snap applications.
-*   `6_snap-apps`: Installs recommended Snap applications.
-*   `7_samsung-printer-driver`: Installs the driver for Samsung printers.
-*   `8_zerotier-client_en`: Installs the ZeroTier client for Ubuntu.
+*   `5_samsung-printer-driver`: Installs the driver for Samsung printers.
+*   `6_zerotier-client_en`: Installs the ZeroTier client for Ubuntu.
+*   `7_vbox.py`: Installs VirtualBox and sets up a development environment for virtual machines.
 
 ## Additional Files
 
