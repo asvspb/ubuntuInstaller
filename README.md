@@ -7,8 +7,7 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 *   `1_ubuntuStart`: Sets the system time, installs a minimal set of networking tools, Chrome, and Telegram. It also disables the sudo password prompt.
 *   `2_ubuntuDocker`: Installs Docker and a development environment. Requires a reboot after execution.
 *   `3_ubuntuPack`: Installs a comprehensive suite of applications for developers.
-*   `4_py-update`: Installs the latest versions of Python.
-*   `5_js-update`: Installs the latest JavaScript environment.
+*   `4_snap-apps`: Installs recommended Snap applications.
 *   `6_snap-apps`: Installs recommended Snap applications.
 *   `7_samsung-printer-driver`: Installs the driver for Samsung printers.
 *   `8_zerotier-client_en`: Installs the ZeroTier client for Ubuntu.

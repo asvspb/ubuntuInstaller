@@ -16,7 +16,7 @@ if [ -f /etc/needrestart/needrestart.conf ]; then
   sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
 else
   sudo mkdir -p /etc/needrestart
-  echo '$nrconf{restart}' = \'a\'';' > nrconf
+  echo '$nrconf{restart} = '\''a'\'';' > nrconf
   sudo cp nrconf /etc/needrestart/needrestart.conf
   rm nrconf
 fi
