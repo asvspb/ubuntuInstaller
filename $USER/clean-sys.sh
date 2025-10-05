@@ -480,7 +480,6 @@ flatpak_unused
 docker_prune_safe
 
 docker_prune
-docker_prune
 
 # Удаление ML-пакетов и обслуживание БД (опционально)
 uninstall_ml_packages
