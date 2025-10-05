@@ -171,3 +171,6 @@ else
     log "ERROR: Скрипт завершился с ошибкой"
     exit 1
 fi
+
+echo "Installing gemini-cli && qwen-cli"
+npm install -g @google/gemini-cli@latest && npm install -g qwen-cli@latestnpm install -g @qwen-code/qwen-code@latest
