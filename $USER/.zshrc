@@ -142,10 +142,6 @@ alias stt="speedtest"
 alias smon="sudo btop"
 NET_ADAPTER=$(ifconfig | grep -oE '^[^ ]+:' | grep -oE 'wl[^:]+')
 alias nmon="sudo iftop -i $NET_ADAPTER"
-alias jsup="curl -qL https://www.npmjs.com/install.sh | sh"
-alias pyup="sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip"
-alias code="npm install -g @google/gemini-cli@latest && 
-npm install -g @qwen-code/qwen-code@latest"
 alias sysupg="sudo apt update && sudo apt upgrade -y"
 alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
@@ -153,9 +149,7 @@ alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@193.148.59.14' #hiplet server
-
-# Alias для обновления VSCode через наш скрипт
-alias vscode='~/vscode-updater.sh'
+alias code='~/code-updater.sh'
 
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
@@ -259,16 +253,16 @@ ztd() {
     _zt_wait_for_ip_change "$initial_ip"
 }
 
+
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
 bigfiles  - покажет размеры самых больших файлов
 cls       - очистка от мусора
-code      - обновление cli утилит gemini, qwen
+code      - обновление vscode, js, py, gemini-cli, qwen-cli
 con1      - подключиться к удаленному серверу
 fzf       - консольный поисковик
 gca       - автокомит и пуш на репозиторий
-jsup      - обновление js
 lan       - показывает список IP в локальной сети
 myip      - показывает текущий IP
 ncdu      - показывает размеры директорий
@@ -277,13 +271,11 @@ nmon      - миниторинг сетевых процессов
 obsid     - сохранение obsidian
 pbcopy    - скопировать в буфер обмена
 pbpaste   - вставить из буфера обмена
-pyup      - обновление python
 ranger    - консольный файловый менеджер
 smon      - миниторинг процессов
 stt       - консольный замер скорости
 sysupg    - апгрейд всей системы
 tldr      - упрощенный хелпер линукс
-vscode    - проверка и обновление версии vscode
 ztup      - включить zerotier
 ztd       - выключить zerotier
 zts       - показать статус zerotier
