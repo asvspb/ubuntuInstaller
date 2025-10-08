@@ -34,7 +34,7 @@ sudo pip3 install --upgrade pip
 sudo apt install code gcc default-jdk -y
 # install system packages
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
-sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common  -y
+sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common exa batcat fd-find ripgrep duf zoxide rclone -y
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor -y
 
 
@@ -49,7 +49,7 @@ echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
 npm install -g @google/gemini-cli@latest
-npm install -g @qwen-code/qwen-code@latest
+npm install -g @qwen-code/qwen-coder@latest
 npm install -g codebuff
 npm install -g @github/copilot
 
