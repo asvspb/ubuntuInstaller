@@ -49,7 +49,7 @@ echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
 npm install -g @google/gemini-cli@latest
-npm install -g @qwen-code/qwen-coder@latest
+npm install -g @qwen-code/qwen-code@latest
 npm install -g codebuff
 npm install -g @github/copilot
 
