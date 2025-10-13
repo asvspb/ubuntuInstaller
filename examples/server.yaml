@@ -1,0 +1,20 @@
+# Пример конфигурации для серверной системы
+# Этот профиль устанавливает минимальную среду для сервера без графического интерфейса
+
+settings:
+  non_interactive: true
+  log_file: "/var/log/ubuntuInstaller/install.log"
+profile: "server"
+roles_enabled:
+  - name: 0-base-system
+  - name: 20-docker
+    enabled: true
+  - name: 30-secure-default
+  - name: 70-zerotier-client  # Для удаленного доступа к серверу
+  # Отключаем GUI-ориентированные роли для сервера
+  # - name: 10-dev-tools
+  # - name: 40-snap-apps
+  # - name: 50-dev-pack
+  # - name: 60-samsung-printer  # Не требуется на сервере
+  # - name: 80-virtualbox      # Не требуется на сервере
+  # - name: 90-laptop-optimization  # Не требуется на сервере

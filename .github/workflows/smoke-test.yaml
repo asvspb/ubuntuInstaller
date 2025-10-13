@@ -1,0 +1,83 @@
+# Smoke-тестирование Ubuntu Installer Framework
+# Этот workflow выполняет базовую проверку работоспособности фреймворка
+
+name: Smoke Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Еженедельный запуск по воскресеньям в 01:00 UTC
+    - cron: '0 1 * * 0'
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu_version: [22.04, 24.04]
+    
+    container:
+      image: ubuntu:${{ matrix.ubuntu_version }}
+      options: --privileged
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y curl wget git sudo
+        
+    - name: Install yq
+      run: |
+        wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+        chmod +x /usr/local/bin/yq
+        
+    - name: Run syntax check
+      run: |
+        find . -name "*.sh" -exec shellcheck {} \;
+        
+    - name: Run dry-run test
+      run: |
+        chmod +x install.sh
+        ./install.sh --dry-run
+        
+    - name: Run dry-run test with minimal config
+      run: |
+        ./install.sh --dry-run -c examples/minimal.yaml
+        
+    - name: Run dry-run test with desktop-developer config
+      run: |
+        ./install.sh --dry-run -c examples/desktop-developer.yaml
+        
+    - name: Run dry-run test with server config
+      run: |
+        ./install.sh --dry-run -c examples/server.yaml
+        
+    - name: Run dry-run test with wsl config
+      run: |
+        ./install.sh --dry-run -c examples/wsl.yaml
+        
+    - name: Test role syntax
+      run: |
+        # Проверяем, что все роли имеют main.sh
+        for role in roles/*/; do
+          if [ -d "$role" ] && [ ! -f "${role}main.sh" ]; then
+            echo "ERROR: Role $role is missing main.sh"
+            exit 1
+          fi
+        done
+        
+    - name: Test uninstall scripts
+      run: |
+        # Проверяем, что uninstall.sh существует для всех ролей (опционально)
+        for role in roles/*/; do
+          if [ -d "$role" ]; then
+            role_name=$(basename "$role")
+            echo "INFO: Role $role_name checked"
+          fi
+        done

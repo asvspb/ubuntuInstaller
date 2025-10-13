@@ -1,0 +1,19 @@
+# Пример минимальной конфигурации
+# Этот профиль устанавливает только базовую систему без дополнительных ролей
+
+settings:
+  non_interactive: true
+  log_file: "/var/log/ubuntuInstaller/install.log"
+profile: "auto"  # Автоматическое определение профиля
+roles_enabled:
+  - name: 0-base-system
+  # Отключаем все дополнительные роли для минимальной установки
+  # - name: 10-dev-tools
+  # - name: 20-docker
+  # - name: 30-secure-default
+  # - name: 40-snap-apps
+  # - name: 50-dev-pack
+  # - name: 60-samsung-printer
+  # - name: 70-zerotier-client
+  # - name: 80-virtualbox
+  # - name: 90-laptop-optimization
