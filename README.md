@@ -8,7 +8,18 @@ This repository contains a framework to automate the setup of a new Ubuntu insta
 *   `config.yaml`: Configuration file defining what components to install (profiles, roles, variables).
 *   `lib.sh`: Common library functions for all modules (logging, error handling, package management, etc.).
 *   `Makefile`: Contains targets for linting, formatting, dry-run, and installation.
-*   `roles/`: Directory containing modular roles for different components (base-system, dev-tools, docker, etc.).
+*   `roles/`: Directory containing modular roles for different components:
+    * `0-base-system` - установка базовой системы и настройка основных параметров
+    * `10-dev-tools` - установка и настройка инструментов разработчика
+    * `20-docker` - установка и настройка Docker и связанных инструментов
+    * `30-secure-default` - установка и настройка параметров безопасности по умолчанию
+    * `40-snap-apps` - установка рекомендуемых Snap приложений
+    * `50-dev-pack` - установка комплексного набора приложений для разработчиков
+    * `60-samsung-printer` - установка драйвера для Samsung принтеров
+    * `70-zerotier-client` - установка ZeroTier клиента для Ubuntu
+    * `80-virtualbox` - установка VirtualBox и настройка среды для виртуальных машин
+    * `90-laptop-optimization` - оптимизация для ноутбуков
+    * `95-user-config` - установка конфигурационных файлов из директории $USER в домашнюю директорию пользователя
 
 ## Scripts (Legacy)
 

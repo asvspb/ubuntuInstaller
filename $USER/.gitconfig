@@ -9,8 +9,8 @@
 	windowMemory = 2047m
 
 [user]
-	email = asvdevpro@gmail.com
-	name = asv-spb
+	email = 
+	name = 
 
 [cola]
 	spellcheck = false
@@ -67,6 +67,3 @@
 
 [gc]
 	auto = 256
-
-[safe]
-	directory = /mnt/BASIC/Dev/
