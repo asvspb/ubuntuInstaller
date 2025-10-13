@@ -172,6 +172,81 @@ gpg_verify() {
 	gpg --verify "$signature_path" "$file_path"
 }
 
+# Функция безопасного скачивания файла с верификацией
+download_with_verification() {
+	local url=$1
+	local dest_path=$2
+	local expected_hash=$3
+	local hash_algorithm=${4:-sha256}
+	local signature_url=$5
+	local public_key_url=$6
+
+	if [ "$DRY_RUN" = "true" ]; then
+		log "INFO" "[DRY-RUN] Скачивание файла из $url в $dest_path (не выполнено)"
+		return 0
+	fi
+
+	log "INFO" "Скачивание файла из $url в $dest_path"
+	
+	# Скачивание файла
+	if ! curl -L -o "$dest_path" "$url"; then
+	log "ERROR" "Не удалось скачать файл из $url"
+		return 1
+	fi
+
+	# Скачивание публичного ключа, если указан
+	local temp_key_path=""
+	if [ -n "$public_key_url" ]; then
+		temp_key_path="/tmp/pubkey.$$.gpg"
+		if ! curl -L -o "$temp_key_path" "$public_key_url"; then
+			log "ERROR" "Не удалось скачать публичный ключ из $public_key_url"
+			rm -f "$dest_path"
+			return 1
+		fi
+	fi
+
+	# Скачивание подписи, если указана
+	local temp_signature_path=""
+	if [ -n "$signature_url" ]; then
+		temp_signature_path="/tmp/signature.$$.asc"
+		if ! curl -L -o "$temp_signature_path" "$signature_url"; then
+			log "ERROR" "Не удалось скачать подпись из $signature_url"
+			rm -f "$dest_path" "$temp_key_path"
+			return 1
+	fi
+	fi
+
+	# Проверка подписи, если она указана
+	if [ -n "$temp_signature_path" ]; then
+		if ! gpg_verify "$dest_path" "$temp_signature_path" "$temp_key_path"; then
+			log "ERROR" "Проверка GPG подписи не пройдена для $dest_path"
+			rm -f "$dest_path" "$temp_signature_path" "$temp_key_path"
+			return 1
+		fi
+		log "INFO" "GPG подпись для $dest_path подтверждена"
+	fi
+
+	# Проверка хэша, если он указан
+	if [ -n "$expected_hash" ]; then
+	if ! hash_verify "$dest_path" "$expected_hash" "$hash_algorithm"; then
+			log "ERROR" "Хэш файла $dest_path не совпадает с ожидаемым"
+			rm -f "$dest_path" "$temp_signature_path" "$temp_key_path"
+			return 1
+		fi
+		log "INFO" "Хэш файла $dest_path подтверждён"
+	fi
+
+	# Удаление временных файлов
+	if [ -n "$temp_signature_path" ] && [ -f "$temp_signature_path" ]; then
+		rm -f "$temp_signature_path"
+	fi
+	if [ -n "$temp_key_path" ] && [ -f "$temp_key_path" ]; then
+		rm -f "$temp_key_path"
+	fi
+
+	return 0
+}
+
 # Функция предварительной проверки системы
 preflight_checks() {
 	log "INFO" "Выполнение предварительных проверок системы..."

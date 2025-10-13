@@ -76,29 +76,55 @@ The Ubuntu Installer Framework follows a modular, declarative approach:
       log_file: "/var/log/ubuntuInstaller/install.log"
     profile: "developer"
     roles_enabled:
-      - name: base-system
-      - name: dev-tools
+      - name: 0-base-system
+      - name: 10-dev-tools
         vars:
           install_vscode: true
           install_pycharm: false
-      - name: docker
+      - name: 20-docker
         enabled: true
     ```
 3. Run a dry-run to simulate the installation:
     ```bash
+    # Using make (simplified simulation)
     make dry-run
+    
+    # Using the main script (full simulation with configuration processing)
+    ./install.sh --dry-run
     ```
 4. Run the installation:
     ```bash
+    sudo ./install.sh install
+    # Or using make
     sudo make install
+    ```
+5. To uninstall components:
+    ```bash
+    sudo ./install.sh uninstall
+    # Or using make
+    sudo make uninstall
+    ```
+6. To update installed components:
+    ```bash
+    sudo ./install.sh update
+    # Or using make
+    sudo make update
+    ```
+
+### Interactive Mode
+The framework includes a mini-TUI for interactive selection of profiles and roles:
+    ```bash
+    sudo ./mini-tui.sh
     ```
 
 ### Makefile Targets
 
 * `make lint` - Check syntax of all shell scripts using shellcheck
 * `make fmt` - Format all shell scripts using shfmt
-* `make dry-run` - Simulate installation without making changes
+* `make dry-run` - Simulate installation without making changes (simplified)
 * `make install` - Execute the installation process
+* `make uninstall` - Remove installed components
+* `make update` - Update installed components
 * `make info` - Display framework information
 
 ### Configuration Options
@@ -109,11 +135,12 @@ The `config.yaml` file supports the following options:
 * `settings.log_file` - Path to log file (default: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
 * `profile` - System profile (developer, server, wsl)
 * `roles_enabled` - List of roles to execute with optional variables
+* `roles_enabled[n].enabled` - Enable or disable specific role (default: true)
 
 ### Role Development
 
 To create a new role:
-1. Create a directory in `roles/` with a numeric prefix (e.g., `10-dev-tools/`)
+1. Create a directory in `roles/` with a numeric prefix (e.g., `30-new-role/`)
 2. Add a `main.sh` script that uses functions from `lib.sh`
 3. Reference the role in `config.yaml`
 

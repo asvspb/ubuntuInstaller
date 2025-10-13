@@ -56,7 +56,19 @@ dry-run:
 .PHONY: install
 install:
 	@echo -e "$(GREEN)Запуск установки...$(NC)"
-	@./install.sh
+	@./install.sh install
+
+# Цель для запуска удаления
+.PHONY: uninstall
+uninstall:
+	@echo -e "$(GREEN)Запуск удаления...$(NC)"
+	@./install.sh uninstall
+
+# Цель для запуска обновления
+.PHONY: update
+update:
+	@echo -e "$(GREEN)Запуск обновления...$(NC)"
+	@./install.sh update
 
 # Цель для получения информации о проекте
 .PHONY: info
@@ -70,4 +82,6 @@ info:
 	@echo "  make fmt      - форматирование скриптов"
 	@echo "  make dry-run  - симуляция установки"
 	@echo "  make install  - запуск установки"
+	@echo "  make uninstall - запуск удаления"
+	@echo "  make update   - запуск обновления"
 	@echo "  make info     - информация о проекте"

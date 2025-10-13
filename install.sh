@@ -14,15 +14,21 @@ source "$SCRIPT_DIR/lib.sh"
 CONFIG_FILE="config.yaml"
 DRY_RUN_FLAG=false
 VERBOSE=false
+COMMAND="install"  # install, uninstall, update
 
 # Функция вывода справки
 show_help() {
 	cat <<EOF
-Использование: $0 [ОПЦИИ]
+Использование: $0 [КОМАНДА] [ОПЦИИ]
+
+Команды:
+    install             Запуск установки (по умолчанию)
+    uninstall           Удаление компонентов
+    update              Обновление установленных компонентов
 
 Опции:
     -c, --config FILE    Путь к конфигурационному файлу (по умолчанию: config.yaml)
-    --dry-run           Симуляция установки без изменений в системе
+    --dry-run           Симуляция выполнения команды без изменений в системе
     -v, --verbose       Подробный вывод
     -h, --help          Показать это справочное сообщение
 EOF
@@ -31,6 +37,10 @@ EOF
 # Парсинг аргументов командной строки
 while [[ $# -gt 0 ]]; do
 	case $1 in
+	install|uninstall|update)
+		COMMAND="$1"
+	shift
+		;;
 	-c | --config)
 		CONFIG_FILE="$2"
 		shift 2
@@ -62,6 +72,49 @@ if [ "$DRY_RUN_FLAG" = true ]; then
 else
 	export UBUNTU_INSTALLER_DRY_RUN=false
 fi
+
+# Путь к state-файлу
+STATE_FILE="/var/lib/ubuntuInstaller.state"
+
+# Функция для чтения установленных ролей из state-файла
+read_installed_roles() {
+	if [ -f "$STATE_FILE" ]; then
+		cat "$STATE_FILE"
+	else
+		echo ""
+	fi
+}
+
+# Функция для записи установленной роли в state-файл
+write_installed_role() {
+	local role_name=$1
+	local installed_roles=$(read_installed_roles)
+	
+	# Проверяем, не записана ли уже роль в state-файле
+	if ! echo "$installed_roles" | grep -q "^$role_name$"; then
+		if [ "$DRY_RUN_FLAG" = true ]; then
+			log "INFO" "[DRY-RUN] Запись роли $role_name в state-файл (не выполнена)"
+		else
+			# Создаем директорию, если она не существует
+			sudo mkdir -p "$(dirname "$STATE_FILE")"
+			# Добавляем роль в state-файл
+			echo "$role_name" | sudo tee -a "$STATE_FILE" >/dev/null
+	fi
+	fi
+}
+
+# Функция для удаления роли из state-файла
+remove_role_from_state() {
+	local role_name=$1
+	if [ -f "$STATE_FILE" ]; then
+		if [ "$DRY_RUN_FLAG" = true ]; then
+			log "INFO" "[DRY-RUN] Удаление роли $role_name из state-файла (не выполнено)"
+		else
+			# Удаляем роль из state-файла
+			sudo sed -i "/^$role_name$/d" "$STATE_FILE"
+		fi
+	fi
+}
 
 # Функция проверки наличия yq для парсинга YAML
 check_yq() {
@@ -203,26 +256,153 @@ run_roles() {
 			fi
 			# Выполняем скрипт роли
 			bash "$role_script"
-		fi
+			# Записываем роль в state-файл после успешной установки
+			write_installed_role "$role_name"
+	fi
 	done
 	
 	log "INFO" "Найдено включенных ролей для установки: $enabled_roles_count"
 }
 
+# Функция для выполнения команды uninstall
+run_uninstall() {
+	log "INFO" "Запуск удаления ролей из конфигурации"
+	
+	# Проверка доступности yq
+	check_yq
+
+	# Получение списка ролей из конфигурации
+	if [ "$DRY_RUN_FLAG" = false ]; then
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE")
+	else
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+	fi
+
+	log "INFO" "Найдено ролей для удаления: $roles_count"
+
+	# Обработка каждой роли из конфигурации
+	for i in $(seq 0 $((roles_count - 1))); do
+		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE" 2>/dev/null || echo "null")
+		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null)
+		# Если значение не найдено (null), используем значение по умолчанию (true)
+		if [ "$role_enabled_raw" = "null" ] || [ -z "$role_enabled_raw" ]; then
+			local role_enabled="true"
+		else
+			local role_enabled="$role_enabled_raw"
+	fi
+		
+		# Проверяем, что роль существует
+		if [ "$role_name" = "null" ]; then
+			log "WARN" "Не удалось получить имя роли $i, пропуск"
+			continue
+		fi
+		
+		# В симуляции, если yq не может получить значение, и оно вернулось как "null",
+		# используем значение по умолчанию (true)
+		if [ "$DRY_RUN_FLAG" = true ] && [ "$role_enabled" = "null" ]; then
+			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null || echo "null")
+			if [ "$role_enabled" = "null" ]; then
+				role_enabled="true"
+			fi
+		fi
+		
+		# Пропускаем роль, если она отключена
+		if [ "$role_enabled" = "false" ]; then
+			log "INFO" "Роль $role_name отключена в конфигурации, пропуск"
+			continue
+		fi
+		
+		# Путь к директории роли
+	local role_dir="$SCRIPT_DIR/roles/$role_name"
+		
+		# Проверяем существование директории роли
+	if [ ! -d "$role_dir" ]; then
+			log "ERROR" "Директория роли $role_name не найдена: $role_dir"
+			continue
+		fi
+		
+		# Путь к скрипту uninstall роли (если существует)
+		local role_uninstall_script="$role_dir/uninstall.sh"
+		
+		if [ -f "$role_uninstall_script" ]; then
+			if [ "$DRY_RUN_FLAG" = true ]; then
+				log "INFO" "[DRY-RUN] Запуск удаления роли $role_name (симуляция)"
+			else
+				log "INFO" "Запуск удаления роли $role_name"
+				# Выполняем скрипт удаления роли
+				bash "$role_uninstall_script"
+			fi
+			# Удаляем роль из state-файла
+			remove_role_from_state "$role_name"
+		else
+			log "WARN" "Скрипт uninstall.sh для роли $role_name не найден: $role_uninstall_script"
+		fi
+	done
+	
+	log "INFO" "Удаление завершено"
+}
+
+# Функция для выполнения команды update
+run_update() {
+	log "INFO" "Запуск обновления ролей из конфигурации"
+	
+	# В режиме обновления просто перезапускаем установку
+	run_roles
+	
+	log "INFO" "Обновление завершено"
+}
+
 # Основная функция
 main() {
-	log "INFO" "Запуск установки Ubuntu с использованием фреймворка"
+	case $COMMAND in
+		install)
+			log "INFO" "Запуск установки Ubuntu с использованием фреймворка"
+			
+			# Загрузка конфигурации
+			load_config
 
-	# Загрузка конфигурации
-	load_config
+			# Запуск предустановочных проверок
+			run_preflight_checks
 
-	# Запуск предустановочных проверок
-	run_preflight_checks
+			# Запуск ролей
+			run_roles
 
-	# Запуск ролей
-	run_roles
+			log "INFO" "Установка завершена успешно"
+			;;
+		uninstall)
+			log "INFO" "Запуск удаления компонентов Ubuntu с использованием фреймворка"
+			
+			# Загрузка конфигурации
+			load_config
 
-	log "INFO" "Установка завершена успешно"
+			# Запуск предустановочных проверок
+			run_preflight_checks
+
+			# Запуск удаления ролей
+			run_uninstall
+
+			log "INFO" "Удаление завершено успешно"
+			;;
+		update)
+			log "INFO" "Запуск обновления компонентов Ubuntu с использованием фреймворка"
+			
+			# Загрузка конфигурации
+			load_config
+
+			# Запуск предустановочных проверок
+			run_preflight_checks
+
+			# Запуск обновления ролей
+			run_update
+
+			log "INFO" "Обновление завершено успешно"
+			;;
+		*)
+			log "ERROR" "Неизвестная команда: $COMMAND"
+			show_help
+			exit 1
+			;;
+	esac
 }
 
 # Запуск основной функции
