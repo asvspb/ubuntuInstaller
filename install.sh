@@ -129,32 +129,84 @@ run_roles() {
 	check_yq
 
 	# Получение списка ролей из конфигурации
-	local roles
 	if [ "$DRY_RUN_FLAG" = false ]; then
-		roles=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE")
 	else
-		roles=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
 	fi
 
-	log "INFO" "Найдено ролей для установки: $roles"
+	log "INFO" "Найдено ролей для установки: $roles_count"
 
-	# Если в режиме симуляции и yq недоступен, просто выводим сообщение
-	if [ "$DRY_RUN_FLAG" = true ] && [ "$roles" = "0" ]; then
-		log "INFO" "[DRY-RUN] Предполагаем, что есть 3 стандартные роли для установки"
-		roles=3
-	fi
-
-	# В текущей реализации просто симулируем запуск ролей
-	# В будущем здесь будет логика для последовательного запуска ролей из директории roles/
-	for i in $(seq 1 $roles); do
-		if [ "$DRY_RUN_FLAG" = true ]; then
-			log "INFO" "[DRY-RUN] Запуск роли $(($i - 1)) (симуляция)"
+	# Подсчет реально включенных ролей
+	local enabled_roles_count=0
+	
+	# Обработка каждой роли из конфигурации
+	for i in $(seq 0 $((roles_count - 1))); do
+		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE" 2>/dev/null || echo "null")
+		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null)
+		# Если значение не найдено (null), используем значение по умолчанию (true)
+		if [ "$role_enabled_raw" = "null" ] || [ -z "$role_enabled_raw" ]; then
+			local role_enabled="true"
 		else
-			# В реальной реализации здесь будет вызов конкретной роли
-			log "INFO" "Запуск роли $(($i - 1))"
-			# source "roles/$(($i-1))*"/*.sh
+			local role_enabled="$role_enabled_raw"
+	fi
+		
+		# Проверяем, что роль существует
+		if [ "$role_name" = "null" ]; then
+			log "WARN" "Не удалось получить имя роли $i, пропуск"
+			continue
+		fi
+		
+		# В симуляции, если yq не может получить значение, и оно вернулось как "null",
+		# используем значение по умолчанию (true)
+		if [ "$DRY_RUN_FLAG" = true ] && [ "$role_enabled" = "null" ]; then
+			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null || echo "null")
+			if [ "$role_enabled" = "null" ]; then
+				role_enabled="true"
+			fi
+		fi
+		
+		# Увеличиваем счетчик включенных ролей только если роль не отключена
+		if [ "$role_enabled" != "false" ]; then
+			enabled_roles_count=$((enabled_roles_count + 1))
+		else
+			log "INFO" "Роль $role_name отключена в конфигурации, пропуск"
+			continue
+		fi
+		
+		# Путь к директории роли
+		local role_dir="$SCRIPT_DIR/roles/$role_name"
+		
+		# Проверяем существование директории роли
+		if [ ! -d "$role_dir" ]; then
+			log "ERROR" "Директория роли $role_name не найдена: $role_dir"
+			continue
+		fi
+		
+		# Путь к скрипту main роли
+		local role_script="$role_dir/main.sh"
+		
+		# Проверяем существование скрипта роли
+		if [ ! -f "$role_script" ]; then
+			log "ERROR" "Скрипт main.sh для роли $role_name не найден: $role_script"
+			continue
+		fi
+		
+		if [ "$DRY_RUN_FLAG" = true ]; then
+			log "INFO" "[DRY-RUN] Запуск роли $role_name (симуляция)"
+		else
+			log "INFO" "Запуск роли $role_name"
+			# Передаем в роль переменные, если они определены
+			local role_vars=$(yq ".roles_enabled[$i].vars // {}" "$CONFIG_FILE" 2>/dev/null || echo "{}")
+			if [ "$role_vars" != "{}" ]; then
+				export UBUNTU_INSTALLER_ROLE_VARS="$role_vars"
+			fi
+			# Выполняем скрипт роли
+			bash "$role_script"
 		fi
 	done
+	
+	log "INFO" "Найдено включенных ролей для установки: $enabled_roles_count"
 }
 
 # Основная функция

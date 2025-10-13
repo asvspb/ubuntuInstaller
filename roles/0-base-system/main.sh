@@ -56,18 +56,24 @@ setup_security() {
 # Функция настройки sudo без пароля (опционально)
 setup_sudo_nopasswd() {
 	log "INFO" "Настройка sudo без пароля"
-
+	
 	# Установка переменной DRY_RUN из окружения
 	local DRY_RUN="${UBUNTU_INSTALLER_DRY_RUN:-false}"
-
+	
 	if [ "$DRY_RUN" = "true" ]; then
 		log "INFO" "[DRY-RUN] Настройка sudo без пароля (не выполнена)"
 		return 0
 	fi
-
-	# Создание файла sudoers.d для пользователя
-	echo "${USER} ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/90-nopasswd
-	chmod 0440 /etc/sudoers.d/90-nopasswd
+	
+	# Проверка существования записи в sudoers.d
+	if ! grep -q "${USER} ALL=(ALL) NOPASSWD:ALL" /etc/sudoers.d/90-nopasswd 2>/dev/null; then
+		# Создание файла sudoers.d для пользователя
+		echo "${USER} ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/90-nopasswd
+		chmod 0440 /etc/sudoers.d/90-nopasswd
+		log "INFO" "Запись для ${USER} добавлена в /etc/sudoers.d/90-nopasswd"
+	else
+		log "INFO" "Запись для ${USER} уже существует в /etc/sudoers.d/90-nopasswd"
+	fi
 }
 
 # Функция настройки системных параметров
@@ -82,23 +88,35 @@ setup_system_settings() {
 		return 0
 	fi
 
-	# Установка времени
-	timedatectl set-local-rtc 1 --adjust-system-clock
+	# Установка времени - только если не установлена нужная настройка
+if ! timedatectl status | grep -q "RTC in local TZ: yes"; then
+		timedatectl set-local-rtc 1 --adjust-system-clock
+		log "INFO" "Установлена настройка RTC в локальном часовом поясе"
+	else
+		log "INFO" "Настройка RTC в локальном часовом поясе уже установлена"
+	fi
 
 	# Настройка параметров GNOME
 	if command -v gsettings &>/dev/null; then
 		gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
 	fi
 
-	# Настройка параметров перезапуска служб
-	export DEBIAN_FRONTEND=noninteractive
-	if [ -f /etc/needrestart/needrestart.conf ]; then
-		sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
-		sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
-	else
-		mkdir -p /etc/needrestart
-		echo '$nrconf{restart} = '\''a'\'';' >/etc/needrestart/needrestart.conf
-	fi
+		# Настройка параметров перезапуска служб
+		export DEBIAN_FRONTEND=noninteractive
+		if [ -f /etc/needrestart/needrestart.conf ]; then
+			# Проверяем, не закомментирована ли уже строка и не установлена ли нужная настройка
+			if ! grep -q '^\$nrconf{restart} = '\''a'\'';' /etc/needrestart/needrestart.conf; then
+				sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
+				sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
+				log "INFO" "Настройка автоматического перезапуска служб обновлена"
+			else
+				log "INFO" "Настройка автоматического перезапуска служб уже установлена"
+			fi
+		else
+			mkdir -p /etc/needrestart
+			echo '$nrconf{restart} = '\''a'\'';' >/etc/needrestart/needrestart.conf
+			log "INFO" "Файл настроек needrestart создан"
+		fi
 
 	# Настройка SSH
 	mkdir -p ~/.ssh

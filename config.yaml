@@ -3,10 +3,10 @@ settings:
   log_file: "/var/log/ubuntuInstaller/install.log"
 profile: "developer"
 roles_enabled:
-  - name: base-system
-  - name: dev-tools
+  - name: 0-base-system
+  - name: 10-dev-tools
     vars:
       install_vscode: true
       install_pycharm: false
-  - name: docker
+  - name: 20-docker
     enabled: true
