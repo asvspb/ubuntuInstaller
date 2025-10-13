@@ -74,7 +74,7 @@ The Ubuntu Installer Framework follows a modular, declarative approach:
     settings:
       non_interactive: true
       log_file: "/var/log/ubuntuInstaller/install.log"
-    profile: "developer"
+    profile: "auto" # Автоматическое определение профиля (desktop-developer, server, wsl)
     roles_enabled:
       - name: 0-base-system
       - name: 10-dev-tools
@@ -109,6 +109,20 @@ The Ubuntu Installer Framework follows a modular, declarative approach:
     sudo ./install.sh update
     # Or using make
     sudo make update
+    ```
+
+### Profiles
+The framework supports different system profiles:
+- `desktop-developer`: Полнофункциональная десктопная система для разработки
+- `server`: Серверная система с минимальным набором компонентов
+- `wsl`: Система для Windows Subsystem for Linux
+- `auto`: Автоматическое определение профиля на основе характеристик системы
+
+You can specify a profile in the config file or use one of the predefined profile configs in the `profiles/` directory:
+    ```bash
+    sudo ./install.sh -c profiles/desktop-developer.yaml
+    sudo ./install.sh -c profiles/server.yaml
+    sudo ./install.sh -c profiles/wsl.yaml
     ```
 
 ### Interactive Mode

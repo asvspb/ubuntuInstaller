@@ -1,0 +1,17 @@
+settings:
+  non_interactive: true
+ log_file: "/var/log/ubuntuInstaller/install.log"
+profile: "wsl"
+roles_enabled:
+ - name: 0-base-system
+  - name: 10-dev-tools
+    vars:
+      install_vscode: true
+      install_pycharm: false
+ - name: 20-docker
+    enabled: false  # Docker не поддерживается в WSL по умолчанию
+  - name: 30-secure-default
+ - name: 50-dev-pack
+  # Snap пакеты не рекомендуются для WSL
+  # - name: 40-snap-apps  # Отключено для WSL
+  # - name: 90-laptop-optimization  # Не требуется для WSL

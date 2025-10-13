@@ -18,9 +18,19 @@ install_docker() {
 		return 0
 	fi
 
+	# Определение типа системы
+	local system_type=$(detect_system_type)
+	log "INFO" "Тип системы: $system_type"
+
+	# Проверка, поддерживается ли Docker в текущей системе
+	if [ "$system_type" = "WSL" ]; then
+		log "WARN" "Docker не поддерживается в WSL по умолчанию, пропуск установки"
+		return 0
+	fi
+
 	# Удаление старых версий Docker (если есть)
 	if is_pkg_installed "docker"; then
-		apt remove -y docker docker-engine docker.io containerd runc
+	apt remove -y docker docker-engine docker.io containerd runc
 	fi
 
 	# Установка зависимостей
@@ -29,7 +39,7 @@ install_docker() {
 
 	# Добавление официального GPG ключа Docker
 	if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
-	mkdir -p /etc/apt/keyrings
+		mkdir -p /etc/apt/keyrings
 		curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 	fi
 
@@ -45,7 +55,7 @@ install_docker() {
 
 	# Добавление текущего пользователя в группу docker (только если его там еще нет)
 	if [ "$USER" != "root" ]; then
-	if ! groups "$USER" | grep -q '\bdocker\b'; then
+		if ! groups "$USER" | grep -q '\bdocker\b'; then
 			usermod -aG docker "$USER"
 			log "INFO" "Пользователь $USER добавлен в группу docker"
 	else

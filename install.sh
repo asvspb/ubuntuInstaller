@@ -152,13 +152,26 @@ load_config() {
 		# В реальном режиме
 		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE")
 		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE")
-		PROFILE=$(yq '.profile // "desktop-developer"' "$CONFIG_FILE")
+		# Автоматическое определение профиля, если он не указан в конфигурации
+		CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE")
+		if [ "$CONFIG_PROFILE" = "auto" ]; then
+			PROFILE=$(detect_system_type | tr '[:upper:]' '[:lower:]')
+			log "INFO" "Автоматическое определение профиля: $PROFILE"
+		else
+			PROFILE=$CONFIG_PROFILE
+		fi
 	else
 		# В режиме симуляции
-		log "INFO" "[DRY-RUN] Чтение конфигурации (не из файла)"
+	log "INFO" "[DRY-RUN] Чтение конфигурации (не из файла)"
 		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
 		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE" 2>/dev/null || echo "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log")
-		PROFILE=$(yq '.profile // "desktop-developer"' "$CONFIG_FILE" 2>/dev/null || echo "desktop-developer")
+		CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE" 2>/dev/null || echo "auto")
+		if [ "$CONFIG_PROFILE" = "auto" ]; then
+			PROFILE=$(detect_system_type | tr '[:upper:]' '[:lower:]')
+			log "INFO" "[DRY-RUN] Автоматическое определение профиля: $PROFILE"
+		else
+			PROFILE=$CONFIG_PROFILE
+		fi
 	fi
 
 	export UBUNTU_INSTALLER_NON_INTERACTIVE=$NON_INTERACTIVE

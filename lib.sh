@@ -336,3 +336,62 @@ ensure_snap_pkg() {
 		log "INFO" "Snap пакет $package уже установлен"
 	fi
 }
+
+# Функция определения типа системы (десктоп/сервер/WSL/VM)
+detect_system_type() {
+	# Проверка на WSL
+	if [ -d /proc/sys/fs/binfmt_misc ] && [ -f /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+		echo "WSL"
+		return
+	fi
+
+	# Проверка на виртуальную машину
+	if [ -f /sys/class/dmi/id/product_name ]; then
+		local product_name=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
+		case "$product_name" in
+			*VMware*|*VirtualBox*|*KVM*|*QEMU*|*Virtual\ Machine*|*VM*|*Hypervisor*)
+				echo "VM"
+				return
+				;;
+		esac
+	fi
+
+	# Проверка наличие графической среды
+	if [ -n "$XDG_SESSION_TYPE" ] || [ -n "$DISPLAY" ]; then
+		echo "desktop"
+	else
+		echo "server"
+	fi
+}
+
+# Функция определения типа видеокарты
+detect_gpu_type() {
+	if command -v lspci &>/dev/null; then
+		local gpu_info=$(lspci -nn | grep -i '\[03')
+		if echo "$gpu_info" | grep -qi nvidia; then
+			echo "NVIDIA"
+		elif echo "$gpu_info" | grep -qi amd; then
+			echo "AMD"
+		elif echo "$gpu_info" | grep -qi intel; then
+			echo "Intel"
+		else
+			echo "Unknown"
+		fi
+	else
+		echo "Unknown"
+	fi
+}
+
+# Функция определения типа системы (ноутбук/десктоп)
+detect_system_form_factor() {
+	# Проверка на ноутбук по наличию батареи
+	if [ -d /sys/class/power_supply ]; then
+		for dir in /sys/class/power_supply/*; do
+			if [ -f "$dir/type" ] && [ "$(cat $dir/type 2>/dev/null)" = "Battery" ]; then
+				echo "laptop"
+				return
+			fi
+		done
+	fi
+	echo "desktop"
+}

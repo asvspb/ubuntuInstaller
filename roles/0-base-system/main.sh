@@ -14,7 +14,7 @@ install_base_system() {
 	log "INFO" "Установка базовой системы"
 
 	if [ "$DRY_RUN" = "true" ]; then
-		log "INFO" "[DRY-RUN] Обновление списка пакетов (не выполнено)"
+	log "INFO" "[DRY-RUN] Обновление списка пакетов (не выполнено)"
 		log "INFO" "[DRY-RUN] Установка базовых пакетов (не выполнена)"
 		return 0
 	fi
@@ -23,14 +23,29 @@ install_base_system() {
 	log "INFO" "Обновление списка пакетов"
 	apt update
 
+	# Определение типа системы
+	local system_type=$(detect_system_type)
+	log "INFO" "Тип системы: $system_type"
+
 	# Установка базовых пакетов
 	log "INFO" "Установка базовых пакетов"
-	local base_packages="git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx inxi cpu-x tldr fzf alacarte grub-customizer gparted synaptic openrgb ufw timeshift nala"
+	local base_packages="git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg ubuntu-restricted-extras ncdu ranger btop iftop htop neofetch rpm wireguard jq pipx inxi cpu-x tldr fzf alacarte grub-customizer gparted synaptic nala"
+	
+	# Условная установка пакетов в зависимости от типа системы
+	if [ "$system_type" != "server" ] && [ "$system_type" != "WSL" ]; then
+	# Добавляем GUI-зависимые пакеты для десктопных систем
+		base_packages="$base_packages dconf-editor gnome-shell-extensions gnome-tweaks guake copyq xclip openrgb ufw timeshift"
+	fi
+
 	apt install -y $base_packages
 
-	# Установка snap пакетов
-	log "INFO" "Установка базовых Snap пакетов"
-	ensure_snap_pkg telegram-desktop
+	# Установка snap пакетов (только не для WSL)
+	if [ "$system_type" != "WSL" ]; then
+		log "INFO" "Установка базовых Snap пакетов"
+		ensure_snap_pkg telegram-desktop
+	else
+		log "INFO" "Пропуск установки Snap пакетов для WSL"
+	fi
 }
 
 # Функция настройки безопасности
