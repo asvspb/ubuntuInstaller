@@ -147,6 +147,64 @@ The `config.yaml` file supports the following options:
 
 * `settings.non_interactive` - Run without user prompts (default: true)
 * `settings.log_file` - Path to log file (default: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
+* `profile` - System profile (desktop-developer, server, wsl, auto)
+* `roles_enabled` - List of roles to execute with optional variables
+* `roles_enabled[n].enabled` - Enable or disable specific role (default: true)
+* `roles_enabled[n].vars` - Variables to pass to role
+
+### Role Development
+
+To create a new role:
+1. Create a directory in `roles/` with a numeric prefix (e.g., `30-new-role/`)
+2. Add a `main.sh` script that uses functions from `lib.sh`
+3. Optionally add an `uninstall.sh` script for role removal
+4. Reference the role in `config.yaml`
+
+Roles should be idempotent and support dry-run mode through the `DRY_RUN` variable.
+
+### Phase 4: Rollback and State Management
+
+The framework now supports advanced rollback and state management features:
+
+#### Uninstall Support
+* Each role can have an `uninstall.sh` script for component removal
+* Use `./install.sh uninstall` or `make uninstall` to remove installed components
+* Roles are removed in reverse order of installation
+
+#### Pre-snapshots for Critical Roles
+* Automatic snapshots are created before installing critical roles (0-base-system, 20-docker, 30-secure-default)
+* Requires Timeshift to be installed for snapshot functionality
+* Snapshots are created with descriptive comments for easy identification
+
+#### Update Mechanism
+* Use `./install.sh update` or `make update` to update installed components
+* Roles are updated or reinstalled as needed
+* State tracking ensures only necessary updates are performed
+
+#### State Tracking
+* Installed roles are tracked in `/var/lib/ubuntuInstaller.state`
+* Prevents duplicate installations and enables proper update/uninstall operations
+* State file is automatically managed by the framework
+
+### Legacy Scripts (Deprecated)
+
+1. Navigate to the scripts directory:
+    ```bash
+    cd ubuntuInstaller/scripts
+    ```
+2. Make the desired script executable:
+    ```bash
+    chmod +x script_name.sh
+    ```
+3. Run the scripts in order, starting with `1_ubuntuStart.sh`:
+    ```bash
+    sudo ./1_ubuntuStart.sh
+    ```
+
+The `config.yaml` file supports the following options:
+
+* `settings.non_interactive` - Run without user prompts (default: true)
+* `settings.log_file` - Path to log file (default: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
 * `profile` - System profile (developer, server, wsl)
 * `roles_enabled` - List of roles to execute with optional variables
 * `roles_enabled[n].enabled` - Enable or disable specific role (default: true)

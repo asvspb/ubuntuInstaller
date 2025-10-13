@@ -395,3 +395,73 @@ detect_system_form_factor() {
 	fi
 	echo "desktop"
 }
+
+# Функция проверки, установлена ли роль
+is_role_installed() {
+	local role_name=$1
+	local state_file="${STATE_FILE:-/var/lib/ubuntuInstaller.state}"
+	if [ -f "$state_file" ]; then
+		if grep -q "^$role_name$" "$state_file"; then
+			return 0
+		else
+			return 1
+	fi
+	else
+		return 1
+	fi
+}
+
+# Функция создания снапшота с помощью Timeshift (если доступен)
+create_snapshot() {
+	local description=$1
+	local snapshot_path=$2
+	
+	if [ "$DRY_RUN" = "true" ]; then
+		log "INFO" "[DRY-RUN] Создание снапшота: $description (не выполнено)"
+		return 0
+	fi
+
+	# Проверяем, установлен ли Timeshift
+	if command -v timeshift &>/dev/null; then
+		log "INFO" "Создание снапшота с помощью Timeshift: $description"
+		
+		# Создание снапшота
+		if [ -n "$snapshot_path" ]; then
+			sudo timeshift --create --comments "$description" --snapshot-device "$snapshot_path" --target "$snapshot_path"
+		else
+			sudo timeshift --create --comments "$description"
+		fi
+		
+		if [ $? -eq 0 ]; then
+			log "INFO" "Снапшот успешно создан"
+			return 0
+		else
+			log "WARN" "Не удалось создать снапшот с помощью Timeshift"
+			return 1
+		fi
+	else
+		log "WARN" "Timeshift не установлен, невозможно создать снапшот"
+		return 1
+	fi
+}
+
+# Функция проверки доступности снапшотов
+check_snapshot_support() {
+	# Проверяем наличие Timeshift
+	if command -v timeshift &>/dev/null; then
+		echo "timeshift"
+		return 0
+	fi
+	
+	# Проверяем, является ли система Btrfs
+	if [ -f /proc/filesystems ] && grep -q btrfs /proc/filesystems; then
+	if mount | grep -q "btrfs.*on /"; then
+			echo "btrfs"
+			return 0
+		fi
+	fi
+	
+	# Другие системы снапшотов можно добавить позже
+	echo "none"
+	return 0
+}

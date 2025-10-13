@@ -116,6 +116,20 @@ remove_role_from_state() {
 	fi
 }
 
+# Функция проверки, установлена ли роль
+is_role_installed() {
+	local role_name=$1
+	if [ -f "$STATE_FILE" ]; then
+		if grep -q "^$role_name$" "$STATE_FILE"; then
+			return 0
+	else
+			return 1
+	fi
+	else
+		return 1
+	fi
+}
+
 # Функция проверки наличия yq для парсинга YAML
 check_yq() {
 	if ! command -v yq &>/dev/null; then
@@ -221,10 +235,10 @@ run_roles() {
 		if [ "$role_name" = "null" ]; then
 			log "WARN" "Не удалось получить имя роли $i, пропуск"
 			continue
-		fi
+	fi
 		
 		# В симуляции, если yq не может получить значение, и оно вернулось как "null",
-		# используем значение по умолчанию (true)
+	# используем значение по умолчанию (true)
 		if [ "$DRY_RUN_FLAG" = true ] && [ "$role_enabled" = "null" ]; then
 			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null || echo "null")
 			if [ "$role_enabled" = "null" ]; then
@@ -250,12 +264,42 @@ run_roles() {
 		fi
 		
 		# Путь к скрипту main роли
-		local role_script="$role_dir/main.sh"
+	local role_script="$role_dir/main.sh"
 		
 		# Проверяем существование скрипта роли
 		if [ ! -f "$role_script" ]; then
 			log "ERROR" "Скрипт main.sh для роли $role_name не найден: $role_script"
 			continue
+	fi
+		
+		# Проверяем, нужно ли запускать роль (для обновления)
+		local should_run_role=true
+		if [ "$COMMAND" = "update" ]; then
+			# Для команды update всегда запускаем роль для обновления
+			log "INFO" "Роль $role_name будет обновлена"
+		else
+			# Для команды install проверяем, установлена ли роль (чтобы избежать дублирования)
+			if is_role_installed "$role_name"; then
+				log "INFO" "Роль $role_name уже установлена, пропуск (для обновления используйте команду update)"
+				continue
+			fi
+		fi
+		
+		# Проверяем, является ли роль критичной для создания снапшота
+		local critical_roles=("0-base-system" "20-docker" "30-secure-default")
+		local is_critical_role=false
+		for critical_role in "${critical_roles[@]}"; do
+			if [ "$role_name" = "$critical_role" ]; then
+				is_critical_role=true
+				break
+			fi
+		done
+		
+		# Создаем снапшот перед установкой критичной роли
+		if [ "$is_critical_role" = true ] && [ "$DRY_RUN_FLAG" = false ]; then
+			local snapshot_desc="Pre-install snapshot for role $role_name"
+			log "INFO" "Создание снапшота перед установкой критичной роли: $role_name"
+			create_snapshot "$snapshot_desc"
 		fi
 		
 		if [ "$DRY_RUN_FLAG" = true ]; then
@@ -359,7 +403,8 @@ run_uninstall() {
 run_update() {
 	log "INFO" "Запуск обновления ролей из конфигурации"
 	
-	# В режиме обновления просто перезапускаем установку
+	# В режиме обновления запускаем установку с флагом обновления
+	export UBUNTU_INSTALLER_UPDATE_MODE=true
 	run_roles
 	
 	log "INFO" "Обновление завершено"

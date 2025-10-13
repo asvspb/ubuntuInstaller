@@ -8,9 +8,9 @@ roles_enabled:
     vars:
       install_vscode: true
       install_pycharm: false
- - name: 20-docker
+  - name: 20-docker
     enabled: true
- - name: 30-secure-default
+  - name: 30-secure-default
   - name: 40-snap-apps
   - name: 50-dev-pack
   - name: 60-samsung-printer
