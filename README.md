@@ -28,7 +28,7 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/asv-soft/ubuntuInstaller.git
+    git clone https://github.com/asvspb/ubuntuInstaller.git
     ```
 2. Navigate to the scripts directory:
     ```bash
