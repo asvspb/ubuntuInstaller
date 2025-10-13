@@ -12,19 +12,19 @@ sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 # so that it does not wait for confirmation during installation
 export DEBIAN_FRONTEND=noninteractive
 if [ -f /etc/needrestart/needrestart.conf ]; then
-  sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
-  sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
+	sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
+	sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
 else
-  sudo mkdir -p /etc/needrestart
-  echo '$nrconf{restart} = '\''a'\'';' > nrconf
-  sudo cp nrconf /etc/needrestart/needrestart.conf
-  rm nrconf
+	sudo mkdir -p /etc/needrestart
+	echo '$nrconf{restart} = '\''a'\'';' >nrconf
+	sudo cp nrconf /etc/needrestart/needrestart.conf
+	rm nrconf
 fi
 
 # so that it does not ask for authenticity of host gitlab.com
 mkdir -p ~/.ssh
 chmod 0700 ~/.ssh
-echo -e "Host gitlab.com\n   StrictHostKeyChecking no\n   UserKnownHostsFile=/dev/null" > ~/.ssh/config
+echo -e "Host gitlab.com\n   StrictHostKeyChecking no\n   UserKnownHostsFile=/dev/null" >~/.ssh/config
 
 echo " "
 echo "Preliminary removal of old versions of docker"
@@ -45,9 +45,9 @@ sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
 # add docker repository
 echo \
-  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+	"deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" |
+	sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt update
 
 # packages for docker
@@ -62,8 +62,8 @@ echo "Installing docker-compose"
 echo "--------------------------------------------------------------"
 # install Docker Compose
 if [ ! -f /usr/local/bin/docker-compose ]; then
-  sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-`uname -s`-`uname -m`" -o /usr/local/bin/docker-compose
-  sudo chmod +x /usr/local/bin/docker-compose
+	sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+	sudo chmod +x /usr/local/bin/docker-compose
 fi
 
 echo " "
@@ -79,7 +79,6 @@ sudo mv lazydocker-temp/lazydocker /usr/local/bin
 rm -rf lazydocker.tar.gz lazydocker-temp
 lazydocker --version
 
-
 echo " "
 echo "Creating Dev folder"
 echo "--------------------------------------------------------------"
@@ -91,7 +90,6 @@ echo "--------------------------------------------------------------"
 sudo usermod -aG docker $USER
 sudo systemctl start docker
 sudo gpasswd -a $USER docker
-
 
 echo '-------------------------------------------------------------------'
 echo '---------------------- REBOOT IN 5 SEC ----------------------------'

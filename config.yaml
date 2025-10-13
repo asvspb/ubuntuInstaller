@@ -1,0 +1,12 @@
+settings:
+  non_interactive: true
+  log_file: "/var/log/ubuntuInstaller/install.log"
+profile: "developer"
+roles_enabled:
+  - name: base-system
+  - name: dev-tools
+    vars:
+      install_vscode: true
+      install_pycharm: false
+  - name: docker
+    enabled: true

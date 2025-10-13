@@ -13,13 +13,13 @@ sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 # so that it does not wait for confirmation during installation
 export DEBIAN_FRONTEND=noninteractive
 if [ -f /etc/needrestart/needrestart.conf ]; then
-  # Update existing config file
-  sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
-  sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
+	# Update existing config file
+	sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
+	sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
 else
-  # Create new config file
-  sudo mkdir -p /etc/needrestart
-  cat <<EOF | sudo tee /etc/needrestart/needrestart.conf
+	# Create new config file
+	sudo mkdir -p /etc/needrestart
+	cat <<EOF | sudo tee /etc/needrestart/needrestart.conf
 $nrconf{restart} = 'a'
 EOF
 fi
@@ -27,7 +27,7 @@ fi
 # so that it does not ask for authenticity of host gitlab.com
 mkdir -p ~/.ssh
 chmod 0700 ~/.ssh
-cat <<EOF > ~/.ssh/config
+cat <<EOF >~/.ssh/config
 Host gitlab.com
   StrictHostKeyChecking no
   UserKnownHostsFile=/dev/null
