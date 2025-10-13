@@ -42,6 +42,13 @@ This repository contains a set of scripts to automate the setup of a new Ubuntu 
     ```bash
     sudo ./1_ubuntuStart.sh
     ```
+5. Add admin privileges to the user:
+   sudo nano etc/sudoers
+    ```bash
+    $USER ALL=(ALL) NOPASSWD:ALL
+    ```
+
+
 
 
 ---

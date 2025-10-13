@@ -68,7 +68,7 @@
 *   **gcc**: GNU Compiler Collection, набор компиляторов для различных языков программирования.
 *   **default-jdk**: Стандартный Java Development Kit.
 *   **@google/gemini-cli**: CLI для взаимодействия с моделями Gemini.
-*   **@qwen-code/qwen-code**: CLI для ... (не удалось найти точное описание).
+*   **@qwen-code/qwen-code**: CLI для взаимодействия с моделями QWEN.
 *   **codebuff**: CLI для ... (не удалось найти точное описание).
 *   **@github/copilot**: CLI для GitHub Copilot.
 
