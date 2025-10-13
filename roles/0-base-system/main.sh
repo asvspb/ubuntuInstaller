@@ -12,9 +12,9 @@ source "$SCRIPT_DIR/lib.sh"
 # Функция установки базовой системы
 install_base_system() {
 	log "INFO" "Установка базовой системы"
-
+	
 	if [ "$DRY_RUN" = "true" ]; then
-	log "INFO" "[DRY-RUN] Обновление списка пакетов (не выполнено)"
+		log "INFO" "[DRY-RUN] Обновление списка пакетов (не выполнено)"
 		log "INFO" "[DRY-RUN] Установка базовых пакетов (не выполнена)"
 		return 0
 	fi
@@ -26,14 +26,14 @@ install_base_system() {
 	# Определение типа системы
 	local system_type=$(detect_system_type)
 	log "INFO" "Тип системы: $system_type"
-
+	
 	# Установка базовых пакетов
 	log "INFO" "Установка базовых пакетов"
 	local base_packages="git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg ubuntu-restricted-extras ncdu ranger btop iftop htop neofetch rpm wireguard jq pipx inxi cpu-x tldr fzf alacarte grub-customizer gparted synaptic nala"
 	
 	# Условная установка пакетов в зависимости от типа системы
 	if [ "$system_type" != "server" ] && [ "$system_type" != "WSL" ]; then
-	# Добавляем GUI-зависимые пакеты для десктопных систем
+		# Добавляем GUI-зависимые пакеты для десктопных систем
 		base_packages="$base_packages dconf-editor gnome-shell-extensions gnome-tweaks guake copyq xclip openrgb ufw timeshift"
 	fi
 
@@ -48,21 +48,76 @@ install_base_system() {
 	fi
 }
 
+# Функция установки Chrome и lazydocker
+install_additional_tools() {
+	log "INFO" "Установка дополнительных инструментов (Chrome и lazydocker)"
+	
+	if [ "$DRY_RUN" = "true" ]; then
+		log "INFO" "[DRY-RUN] Установка Chrome и lazydocker (не выполнена)"
+		return 0
+	fi
+
+	# Определение типа системы
+	local system_type=$(detect_system_type)
+	
+	# Установка Chrome (только для десктопных систем)
+	if [ "$system_type" != "server" ] && [ "$system_type" != "WSL" ]; then
+		log "INFO" "Установка Google Chrome"
+		
+		# Скачивание и установка Google Chrome
+	local chrome_deb="/tmp/google-chrome-stable_current_amd64.deb"
+		if [ ! -f "$chrome_deb" ]; then
+			wget -q -O "$chrome_deb" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+		fi
+		
+		# Установка Chrome и разрешение зависимостей
+		dpkg -i "$chrome_deb" || apt-get install -f -y
+		rm -f "$chrome_deb"
+	else
+		log "INFO" "Пропуск установки Google Chrome для $system_type"
+	fi
+	
+	# Установка lazydocker (только если Docker установлен)
+	if command -v docker &>/dev/null; then
+		log "INFO" "Установка lazydocker"
+		
+		# Получение последней версии lazydocker
+		local lazydocker_version=$(curl -s "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" | grep -Po '"tag_name": "v\K[0-9.]+')
+		
+		if [ -n "$lazydocker_version" ]; then
+			local lazydocker_url="https://github.com/jesseduffield/lazydocker/releases/latest/download/lazydocker_${lazydocker_version}_Linux_x86_64.tar.gz"
+			local temp_dir=$(mktemp -d)
+			
+			# Скачивание и установка lazydocker
+			curl -Lo "$temp_dir/lazydocker.tar.gz" "$lazydocker_url"
+			tar xf "$temp_dir/lazydocker.tar.gz" -C "$temp_dir"
+			sudo install "$temp_dir/lazydocker" /usr/local/bin
+			rm -rf "$temp_dir"
+			
+			log "INFO" "lazydocker версии $lazydocker_version установлен"
+		else
+			log "WARN" "Не удалось получить версию lazydocker"
+		fi
+	else
+		log "INFO" "Docker не установлен, пропуск установки lazydocker"
+	fi
+}
+
 # Функция настройки безопасности
 setup_security() {
 	log "INFO" "Настройка базовой безопасности"
 
 	# Установка переменной DRY_RUN из окружения
 	local DRY_RUN="${UBUNTU_INSTALLER_DRY_RUN:-false}"
-
+	
 	if [ "$DRY_RUN" = "true" ]; then
 		log "INFO" "[DRY-RUN] Настройка безопасности (не выполнена)"
 		return 0
 	fi
-
+	
 	# Включение брандмауэра UFW
 	ufw enable
-
+	
 	# Настройка автоматических обновлений
 	apt install -y unattended-upgrades
 	dpkg-reconfigure -plow unattended-upgrades
@@ -76,7 +131,7 @@ setup_sudo_nopasswd() {
 	local DRY_RUN="${UBUNTU_INSTALLER_DRY_RUN:-false}"
 	
 	if [ "$DRY_RUN" = "true" ]; then
-		log "INFO" "[DRY-RUN] Настройка sudo без пароля (не выполнена)"
+	log "INFO" "[DRY-RUN] Настройка sudo без пароля (не выполнена)"
 		return 0
 	fi
 	
@@ -84,7 +139,7 @@ setup_sudo_nopasswd() {
 	if ! grep -q "${USER} ALL=(ALL) NOPASSWD:ALL" /etc/sudoers.d/90-nopasswd 2>/dev/null; then
 		# Создание файла sudoers.d для пользователя
 		echo "${USER} ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/90-nopasswd
-		chmod 0440 /etc/sudoers.d/90-nopasswd
+	chmod 0440 /etc/sudoers.d/90-nopasswd
 		log "INFO" "Запись для ${USER} добавлена в /etc/sudoers.d/90-nopasswd"
 	else
 		log "INFO" "Запись для ${USER} уже существует в /etc/sudoers.d/90-nopasswd"
@@ -97,25 +152,25 @@ setup_system_settings() {
 
 	# Установка переменной DRY_RUN из окружения
 	local DRY_RUN="${UBUNTU_INSTALLER_DRY_RUN:-false}"
-
+	
 	if [ "$DRY_RUN" = "true" ]; then
 		log "INFO" "[DRY-RUN] Настройка системных параметров (не выполнена)"
 		return 0
 	fi
-
+	
 	# Установка времени - только если не установлена нужная настройка
-if ! timedatectl status | grep -q "RTC in local TZ: yes"; then
+	if ! timedatectl status | grep -q "RTC in local TZ: yes"; then
 		timedatectl set-local-rtc 1 --adjust-system-clock
-		log "INFO" "Установлена настройка RTC в локальном часовом поясе"
+	log "INFO" "Установлена настройка RTC в локальном часовом поясе"
 	else
 		log "INFO" "Настройка RTC в локальном часовом поясе уже установлена"
 	fi
-
+	
 	# Настройка параметров GNOME
 	if command -v gsettings &>/dev/null; then
 		gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
 	fi
-
+	
 		# Настройка параметров перезапуска служб
 		export DEBIAN_FRONTEND=noninteractive
 		if [ -f /etc/needrestart/needrestart.conf ]; then
@@ -131,8 +186,8 @@ if ! timedatectl status | grep -q "RTC in local TZ: yes"; then
 			mkdir -p /etc/needrestart
 			echo '$nrconf{restart} = '\''a'\'';' >/etc/needrestart/needrestart.conf
 			log "INFO" "Файл настроек needrestart создан"
-		fi
-
+	fi
+	
 	# Настройка SSH
 	mkdir -p ~/.ssh
 	chmod 0700 ~/.ssh
@@ -146,19 +201,22 @@ EOF
 # Основная функция выполнения роли
 main() {
 	log "INFO" "Запуск роли: 00-base-system"
-
+	
 	# Выполнение установки базовой системы
 	install_base_system
-
+	
+	# Установка дополнительных инструментов (Chrome и lazydocker)
+	install_additional_tools
+	
 	# Настройка безопасности
 	setup_security
-
+	
 	# Настройка sudo без пароля
 	setup_sudo_nopasswd
-
+	
 	# Настройка системных параметров
 	setup_system_settings
-
+	
 	log "INFO" "Роль 00-base-system завершена"
 }
 
