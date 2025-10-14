@@ -16,11 +16,68 @@ print_header() {
 
 print_header "Updating js && python..."
 cd ~ # Change to home directory to ensure write permissions
-curl -qL https://www.npmjs.com/install.sh | sh
+# Проверяем, установлена ли уже подходящая версия Node.js через NVM
+if [ -f "$HOME/.nvm/nvm.sh" ]; then
+    NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+    
+    if command -v node &>/dev/null; then
+        NODE_VERSION=$(node --version)
+        if [[ $NODE_VERSION =~ ^v(2[0-9]|3[0-9]). ]]; then
+            echo "Подходящая версия Node.js уже установлена: $NODE_VERSION"
+        else
+            echo "Установлена несовместимая версия Node.js: $NODE_VERSION"
+            echo "Рекомендуется обновить до версии 20.x или выше"
+        fi
+    else
+        echo "Node.js не найден, убедитесь, что NVM активирован правильно"
+    fi
+else
+    # Если NVM не установлен, используем системную установку (не рекомендуется)
+    curl -qL https://www.npmjs.com/install.sh | sh
+fi
 sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip --break-system-packages
 
 print_header "Updating CODE CLI's..."
-npm install -g @google/gemini-cli@latest && npm install -g @qwen-code/qwen-code@latest && npm install -g @github/copilot && npm install -g codebuff
+# Активация NVM использование npm из NVM
+if [ -f "$HOME/.nvm/nvm.sh" ]; then
+    NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+    
+    if command -v npm &>/dev/null; then
+        echo "Используем npm из NVM: $(npm --version)"
+        npm install -g @google/gemini-cli@latest
+        npm install -g @qwen-code/qwen-code@latest
+        npm install -g @github/copilot
+        npm install -g codebuff
+    else
+        # Если активация NVM не помогла, пробуем использовать npm напрямую из NVM
+        NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+        if [ -f "$NVM_NPM_PATH" ]; then
+            echo "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+            $NVM_NPM_PATH install -g @google/gemini-cli@latest
+            $NVM_NPM_PATH install -g @qwen-code/qwen-code@latest
+            $NVM_NPM_PATH install -g @github/copilot
+            $NVM_NPM_PATH install -g codebuff
+        else
+            echo "WARN: npm не найден в NVM по пути $NVM_NPM_PATH"
+        fi
+    fi
+else
+    # Если NVM не установлен, пробуем использовать npm напрямую из NVM (на случай, если он был установлен в другом месте)
+    NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+    if [ -f "$NVM_NPM_PATH" ]; then
+        echo "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+        $NVM_NPM_PATH install -g @google/gemini-cli@latest
+        $NVM_NPM_PATH install -g @qwen-code/qwen-code@latest
+        $NVM_NPM_PATH install -g @github/copilot
+        $NVM_NPM_PATH install -g codebuff
+    else
+        echo "WARN: npm не найден в системе (ни в NVM, ни напрямую)"
+    fi
+fi
 
 # Log file
 LOG_FILE="$HOME/vscode-updater.log"

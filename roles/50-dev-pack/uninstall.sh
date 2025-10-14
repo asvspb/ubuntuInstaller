@@ -36,7 +36,7 @@ uninstall_dev_pack() {
 	log "INFO" "Удаление Python пакетов через pip"
 	if command -v pip3 &>/dev/null; then
 		# Удаляем установленные пакеты
-		pip3 uninstall -y requests flask django numpy pandas matplotlib
+		pip3 uninstall -y requests flask django numpy pandas matplotlib || true
 	else
 		log "INFO" "pip3 не установлен"
 	fi

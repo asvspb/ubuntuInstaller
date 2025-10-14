@@ -310,14 +310,33 @@ execute_command() {
 # Функция для установки пакетов с поддержкой dry-run
 install_packages() {
 	local packages="$1"
-
+	
 	if [ "$DRY_RUN" = "true" ]; then
 		log "INFO" "[DRY-RUN] Установка пакетов: $packages (не выполнена)"
 		return 0
 	fi
-
+	
 	log "INFO" "Установка пакетов: $packages"
-	run_with_retry apt install -y $packages
+	
+	# Для установки пакетов используем специальную функцию без таймаута
+	local max_attempts=3
+	local attempt=1
+	local exit_code=0
+	
+	while [ $attempt -le $max_attempts ]; do
+	if apt install -y $packages; then
+			return 0
+	else
+			exit_code=$?
+			log "WARN" "Команда 'apt install -y $packages' не удалась (попытка $attempt/$max_attempts)"
+			if [ $attempt -eq $max_attempts ]; then
+				log "ERROR" "Команда 'apt install -y $packages' не удалась после $max_attempts попыток"
+				return $exit_code
+			fi
+			attempt=$((attempt + 1))
+			sleep 5
+		fi
+	done
 }
 
 # Функция для проверки и установки Snap пакетов
@@ -421,6 +440,12 @@ create_snapshot() {
 		return 0
 	fi
 
+	# Проверяем, нужно ли создавать снапшот (опционально)
+	if [ "${UBUNTU_INSTALLER_CREATE_SNAPSHOT:-true}" != "true" ]; then
+		log "INFO" "Пропуск создания снапшота по настройкам пользователя: $description"
+		return 0
+	fi
+
 	# Проверяем, установлен ли Timeshift
 	if command -v timeshift &>/dev/null; then
 		log "INFO" "Создание снапшота с помощью Timeshift: $description"
@@ -434,6 +459,12 @@ create_snapshot() {
 		
 		if [ $? -eq 0 ]; then
 			log "INFO" "Снапшот успешно создан"
+			
+			# Удаляем результаты работы Timeshift, если установлена соответствующая опция
+			if [ "${UBUNTU_INSTALLER_REMOVE_SNAPSHOTS:-false}" = "true" ]; then
+				log "INFO" "Удаление снапшота согласно настройкам: $description"
+				delete_latest_snapshot
+			fi
 			return 0
 		else
 			log "WARN" "Не удалось создать снапшот с помощью Timeshift"
@@ -442,6 +473,42 @@ create_snapshot() {
 	else
 		log "WARN" "Timeshift не установлен, невозможно создать снапшот"
 		return 1
+	fi
+}
+
+# Функция удаления последнего снапшота Timeshift
+delete_latest_snapshot() {
+	if command -v timeshift &>/dev/null; then
+		# Получаем список снапшотов и удаляем последний
+		local latest_snapshot=$(timeshift --list | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -n 1 | awk '{print $1}')
+		if [ -n "$latest_snapshot" ]; then
+			log "INFO" "Удаление последнего снапшота: $latest_snapshot"
+			sudo timeshift --delete --snapshots "$latest_snapshot"
+		else
+			log "WARN" "Не найдено снапшотов для удаления"
+		fi
+	else
+		log "WARN" "Timeshift не установлен, невозможно удалить снапшот"
+	fi
+}
+
+# Функция удаления всех снапшотов Timeshift
+delete_all_snapshots() {
+	if command -v timeshift &>/dev/null; then
+		# Получаем список всех снапшотов
+		local snapshots=$(timeshift --list | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}' | awk '{print $1}')
+			if [ -n "$snapshots" ]; then
+				log "INFO" "Найдены снапшоты для удаления: $(echo $snapshots | tr '\n' ' ')"
+				for snapshot in $snapshots; do
+					log "INFO" "Удаление снапшота: $snapshot"
+					sudo timeshift --delete --snapshots "$snapshot"
+				done
+				log "INFO" "Все снапшоты удалены"
+			else
+				log "INFO" "Снапшоты для удаления не найдены"
+			fi
+	else
+		log "WARN" "Timeshift не установлен, невозможно удалить снапшоты"
 	fi
 }
 

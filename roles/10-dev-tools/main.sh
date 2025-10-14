@@ -24,7 +24,7 @@ install_dev_tools() {
 
 	# Установка базовых инструментов разработки
 	log "INFO" "Установка базовых инструментов разработки"
-	local dev_packages="build-essential cmake gcc g++ gdb valgrind git git-lfs gh nodejs npm python3 python3-pip python3-venv python3-dev default-jdk docker.io"
+	local dev_packages="build-essential cmake gcc g++ gdb valgrind git git-lfs gh python3 python3-pip python3-venv python3-dev default-jdk"
 	apt install -y $dev_packages
 
 	# Установка VSCode если включено

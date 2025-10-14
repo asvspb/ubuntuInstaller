@@ -16,10 +16,8 @@ DOWNLOAD_BASE="$HOME/Downloads/VirtualBox"
 
 # Функция получения последней стабильной версии VirtualBox
 get_latest_stable_version() {
-	log "INFO" "Получение последней стабильной версии VirtualBox"
-	
 	if [ "$DRY_RUN" = "true" ]; then
-	log "INFO" "[DRY-RUN] Получение последней стабильной версии VirtualBox (не выполнено)"
+		log "INFO" "[DRY-RUN] Получение последней стабильной версии VirtualBox (не выполнено)"
 		echo "7.0.12"
 		return 0
 	fi
@@ -30,7 +28,7 @@ get_latest_stable_version() {
 	if [ -z "$version" ]; then
 		log "WARN" "Не удалось получить версию из LATEST-STABLE.TXT"
 		# В качестве резервного варианта, можно использовать жестко заданную версию или получить из списка
-		version="7.0.12"  # использовать актуальную версию на момент разработки
+	version="7.0.12"  # использовать актуальную версию на момент разработки
 	fi
 
 	log "INFO" "Последняя стабильная версия VirtualBox: $version"
@@ -39,8 +37,6 @@ get_latest_stable_version() {
 
 # Функция определения кодового имени дистрибутива
 detect_distro_codename() {
-	log "INFO" "Определение кодового имени дистрибутива"
-	
 	local codename=""
 	
 	# Попытка получить кодовое имя из /etc/os-release
@@ -71,37 +67,41 @@ detect_distro_codename() {
 
 # Функция поиска подходящих артефактов для текущей системы
 find_artifacts() {
-	local version=$1
-	local codename=$2
-	
-	log "INFO" "Поиск артефактов для версии $version и кодового имени $codename"
-	
-	if [ "$DRY_RUN" = "true" ]; then
-		log "INFO" "[DRY-RUN] Поиск артефактов (не выполнено)"
-		return 0
-	fi
+local version=$1
+local codename=$2
+
+# Экранируем переменные перед логированием
+local safe_version="${version//[$'\t\r\n']/}"
+local safe_codename="${codename//[$'\t\r\n']/}"
+
+log "INFO" "Поиск артефактов для версии $safe_version и кодового имени $safe_codename"
+
+if [ "$DRY_RUN" = "true" ]; then
+	log "INFO" "[DRY-RUN] Поиск артефактов (не выполнено)"
+	return 0
+fi
 
 	# Получение списка файлов для версии
 	local version_url="${VB_BASE_URL}/${version}/"
-	local files=$(curl -s "$version_url" 2>/dev/null | grep -oP 'href="\K[^"]*' | grep -E '\.(deb|vbox-extpack|iso)$')
+	local files=$(curl -s "$version_url" 2>/dev/null | grep -o 'href="[^"]*"' | sed 's/href="//' | sed 's/"$//' | grep -E '\.(deb|vbox-extpack|iso)$')
 	
 	# Поиск .deb файла для Ubuntu с подходящим кодовым именем
 	local deb_url=""
-	local deb_candidates=$(echo "$files" | grep -E "Ubuntu.*${codename}.*amd64\.deb$" | sort -r)
+	local deb_candidates=$(echo "$files" | grep -F "Ubuntu" | grep -F "$codename" | grep -F "amd64.deb" | sort -r)
 	if [ -n "$deb_candidates" ]; then
 		deb_url="${VB_BASE_URL}/${version}/$(echo "$deb_candidates" | head -n 1)"
 	fi
 	
 	# Поиск Extension Pack
 	local extpack_url=""
-	local extpack_candidates=$(echo "$files" | grep -i "extension.*pack\|extpack" | grep "$version" | sort -r)
+	local extpack_candidates=$(echo "$files" | grep -i -E "extension.*pack|extpack" | grep -F "$version" | sort -r)
 	if [ -n "$extpack_candidates" ]; then
 		extpack_url="${VB_BASE_URL}/${version}/$(echo "$extpack_candidates" | head -n 1)"
 	fi
 	
 	# Поиск ISO с Guest Additions
 	local iso_url=""
-	local iso_candidates=$(echo "$files" | grep -i "guest.*additions\|vboxguestadditions" | grep "$version" | sort -r)
+	local iso_candidates=$(echo "$files" | grep -i -E "guest.*additions|vboxguestadditions" | grep -F "$version" | sort -r)
 	if [ -n "$iso_candidates" ]; then
 		iso_url="${VB_BASE_URL}/${version}/$(echo "$iso_candidates" | head -n 1)"
 	fi
@@ -169,7 +169,17 @@ install_virtualbox() {
 	log "INFO" "Текущая версия VirtualBox: ${current_version:-'не установлена'}"
 	
 	# Получение последней стабильной версии
-	local latest_version=$(get_latest_stable_version)
+	local latest_version_raw
+	if [ "$DRY_RUN" = "true" ]; then
+		latest_version_raw="7.0.12"
+	else
+	latest_version_raw=$(curl -s "$LATEST_STABLE_URL" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+		if [ -z "$latest_version_raw" ]; then
+			latest_version_raw="7.0.12"
+		fi
+	fi
+	local latest_version="$latest_version_raw"
+	log "INFO" "Последняя стабильная версия VirtualBox: $latest_version"
 	
 	# Проверка, нужна ли обновление
 	if compare_versions "$current_version" "$latest_version"; then
@@ -178,7 +188,31 @@ install_virtualbox() {
 	fi
 
 	# Определение кодового имени дистрибутива
-	local codename=$(detect_distro_codename)
+	local codename_raw=""
+	
+	# Попытка получить кодовое имя из /etc/os-release
+	if [ -f /etc/os-release ]; then
+		codename_raw=$(grep '^VERSION_CODENAME=' /etc/os-release | cut -d'=' -f2)
+		if [ -z "$codename_raw" ]; then
+			# Попытка получить из UBUNTU_CODENAME
+			codename_raw=$(grep '^UBUNTU_CODENAME=' /etc/os-release | cut -d'=' -f2)
+		fi
+	fi
+	
+	# Если не получилось из файла, используем lsb_release
+	if [ -z "$codename_raw" ]; then
+		if command -v lsb_release &>/dev/null; then
+			codename_raw=$(lsb_release -cs)
+		fi
+	fi
+	
+	# Если все еще пусто, используем jammy по умолчанию
+	if [ -z "$codename_raw" ]; then
+		log "WARN" "Не удалось определить кодовое имя дистрибутива, используем jammy по умолчанию"
+		codename_raw="jammy"
+	fi
+	local codename="$codename_raw"
+	log "INFO" "Кодовое имя дистрибутива: $codename"
 	
 	# Поиск артефактов
 	find_artifacts "$latest_version" "$codename"

@@ -20,28 +20,54 @@ install_dev_pack() {
 
 	# Установка пакетов через apt
 	log "INFO" "Установка пакетов через apt"
-	local dev_packages="vim htop glances tree jq wget curl git docker.io docker-compose python3 python3-pip nodejs npm default-jre default-jdk maven gradle code"
+	local dev_packages="vim htop glances tree jq wget curl git python3 python3-pip maven gradle code"
 	install_packages "$dev_packages"
 
 	# Установка pip-пакетов
 	log "INFO" "Установка Python пакетов через pip"
 	if command -v pip3 &>/dev/null; then
-		pip3 install --upgrade pip
-		pip3 install requests flask django numpy pandas matplotlib
+		pip3 install --upgrade pip --break-system-packages
+	# Используем специальный скрипт для установки пакетов с обходом конфликта системными пакетами
+		"$SCRIPT_DIR/scripts/python-pip-installer.sh" requests flask django numpy pandas matplotlib
 	fi
 
 	# Установка npm-пакетов
 	log "INFO" "Установка Node.js пакетов через npm"
-	if command -v npm &>/dev/null; then
-		npm install -g npm@latest
-		npm install -g typescript @angular/cli
+	
+	# Проверяем, установлен ли NVM и доступен ли npm из NVM
+	if [ -f "$HOME/.nvm/nvm.sh" ]; then
+		# Активируем NVM в текущем контексте
+	NVM_DIR="$HOME/.nvm"
+		[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+		[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+		
+		if command -v npm &>/dev/null; then
+			log "INFO" "Используем npm из NVM: $(npm --version)"
+			npm install -g npm@latest
+			npm install -g typescript @angular/cli
+		else
+			# Если активация NVM не помогла, пробуем использовать npm напрямую из NVM
+			NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+			if [ -f "$NVM_NPM_PATH" ]; then
+				log "INFO" "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+				$NVM_NPM_PATH install -g npm@latest
+				$NVM_NPM_PATH install -g typescript @angular/cli
+			else
+				log "WARN" "npm не найден в NVM по пути $NVM_NPM_PATH"
+			fi
+		fi
+	else
+		# Если NVM не установлен, пробуем использовать npm напрямую из NVM (на случай, если он был установлен в другом месте)
+		NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+	if [ -f "$NVM_NPM_PATH" ]; then
+			log "INFO" "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+			$NVM_NPM_PATH install -g npm@latest
+			$NVM_NPM_PATH install -g typescript @angular/cli
+		else
+			log "WARN" "npm не найден в системе (ни в NVM, ни напрямую)"
+		fi
 	fi
 
-	# Установка snap-пакетов для разработчиков
-	log "INFO" "Установка Snap пакетов для разработчиков"
-	ensure_snap_pkg postman
-	ensure_snap_pkg insomnia
-	ensure_snap_pkg mysql-workbench-community
 }
 
 # Основная функция выполнения роли

@@ -242,7 +242,7 @@ harden_ssh() {
 		sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config
 		
 		# Использование только протокола SSH2
-		sed -i 's/#Protocol 2/' /etc/ssh/sshd_config
+		sed -i 's/#Protocol 2/Protocol 2/' /etc/ssh/sshd_config
 		
 		# Ограничение доступа к демону SSH только для определенных пользователей (опционально)
 		# echo "AllowUsers yourusername" >> /etc/ssh/sshd_config
@@ -264,7 +264,8 @@ setup_audit() {
 	fi
 	
 	# Установка необходимых пакетов для аудита
-	ensure_pkg "auditd audispd-plugins"
+	ensure_pkg "auditd"
+	ensure_pkg "audispd-plugins"
 	
 	# Настройка правил аудита
 	log "INFO" "Настройка правил аудита"

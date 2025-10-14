@@ -1,0 +1,25 @@
+name: "Ubuntu Blue"
+details:
+  darker: true
+  terminal_colors:
+    normal:
+      black: "#1e1e1e"
+      red: "#f44747"
+      green: "#4ec9b0"
+      yellow: "#ffcc02"
+      blue: "#0078d4"
+      magenta: "#bc05bc"
+      cyan: "#0598bc"
+      white: "#e5e5e5"
+    bright:
+      black: "#666666"
+      red: "#f44747"
+      green: "#4ec9b0"
+      yellow: "#ffcc02"
+      blue: "#0078d4"
+      magenta: "#bc05bc"
+      cyan: "#0598bc"
+      white: "#e5e5e5"
+  background: "#1a237e"
+  foreground: "#ffffff"
+

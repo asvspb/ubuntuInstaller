@@ -152,8 +152,32 @@ check_yq() {
 # Функция загрузки конфигурации из YAML файла
 load_config() {
 	if [ ! -f "$CONFIG_FILE" ]; then
-		log "ERROR" "Конфигурационный файл $CONFIG_FILE не найден"
+		# Если файл не найден в текущей директории, проверяем директорию profiles/
+		if [ -f "$SCRIPT_DIR/profiles/$CONFIG_FILE" ]; then
+			CONFIG_FILE="$SCRIPT_DIR/profiles/$CONFIG_FILE"
+			log "INFO" "Конфигурационный файл найден в директории profiles/: $CONFIG_FILE"
+		else
+			log "ERROR" "Конфигурационный файл $CONFIG_FILE не найден"
+			exit 1
+		fi
+	fi
+	
+	# Проверяем, доступен ли файл для чтения
+	if [ ! -r "$CONFIG_FILE" ]; then
+		log "ERROR" "Конфигурационный файл $CONFIG_FILE не доступен для чтения"
 		exit 1
+	fi
+	
+	# Если используется sudo и файл находится в домашней директории,
+	# копируем его во временное хранилище для доступа через yq
+	if [ "$EUID" -eq 0 ] && [[ "$CONFIG_FILE" == /home/* ]]; then
+		TEMP_CONFIG="/tmp/ubuntu_installer_config_$$.$RANDOM.yaml"
+		cp "$CONFIG_FILE" "$TEMP_CONFIG"
+	chmod 600 "$TEMP_CONFIG"
+		CONFIG_FILE_FOR_YQ="$TEMP_CONFIG"
+	log "INFO" "Копирование конфигурационного файла для доступа под root: $CONFIG_FILE_FOR_YQ"
+	else
+		CONFIG_FILE_FOR_YQ="$CONFIG_FILE"
 	fi
 
 	log "INFO" "Загрузка конфигурации из $CONFIG_FILE"
@@ -164,22 +188,26 @@ load_config() {
 	# Загрузка настроек из конфига
 	if [ "$DRY_RUN_FLAG" = false ]; then
 		# В реальном режиме
-		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE")
-		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE")
+		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE_FOR_YQ")
+		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE_FOR_YQ")
+		CREATE_SNAPSHOT=$(yq '.settings.create_snapshot // false' "$CONFIG_FILE_FOR_YQ")
+		REMOVE_SNAPSHOTS=$(yq '.settings.remove_snapshots // false' "$CONFIG_FILE_FOR_YQ")
 		# Автоматическое определение профиля, если он не указан в конфигурации
-		CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE")
+		CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE_FOR_YQ")
 		if [ "$CONFIG_PROFILE" = "auto" ]; then
 			PROFILE=$(detect_system_type | tr '[:upper:]' '[:lower:]')
 			log "INFO" "Автоматическое определение профиля: $PROFILE"
 		else
 			PROFILE=$CONFIG_PROFILE
-		fi
+	fi
 	else
 		# В режиме симуляции
 	log "INFO" "[DRY-RUN] Чтение конфигурации (не из файла)"
-		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
-		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE" 2>/dev/null || echo "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log")
-		CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE" 2>/dev/null || echo "auto")
+		NON_INTERACTIVE=$(yq '.settings.non_interactive // false' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "false")
+		LOG_FILE=$(yq '.settings.log_file // "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log"' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "/var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log")
+		CREATE_SNAPSHOT=$(yq '.settings.create_snapshot // false' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "false")
+		REMOVE_SNAPSHOTS=$(yq '.settings.remove_snapshots // false' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "false")
+	CONFIG_PROFILE=$(yq '.profile // "auto"' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "auto")
 		if [ "$CONFIG_PROFILE" = "auto" ]; then
 			PROFILE=$(detect_system_type | tr '[:upper:]' '[:lower:]')
 			log "INFO" "[DRY-RUN] Автоматическое определение профиля: $PROFILE"
@@ -190,9 +218,13 @@ load_config() {
 
 	export UBUNTU_INSTALLER_NON_INTERACTIVE=$NON_INTERACTIVE
 	export UBUNTU_INSTALLER_LOG_FILE=$LOG_FILE
+	export UBUNTU_INSTALLER_CREATE_SNAPSHOT=$CREATE_SNAPSHOT
+	export UBUNTU_INSTALLER_REMOVE_SNAPSHOTS=$REMOVE_SNAPSHOTS
 
 	log "INFO" "Профиль: $PROFILE"
 	log "INFO" "Режим без подтверждения: $NON_INTERACTIVE"
+	log "INFO" "Создание снапшотов: $CREATE_SNAPSHOT"
+	log "INFO" "Удаление снапшотов: $REMOVE_SNAPSHOTS"
 }
 
 # Функция запуска предустановочных проверок
@@ -210,9 +242,9 @@ run_roles() {
 
 	# Получение списка ролей из конфигурации
 	if [ "$DRY_RUN_FLAG" = false ]; then
-		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE_FOR_YQ")
 	else
-		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "0")
 	fi
 
 	log "INFO" "Найдено ролей для установки: $roles_count"
@@ -222,25 +254,25 @@ run_roles() {
 	
 	# Обработка каждой роли из конфигурации
 	for i in $(seq 0 $((roles_count - 1))); do
-		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE" 2>/dev/null || echo "null")
-		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null)
+		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "null")
+		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE_FOR_YQ" 2>/dev/null)
 		# Если значение не найдено (null), используем значение по умолчанию (true)
 		if [ "$role_enabled_raw" = "null" ] || [ -z "$role_enabled_raw" ]; then
 			local role_enabled="true"
-		else
+	else
 			local role_enabled="$role_enabled_raw"
-	fi
+		fi
 		
 		# Проверяем, что роль существует
 		if [ "$role_name" = "null" ]; then
 			log "WARN" "Не удалось получить имя роли $i, пропуск"
 			continue
-	fi
+		fi
 		
 		# В симуляции, если yq не может получить значение, и оно вернулось как "null",
 	# используем значение по умолчанию (true)
 		if [ "$DRY_RUN_FLAG" = true ] && [ "$role_enabled" = "null" ]; then
-			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null || echo "null")
+			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "null")
 			if [ "$role_enabled" = "null" ]; then
 				role_enabled="true"
 			fi
@@ -302,20 +334,20 @@ run_roles() {
 			create_snapshot "$snapshot_desc"
 		fi
 		
-		if [ "$DRY_RUN_FLAG" = true ]; then
-			log "INFO" "[DRY-RUN] Запуск роли $role_name (симуляция)"
-		else
-			log "INFO" "Запуск роли $role_name"
-			# Передаем в роль переменные, если они определены
-			local role_vars=$(yq ".roles_enabled[$i].vars // {}" "$CONFIG_FILE" 2>/dev/null || echo "{}")
-			if [ "$role_vars" != "{}" ]; then
-				export UBUNTU_INSTALLER_ROLE_VARS="$role_vars"
+			if [ "$DRY_RUN_FLAG" = true ]; then
+				log "INFO" "[DRY-RUN] Запуск роли $role_name (симуляция)"
+			else
+				log "INFO" "Запуск роли $role_name"
+				# Передаем в роль переменные, если они определены
+				local role_vars=$(yq ".roles_enabled[$i].vars // {}" "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "{}")
+				if [ "$role_vars" != "{}" ]; then
+					export UBUNTU_INSTALLER_ROLE_VARS="$role_vars"
+				fi
+				# Выполняем скрипт роли
+				bash "$role_script"
+				# Записываем роль в state-файл после успешной установки
+				write_installed_role "$role_name"
 			fi
-			# Выполняем скрипт роли
-			bash "$role_script"
-			# Записываем роль в state-файл после успешной установки
-			write_installed_role "$role_name"
-	fi
 	done
 	
 	log "INFO" "Найдено включенных ролей для установки: $enabled_roles_count"
@@ -330,23 +362,23 @@ run_uninstall() {
 
 	# Получение списка ролей из конфигурации
 	if [ "$DRY_RUN_FLAG" = false ]; then
-		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE_FOR_YQ")
 	else
-		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		local roles_count=$(yq '.roles_enabled // [] | length' "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "0")
 	fi
 
 	log "INFO" "Найдено ролей для удаления: $roles_count"
 
 	# Обработка каждой роли из конфигурации
 	for i in $(seq 0 $((roles_count - 1))); do
-		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE" 2>/dev/null || echo "null")
-		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null)
+		local role_name=$(yq ".roles_enabled[$i].name" "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "null")
+		local role_enabled_raw=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE_FOR_YQ" 2>/dev/null)
 		# Если значение не найдено (null), используем значение по умолчанию (true)
 		if [ "$role_enabled_raw" = "null" ] || [ -z "$role_enabled_raw" ]; then
 			local role_enabled="true"
-		else
+	else
 			local role_enabled="$role_enabled_raw"
-	fi
+		fi
 		
 		# Проверяем, что роль существует
 		if [ "$role_name" = "null" ]; then
@@ -357,7 +389,7 @@ run_uninstall() {
 		# В симуляции, если yq не может получить значение, и оно вернулось как "null",
 		# используем значение по умолчанию (true)
 		if [ "$DRY_RUN_FLAG" = true ] && [ "$role_enabled" = "null" ]; then
-			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE" 2>/dev/null || echo "null")
+			role_enabled=$(yq ".roles_enabled[$i].enabled" "$CONFIG_FILE_FOR_YQ" 2>/dev/null || echo "null")
 			if [ "$role_enabled" = "null" ]; then
 				role_enabled="true"
 			fi
@@ -413,7 +445,7 @@ run_update() {
 # Основная функция
 main() {
 	case $COMMAND in
-		install)
+	install)
 			log "INFO" "Запуск установки Ubuntu с использованием фреймворка"
 			
 			# Загрузка конфигурации
@@ -461,6 +493,18 @@ main() {
 			exit 1
 			;;
 	esac
+	
+	# Удаляем снапшоты, если установлена соответствующая опция
+	if [ "$UBUNTU_INSTALLER_REMOVE_SNAPSHOTS" = "true" ]; then
+		log "INFO" "Удаление всех снапшотов Timeshift согласно настройкам"
+		delete_all_snapshots
+	fi
+	
+	# Очистка временного файла, если он был создан
+	if [ -n "$TEMP_CONFIG" ] && [ -f "$TEMP_CONFIG" ]; then
+	rm -f "$TEMP_CONFIG"
+		log "INFO" "Временный конфигурационный файл удален"
+	fi
 }
 
 # Запуск основной функции

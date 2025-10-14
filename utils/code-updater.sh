@@ -223,8 +223,62 @@ update_dev_tools() {
     # Обновление Node.js и npm
     if command -v node &>/dev/null; then
         log "INFO" "Обновление Node.js и npm"
-        sudo npm install -g npm@latest
-        sudo npm install -g node@latest
+        
+        # Проверяем, установлен ли NVM
+        if [ -f "$HOME/.nvm/nvm.sh" ]; then
+            NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+            
+            if command -v npm &>/dev/null; then
+                log "INFO" "Используем npm из NVM: $(npm --version)"
+                npm install -g npm@latest
+                # Проверяем версию Node.js и обновляем только если нужно
+                NODE_VERSION=$(node --version)
+                if [[ $NODE_VERSION =~ ^v(2[0-9]|3[0-9]). ]]; then
+                    log "INFO" "Текущая версия Node.js совместима: $NODE_VERSION"
+                else
+                    log "INFO" "Обновление Node.js с $NODE_VERSION до последней версии"
+                    npm install -g node@latest
+                fi
+            else
+                # Если активация NVM не помогла, пробуем использовать npm напрямую из NVM
+                NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+                if [ -f "$NVM_NPM_PATH" ]; then
+                    log "INFO" "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+                    $NVM_NPM_PATH install -g npm@latest
+                    # Проверяем версию Node.js и обновляем только если нужно
+                    NODE_VERSION=$(node --version)
+                    if [[ $NODE_VERSION =~ ^v(2[0-9]|3[0-9]). ]]; then
+                        log "INFO" "Текущая версия Node.js совместима: $NODE_VERSION"
+                    else
+                        log "INFO" "Обновление Node.js с $NODE_VERSION до последней версии"
+                        $NVM_NPM_PATH install -g node@latest
+                    fi
+                else
+                    log "WARN" "npm не найден в NVM по пути $NVM_NPM_PATH"
+                fi
+            fi
+        else
+            # Если NVM не установлен, пробуем использовать npm напрямую из NVM (на случай, если он был установлен в другом месте)
+            NVM_NPM_PATH="$HOME/.nvm/versions/node/v24.6.0/bin/npm"
+            if [ -f "$NVM_NPM_PATH" ]; then
+                log "INFO" "Используем npm напрямую из NVM: $($NVM_NPM_PATH --version)"
+                $NVM_NPM_PATH install -g npm@latest
+                # Проверяем версию Node.js и обновляем только если нужно
+                NODE_VERSION=$(node --version)
+                if [[ $NODE_VERSION =~ ^v(2[0-9]|3[0-9]). ]]; then
+                    log "INFO" "Текущая версия Node.js совместима: $NODE_VERSION"
+                else
+                    log "INFO" "Обновление Node.js с $NODE_VERSION до последней версии"
+                    $NVM_NPM_PATH install -g node@latest
+                fi
+            else
+                log "WARN" "npm не найден в системе (ни в NVM, ни напрямую)"
+            fi
+        fi
+    else
+        log "INFO" "Node.js не установлен"
     fi
     
     # Обновление Python пакетов

@@ -15,11 +15,16 @@ show_main_menu() {
     choice=$(whiptail \
         --title "Ubuntu Installer Framework" \
         --menu "\nВыберите действие:" \
-        15 60 4 \
+        20 70 8 \
         "1" "Установить компоненты" \
         "2" "Удалить компоненты" \
         "3" "Обновить компоненты" \
-        "4" "Выход" \
+        "4" "Сделать бекап timeshift" \
+        "5" "Восстановить из бекапа" \
+        "6" "Ручная установка" \
+        "7" "Автоматическая установка" \
+        "8" "Удаление установленных пакетов" \
+        "9" "Выход" \
         3>&1 1>&2 2>&3)
 
     case $choice in
@@ -33,6 +38,21 @@ show_main_menu() {
             run_update
             ;;
         4)
+            create_timeshift_backup
+            ;;
+        5)
+            restore_from_backup
+            ;;
+        6)
+            manual_installation
+            ;;
+        7)
+            auto_installation
+            ;;
+        8)
+            remove_installed_packages
+            ;;
+        9)
             exit 0
             ;;
         *)
