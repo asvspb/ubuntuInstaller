@@ -1,5 +1,10 @@
 settings:
-  non_interactive: true
+  non_interactive: false
   log_file: "/var/log/ubuntuInstaller/install-2025-10-14.log"
-profile: "auto"
-roles_enabled: []
+profile: "desktop-developer"
+roles_enabled:
+  - name: 0-base-system
+  - name: 10-dev-tools
+    vars:
+        install_vscode: false
+        install_pycharm: false
