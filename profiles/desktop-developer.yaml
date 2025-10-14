@@ -15,4 +15,3 @@ roles_enabled:
   - name: 30-secure-default
   - name: 40-snap-apps
   - name: 50-dev-pack
-  - name: 90-laptop-optimization # Добавляем оптимизацию для ноутбуков

@@ -15,57 +15,61 @@ source "$SCRIPT_DIR/lib.sh"
 # Функция отображения главного меню
 show_main_menu() {
   local choice
-  choice=$(whiptail \
-    --title "Ubuntu Installer Framework" \
-    --menu "\nВыберите действие:" \
-    20 70 9 \
-    "1" "Установить компоненты" \
-    "2" "Удалить компоненты" \
-    "3" "Обновить компоненты" \
-    "4" "Сделать бекап timeshift" \
-    "5" "Восстановить из бекапа" \
-    "6" "Удалить бекап" \
-    "7" "Ручная установка" \
-    "8" "Автоматическая установка" \
-    "9" "Удаление установленных пакетов" \
-    "10" "Выход" \
-    3>&1 1>&2 2>&3)
-
-  case $choice in
-  1)
-    run_installation
-    ;;
-  2)
-    run_uninstallation
-    ;;
-  3)
-    run_update
-    ;;
-  4)
-    create_timeshift_backup
-    ;;
-  5)
-    restore_from_backup
-    ;;
-  6)
-    delete_backup
-    ;;
-  7)
-    manual_installation
-    ;;
-  8)
-    auto_installation
-    ;;
-  9)
-    remove_installed_packages
-    ;;
-  10)
-    exit 0
-    ;;
-  *)
-    exit 0
-    ;;
-  esac
+   choice=$(whiptail \
+     --title "Ubuntu Installer Framework" \
+     --menu "\nВыберите действие:" \
+     20 70 11 \
+     "1" "Установить компоненты" \
+     "2" "Удалить компоненты" \
+     "3" "Обновить компоненты" \
+     "4" "Сделать бекап timeshift" \
+     "5" "Восстановить из бекапа" \
+     "6" "Удалить бекап" \
+     "7" "Ручное управление снапшотами" \
+     "8" "Ручная установка" \
+     "9" "Автоматическая установка" \
+     "10" "Удаление установленных пакетов" \
+     "11" "Выход" \
+     3>&1 1>&2 2>&3)
+ 
+   case $choice in
+   1)
+     run_installation
+     ;;
+   2)
+     run_uninstallation
+     ;;
+   3)
+     run_update
+     ;;
+   4)
+     create_timeshift_backup
+     ;;
+   5)
+     restore_from_backup
+     ;;
+   6)
+     delete_backup
+     ;;
+   7)
+     manual_snapshot_management
+     ;;
+   8)
+     manual_installation
+     ;;
+   9)
+     auto_installation
+     ;;
+   10)
+     remove_installed_packages
+     ;;
+   11)
+     exit 0
+     ;;
+   *)
+     exit 0
+     ;;
+   esac
 }
 
 # Функция для выбора профиля
@@ -143,11 +147,13 @@ select_roles() {
 
 # Функция для настройки глобальных параметров
 configure_global_settings() {
-  # Запрашиваем у пользователя настройки
+ # Запрашиваем у пользователя настройки
   local non_interactive=$(whiptail --yesno "Использовать неинтерактивный режим (без дополнительных вопросов во время установки)?" 10 70 3>&1 1>&2 2>&3 && echo "true" || echo "false")
+  local remove_snapshots=$(whiptail --yesno "Удалять снапшоты после создания (автоматическое удаление)?" 10 70 3>&1 1>&2 2>&3 && echo "true" || echo "false")
 
   # Возвращаем настройки в формате YAML
   echo "  non_interactive: $non_interactive"
+  echo "  remove_snapshots: $remove_snapshots"
 }
 
 # Функция для настройки переменных роли
@@ -191,7 +197,7 @@ profile: "$profile"
 roles_enabled:
 EOF
 
-  # Добавление ролей в конфигурационный файл
+ # Добавление ролей в конфигурационный файл
   # Обрабатываем каждую роль, разделенную пробелами
   for role in $selected_roles; do
     # Убираем лишние пробелы и кавычки
@@ -221,15 +227,19 @@ run_installation() {
   profile=$(select_profile)
 
   # Настройка глобальных параметров
-  local global_settings=$(configure_global_settings)
+ local global_settings=$(configure_global_settings)
 
   local selected_roles
   selected_roles=$(select_roles)
 
-  generate_config "$profile" "$selected_roles" "$global_settings"
+ generate_config "$profile" "$selected_roles" "$global_settings"
 
   if whiptail --yesno "Вы хотите запустить установку с выбранными параметрами?\n\nПрофиль: $profile\nРоли: $selected_roles" 15 60; then
     sudo cp /tmp/ubuntu_installer_config.yaml ./config.yaml
+    
+    # Устанавливаем переменные окружения для настроек автоматического удаления
+    export UBUNTU_INSTALLER_REMOVE_SNAPSHOTS=$(echo "$global_settings" | grep -oE 'remove_snapshots: (true|false)' | cut -d' ' -f2)
+    
     sudo ./install.sh install -c ./config.yaml
     whiptail --msgbox "Установка завершена!" 10 60
   else
@@ -243,7 +253,7 @@ run_uninstallation() {
   profile=$(select_profile)
 
   # Настройка глобальных параметров
-  local global_settings=$(configure_global_settings)
+ local global_settings=$(configure_global_settings)
 
   local selected_roles
   selected_roles=$(select_roles)
@@ -252,6 +262,10 @@ run_uninstallation() {
 
   if whiptail --yesno "Вы хотите удалить выбранные компоненты?\n\nВнимание: Это действие может быть необратимым!\n\nПрофиль: $profile\nРоли: $selected_roles" 15 60; then
     sudo cp /tmp/ubuntu_installer_config.yaml ./config.yaml
+    
+    # Устанавливаем переменные окружения для настроек автоматического удаления
+    export UBUNTU_INSTALLER_REMOVE_SNAPSHOTS=$(echo "$global_settings" | grep -oE 'remove_snapshots: (true|false)' | cut -d' ' -f2)
+    
     sudo ./install.sh uninstall -c ./config.yaml
     whiptail --msgbox "Удаление завершено!" 10 60
   else
@@ -261,7 +275,7 @@ run_uninstallation() {
 
 # Функция для выполнения обновления
 run_update() {
-  # Настройка глобальных параметров
+ # Настройка глобальных параметров
   local global_settings=$(configure_global_settings)
 
   # Создаем минимальный конфигурационный файл для обновления
@@ -275,6 +289,10 @@ EOF
 
   if whiptail --yesno "Вы хотите обновить установленные компоненты?" 10 60; then
     sudo cp /tmp/ubuntu_installer_config.yaml ./config.yaml
+    
+    # Устанавливаем переменные окружения для настроек автоматического удаления
+    export UBUNTU_INSTALLER_REMOVE_SNAPSHOTS=$(echo "$global_settings" | grep -oE 'remove_snapshots: (true|false)' | cut -d' ' -f2)
+    
     sudo ./install.sh update -c ./config.yaml
     whiptail --msgbox "Обновление завершено!" 10 60
   else
@@ -284,7 +302,7 @@ EOF
 
 # Функция для создания бекапа с помощью timeshift
 create_timeshift_backup() {
-  if ! command -v timeshift &>/dev/null; then
+ if ! command -v timeshift &>/dev/null; then
     whiptail --msgbox "Timeshift не установлен. Установите его с помощью: sudo apt install timeshift" 10 60
     show_main_menu
     return
@@ -299,7 +317,7 @@ create_timeshift_backup() {
   fi
 
   # Проверяем, запущен ли скрипт с правами root
-  if [ "$EUID" -ne 0 ]; then
+ if [ "$EUID" -ne 0 ]; then
     whiptail --msgbox "Для создания бекапа необходимы права root" 10 60
     show_main_menu
     return
@@ -309,6 +327,17 @@ create_timeshift_backup() {
 
   # Создание снапшота
   if sudo timeshift --create --comments "$description"; then
+    # Проверяем, нужно ли автоматически удалить снапшот после создания
+    local config_file="/tmp/ubuntu_installer_config.yaml"
+    if [ -f "$config_file" ]; then
+      # Извлекаем значение remove_snapshots из временного конфигурационного файла
+      local remove_snapshots=$(grep -E '^\s*remove_snapshots:\s*' "$config_file" | grep -oE 'true|false' | head -n1)
+      if [ "$remove_snapshots" = "true" ]; then
+        log "INFO" "Удаление снапшота согласно настройкам автоматического удаления"
+        delete_latest_snapshot
+      fi
+    fi
+    
     whiptail --msgbox "Бекап успешно создан" 10 60
   else
     whiptail --msgbox "Ошибка при создании бекапа" 10 60
@@ -465,6 +494,10 @@ auto_installation() {
       whiptail --msgbox "Режим симуляции: автоматическая установка не была выполнена" 10 60
     else
       sudo cp /tmp/ubuntu_installer_config.yaml ./config.yaml
+      
+      # Устанавливаем переменные окружения для настроек автоматического удаления
+      export UBUNTU_INSTALLER_REMOVE_SNAPSHOTS=$(echo "$global_settings" | grep -oE 'remove_snapshots: (true|false)' | cut -d' ' -f2)
+      
       sudo ./install.sh install -c ./config.yaml
       whiptail --msgbox "Автоматическая установка завершена!" 10 60
     fi
@@ -505,6 +538,74 @@ remove_installed_packages() {
   show_main_menu
 }
 
+# Функция для ручного управления снапшотами
+manual_snapshot_management() {
+  local snapshot_choice
+  snapshot_choice=$(whiptail \
+    --title "Ручное управление снапшотами" \
+    --menu "\nВыберите действие:" \
+    15 60 3 \
+    "1" "Создать снапшот" \
+    "2" "Удалить один снапшот" \
+    "3" "Удалить все снапшоты" \
+    "4" "Назад" \
+    3>&1 1>&2 2>&3)
+
+  case $snapshot_choice in
+    1)
+      create_timeshift_backup
+      ;;
+    2)
+      delete_backup
+      ;;
+    3)
+      delete_all_snapshots_manual
+      ;;
+    4)
+      show_main_menu
+      ;;
+    *)
+      show_main_menu
+      ;;
+  esac
+}
+
+# Функция для удаления всех снапшотов
+delete_all_snapshots_manual() {
+  if ! command -v timeshift &>/dev/null; then
+    whiptail --msgbox "Timeshift не установлен. Установите его с помощью: sudo apt install timeshift" 10 60
+    manual_snapshot_management
+    return
+  fi
+
+ # Проверяем, запущен ли скрипт с правами root
+ if [ "$EUID" -ne 0 ]; then
+    whiptail --msgbox "Для удаления снапшотов необходимы права root" 10 60
+    manual_snapshot_management
+    return
+  fi
+
+  # Получаем список доступных снапшотов
+  local snapshots=$(sudo timeshift --list | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}' | awk '{print $1, $2, $3, $4, $5}' | tr '\n' ' ')
+
+  if [ -z "$snapshots" ]; then
+    whiptail --msgbox "Не найдено доступных снапшотов" 10 60
+    manual_snapshot_management
+    return
+  fi
+
+  if whiptail --yesno "Вы уверены, что хотите удалить все снапшоты?\n\nВНИМАНИЕ: Это действие необратимо!" 15 60; then
+    log "INFO" "Удаление всех снапшотов"
+
+    # Используем функцию из lib.sh для удаления всех снапшотов
+    delete_all_snapshots
+
+    whiptail --msgbox "Все снапшоты успешно удалены" 10 60
+  fi
+
+  manual_snapshot_management
+}
+
 # Функция для удаления бекапа
 delete_backup() {
   if ! command -v timeshift &>/dev/null; then
@@ -530,7 +631,7 @@ delete_backup() {
   fi
 
   # Преобразуем список бекапов в формат, подходящий для whiptail
-  local snapshot_array=()
+ local snapshot_array=()
   while IFS= read -r line; do
     if [ -n "$line" ]; then
       snapshot_array+=("$line" "$line" "OFF")
@@ -544,7 +645,7 @@ delete_backup() {
   fi
 
   local selected_snapshot
-  selected_snapshot=$(whiptail \
+ selected_snapshot=$(whiptail \
     --title "Выбор бекапа для удаления" \
     --radiolist "\nВыберите бекап для удаления:" \
     20 70 10 \
@@ -570,7 +671,7 @@ delete_backup() {
     fi
   fi
 
-  show_main_menu
+ show_main_menu
 }
 
 # Проверка наличия whiptail

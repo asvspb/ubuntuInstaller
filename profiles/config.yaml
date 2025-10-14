@@ -18,5 +18,4 @@ roles_enabled:
   - name: 60-samsung-printer
   - name: 70-zerotier-client
   - name: 80-virtualbox
-  - name: 90-laptop-optimization # Добавляем оптимизацию для ноутбуков
   - name: 95-user-config # Установка конфигурационных файлов из директории $USER
