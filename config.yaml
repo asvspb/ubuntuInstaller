@@ -1,0 +1,5 @@
+settings:
+  non_interactive: true
+  log_file: "/var/log/ubuntuInstaller/install-2025-10-14.log"
+profile: "auto"
+roles_enabled: []
