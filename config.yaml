@@ -1,10 +1,16 @@
 settings:
-  non_interactive: false
+  non_interactive: true
+  remove_snapshots: false
   log_file: "/var/log/ubuntuInstaller/install-2025-10-14.log"
 profile: "desktop-developer"
 roles_enabled:
   - name: 0-base-system
   - name: 10-dev-tools
-    vars:
-        install_vscode: false
-        install_pycharm: false
+  - name: 20-docker
+  - name: 30-secure-default
+  - name: 40-snap-apps
+  - name: 50-dev-pack
+  - name: 60-samsung-printer
+  - name: 70-zerotier-client
+  - name: 80-virtualbox
+  - name: 95-user-config
