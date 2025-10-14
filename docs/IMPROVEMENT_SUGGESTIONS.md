@@ -1,3 +1,117 @@
+# План развития Ubuntu Installer: аудит и план v3 (2025‑10‑14)
+
+Этот раздел добавлен поверх версии v2 и отражает текущее состояние фреймворка (структура ролей уже внедрена) и конкретные недочеты, найденные в актуальном коде, а также детальный план их устранения.
+
+## Текущие недочеты фреймворка (на основе аудита кода)
+
+1) Несогласованность точек входа и CI/Make
+- Дублируется точка входа: есть ./install.sh и ./scripts/install.sh с похожей логикой — риск расхождений и путаницы.
+- В ci/smoke-test.yaml вызываются цели Makefile (fmt-check, validate-config, dry-run-<profile>), которых нет в текущем Makefile.
+- В Makefile ошибка цвета: NC := \03[0m (пропущен символ 3) — ломает цветной вывод.
+
+2) Надежность/права/идемпотентность
+- Нет явного require_root в начале главного процесса; многие действия требуют root.
+- DRY_RUN используется неоднородно (локальные переменные vs переменные окружения) — возможны расхождения поведения.
+- ensure_snap_pkg выполняет snap install без sudo.
+- Установка yq выполняется «на лету», может падать без root.
+
+3) Снапшоты Timeshift
+- create_snapshot при отсутствии Timeshift/поддержки может завершить сценарий из‑за set -e. Для критичных ролей это делает установку хрупкой.
+
+4) Безопасность по умолчанию
+- Настройка NOPASSWD и правки needrestart применяются без флагов-опций. Нужны явные переключатели (settings.* или vars роли).
+- Установка Chrome — скачивание .deb без проверки подписи/хеша или использования официального репозитория.
+
+5) Логирование и UX
+- Логи пишутся в /var/log/... через sudo tee даже при не‑root запуске — возможны постоянные запросы пароля/ошибки записи. Нужен фолбэк путь для не‑root (например, $HOME/.cache/ubuntuInstaller/logs или ./logs).
+- Несогласованный цвет WARN (в lib.sh используется \033[1;3m вместо стандартного желтого \033[1;33m).
+
+6) Документация/тесты
+- Дублирование/повторы в README; несоответствие документации реальному Make/CI интерфейсу.
+- Тесты минимальны, CI пока не исполняется (workflow в корне ci/). Нет валидации конфигов профилей.
+
+## Стратегия и приоритеты
+1. Быстрые синхронизирующие правки: Makefile <-> CI, базовая валидация конфигов, нефатальность снапшотов, require_root, логирование с фолбэком.
+2. Укрепление безопасности и идемпотентности: sudo для snap, флаги для NOPASSWD/needrestart, безопасная установка Chrome.
+3. Улучшение DX: pre-commit, editorconfig, единые цели Make, расширенный smoke-тест.
+4. Консолидация точек входа и чистка legacy/документации.
+
+## Детальный план реализации (с указанием файлов, критериев приемки и рисков)
+
+Фаза A. Выравнивание Make/CI и базовая валидация (приоритет P0)
+- A1. Makefile: исправить NC, добавить цели fmt-check, validate-config, dry-run-desktop-developer, dry-run-server, dry-run-wsl.
+  • Файлы: Makefile
+  • Действия: fmt-check = shfmt -d -s; validate-config = yq проверки структуры config.yaml; dry-run-* вызывают ./install.sh --dry-run -c profiles/<..>.yaml
+  • DoD: make fmt-check/validate-config/dry-run-* работают локально; цвета выводятся корректно.
+- A2. GitHub Actions: перенести ci/smoke-test.yaml в .github/workflows/smoke-tests.yml и использовать новые цели Make.
+  • Файлы: .github/workflows/smoke-tests.yml (новый), удалить/архивировать ci/smoke-test.yaml
+  • DoD: workflow запускается на push/PR и проходит для матрицы профилей/версий Ubuntu.
+
+Фаза B. Укрепление ядра (install.sh/lib.sh/роли) (P0)
+- B1. require_root на входе.
+  • Файлы: install.sh (основной), scripts/install.sh (пометить legacy/удалить)
+  • Действия: вызвать require_root из lib.sh в начале main или до критичных действий; при не-root показывать actionable сообщение.
+  • DoD: запуск без sudo — понятная ошибка; с sudo — продолжение.
+- B2. DRY_RUN единообразно из env (UBUNTU_INSTALLER_DRY_RUN) в lib.sh; роли не определяют локальные DRY_RUN, а читают из lib.
+  • Файлы: lib.sh, roles/*/main.sh
+  • DoD: dry-run отображает команды без изменений; нет расхождений между ролями.
+- B3. Снапшоты best-effort.
+  • Файлы: install.sh, lib.sh
+  • Действия: перед create_snapshot проверять check_snapshot_support; ошибки снапшота не прерывают установку (|| log WARN).
+  • DoD: при отсутствии timeshift установка не падает; при наличии — снапшот создаётся.
+- B4. sudo для snap и yq.
+  • Файлы: lib.sh (ensure_snap_pkg), install.sh (check_yq)
+  • DoD: snap install и установка yq выполняются с sudo и идемпотентно.
+
+Фаза C. Безопасность и настройки (P1)
+- C1. Флаги для NOPASSWD и needrestart.
+  • Файлы: roles/0-base-system/main.sh, README.md (описание настроек)
+  • Действия: добавить settings: {set_nopasswd?, tune_needrestart?}; применять изменения только при true.
+  • DoD: при false — изменения не вносятся; при true — применяются.
+- C2. Безопасная установка Chrome.
+  • Файлы: roles/0-base-system/main.sh (install_additional_tools), lib.sh
+  • Вариант 1: оф. репозиторий + keyring; Вариант 2: download_with_verification + checksum/GPG.
+  • DoD: установка проходит без ручных dpkg -i/apt -f, есть верификация источника.
+- C3. Логирование с фолбэком.
+  • Файлы: lib.sh
+  • Действия: если нет прав записи в /var/log — использовать $HOME/.cache/ubuntuInstaller/logs (или ./logs); WARN цвет = \033[1;33m.
+  • DoD: логи всегда пишутся; цвета корректные.
+
+Фаза D. Разработка/качество (P1)
+- D1. validate-config расширить (строгая схема позже).
+  • Файлы: Makefile, scripts/validate_config.sh (новый) или Python-скрипт; схема в docs/schema/config.v1.yml (опц.)
+  • DoD: типы ключевых полей и enum профилей валидируются; CI падает при ошибках.
+- D2. Pre-commit и Editorconfig.
+  • Файлы: .pre-commit-config.yaml, .editorconfig
+  • Хуки: shellcheck, shfmt, yamllint (опц.).
+  • DoD: pre-commit проходит локально; в README есть инструкция.
+- D3. Документация.
+  • Файлы: README.md, docs/README.md
+  • Действия: убрать дубли, синхронизировать раздел «Цели Make» и «CI» с фактическими.
+  • DoD: README соответствует поведению.
+
+Фаза E. Консолидация и чистка (P2)
+- E1. Официальный entrypoint один — ./install.sh.
+  • Файлы: scripts/install.sh, scripts/lib.sh — пометить legacy или удалить; mini-tui.sh использует ./install.sh.
+  • DoD: документация и примеры используют только ./install.sh.
+- E2. Legacy-скрипты.
+  • Файлы: legacy/, scripts/
+  • Действия: пометки в README, либо архивация.
+
+## План тестирования и CI
+- Локально: make lint, make fmt-check, make validate-config, make dry-run-<profile>.
+- CI: GitHub Actions матрица (Ubuntu 22.04/24.04 × profiles), шаги: checkout → deps (shellcheck, shfmt, yq) → lint → fmt-check → validate-config → dry-run-<profile>.
+- Покрыть профили в profiles/*.yaml; валидировать каждый.
+
+## Критерии готовности (Definition of Done)
+- Цели Make соответствуют CI и документированы; CI зелёный на матрице.
+- Установка (install/update/uninstall) не падает при отсутствии Timeshift, требует root, поддерживает DRY-RUN единообразно.
+- Рискованные настройки за флагами; Chrome ставится безопасно.
+- Логи пишутся стабильно (root/non-root), цветовая схема корректна.
+- Документация и примеры актуальны; pre-commit настроен.
+
+---
+
 # План развития Ubuntu Installer: от скриптов к фреймворку (v2)
 
 Этот документ описывает стратегию и тактический план улучшения системы `ubuntuInstaller`, превращения ее из набора процедурных скриптов в гибкий, надежный и конфигурационно-управляемый фреймворк.

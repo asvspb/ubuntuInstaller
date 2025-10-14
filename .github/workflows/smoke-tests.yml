@@ -1,0 +1,42 @@
+# Smoke тесты для Ubuntu Installer Framework
+
+name: Smoke Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-${{ matrix.ubuntu-version }}
+    strategy:
+      matrix:
+        ubuntu-version: [22.04, 24.04]
+        profile: [desktop-developer, server, wsl]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y shellcheck shfmt
+        
+        # Установка правильного yq (mikefarah/yq) из GitHub релизов
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+    
+    - name: Syntax check
+      run: make lint
+    
+    - name: Formatting check
+      run: make fmt-check
+    
+    - name: Dry-run installation
+      run: make dry-run-${{ matrix.profile }}
+    
+    - name: Configuration validation
+      run: make validate-config

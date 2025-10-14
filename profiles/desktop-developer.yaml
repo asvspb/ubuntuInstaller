@@ -1,6 +1,6 @@
 settings:
   non_interactive: true
- log_file: "/var/log/ubuntuInstaller/install.log"
+  log_file: "/var/log/ubuntuInstaller/install.log"
   create_snapshot: false # Создавать снапшот перед установкой критичных ролей
   remove_snapshots: true # Удалять созданные снапшоты после установки
 profile: "desktop-developer"

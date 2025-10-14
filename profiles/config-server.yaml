@@ -1,7 +1,7 @@
 settings:
   non_interactive: true
- log_file: "/var/log/ubuntuInstaller/install-server.log"
- create_snapshot: false # Создавать снапшот перед установкой критичных ролей
+  log_file: "/var/log/ubuntuInstaller/install-server.log"
+  create_snapshot: false # Создавать снапшот перед установкой критичных ролей
   remove_snapshots: true # Удалять созданные снапшоты после установки
 profile: "server"
 roles_enabled:

@@ -5,10 +5,10 @@ set -e
 
 # check for installation of ZeroTier
 if ! command -v zerotier-cli &>/dev/null; then
-	echo "=== ZeroTier not found. Installing..."
-	curl -s https://install.zerotier.com | bash
+  echo "=== ZeroTier not found. Installing..."
+  curl -s https://install.zerotier.com | bash
 else
-	echo "=== ZeroTier is already installed."
+  echo "=== ZeroTier is already installed."
 fi
 
 # You can manually start the ZeroTier service with:
@@ -19,14 +19,14 @@ unauthorized_networks=$(sudo zerotier-cli listnetworks | grep -E "ACCESS_DENIED|
 
 # Check if there are unauthorized networks
 if [ -z "$unauthorized_networks" ]; then
-	echo "=== Unauthorized networks not found."
-	exit 0
+  echo "=== Unauthorized networks not found."
+  exit 0
 fi
 
 # Leave each unauthorized network
 for nwid in $unauthorized_networks; do
-	echo "=== Leaving unauthorized network: $nwid"
-	sudo zerotier-cli leave "$nwid"
+  echo "=== Leaving unauthorized network: $nwid"
+  sudo zerotier-cli leave "$nwid"
 done
 
 echo "=== All unauthorized networks have been successfully removed."
@@ -44,8 +44,8 @@ echo "!!! for network $NETWORK_ID"
 read -p "=== Press 'Enter' to continue after authorizing the node on the ZeroTier network..."
 
 while ! sudo zerotier-cli listnetworks | grep "$NETWORK_ID" | grep -q "OK"; do
-	sleep 30
-	echo "=== Still waiting for authorization... (checking every 30s)"
+  sleep 30
+  echo "=== Still waiting for authorization... (checking every 30s)"
 done
 
 # Change client configuration
