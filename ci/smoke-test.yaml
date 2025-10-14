@@ -1,0 +1,38 @@
+# Smoke тесты для Ubuntu Installer Framework
+
+name: Smoke Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu-version: [22.04, 24.04]
+        profile: [desktop-developer, server, wsl]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y shellcheck shfmt yq
+    
+    - name: Syntax check
+      run: make lint
+    
+    - name: Formatting check
+      run: make fmt-check
+    
+    - name: Dry-run installation
+      run: make dry-run-${{ matrix.profile }}
+    
+    - name: Configuration validation
+      run: make validate-config

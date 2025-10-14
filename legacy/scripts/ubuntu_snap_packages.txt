@@ -1,0 +1,51 @@
+# Список рекомендуемых snap пакетов
+
+Этот файл содержит список рекомендуемых snap пакетов для установки.
+
+## Системные утилиты
+curl
+wget
+jq
+yq
+htop
+btop
+ncdu
+ranger
+neofetch
+tldr
+fzf
+ripgrep
+fd-find
+bat
+exa
+zoxide
+
+## Разработка
+code
+docker
+node
+python3
+gimp
+inkscape
+krita
+blender
+godot
+
+## Мультимедиа
+vlc
+spotify
+obs-studio
+audacity
+kdenlive
+
+## Интернет
+firefox
+chromium
+discord
+telegram-desktop
+slack
+zoom-client
+
+## Офис
+onlyoffice-desktopeditors
+libreoffice

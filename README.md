@@ -1,86 +1,79 @@
 # Ubuntu Installer Framework
 
-This repository contains a framework to automate the setup of a new Ubuntu installation using a declarative approach.
+Этот репозиторий содержит фреймворк для автоматизации установки новой системы Ubuntu с использованием декларативного подхода.
 
-## Framework Components
+## Компоненты фреймворка
 
-*   `install.sh`: Main installation script that orchestrates the installation process.
-*   `config.yaml`: Configuration file defining what components to install (profiles, roles, variables).
-*   `lib.sh`: Common library functions for all modules (logging, error handling, package management, etc.).
-*   `Makefile`: Contains targets for linting, formatting, dry-run, and installation.
-*   `roles/`: Directory containing modular roles for different components:
-    * `0-base-system` - установка базовой системы и настройка основных параметров
-    * `10-dev-tools` - установка и настройка инструментов разработчика
-    * `20-docker` - установка и настройка Docker и связанных инструментов
-    * `30-secure-default` - установка и настройка параметров безопасности по умолчанию
-    * `40-snap-apps` - установка рекомендуемых Snap приложений
-    * `50-dev-pack` - установка комплексного набора приложений для разработчиков
-    * `60-samsung-printer` - установка драйвера для Samsung принтеров
-    * `70-zerotier-client` - установка ZeroTier клиента для Ubuntu
-    * `80-virtualbox` - установка VirtualBox и настройка среды для виртуальных машин
-    * `90-laptop-optimization` - оптимизация для ноутбуков
-    * `95-user-config` - установка конфигурационных файлов из директории $USER в домашнюю директорию пользователя
+*   `install.sh` - Главный скрипт установки, который координирует процесс установки.
+*   `config.yaml` - Конфигурационный файл, определяющий, какие компоненты устанавливать (профили, роли, переменные).
+*   `lib.sh` - Общая библиотека функций для всех модулей (логирование, обработка ошибок, управление пакетами и т.д.).
+*   `Makefile` - Содержит цели для линтинга, форматирования, симуляции и установки.
+*   `roles/` - Директория с модульными ролями для различных компонентов (base-system, dev-tools, docker и т.д.).
 
-## Scripts (Legacy)
+## Скрипты (Устаревшие)
 
-*   `scripts/1_ubuntuStart.sh`: Legacy script - Sets the system time, installs a minimal set of networking tools, Chrome, and Telegram. It also disables the sudo password prompt.
-*   `scripts/2_ubuntuDocker.sh`: Legacy script - Installs Docker and a development environment. Requires a reboot after execution.
-*   `scripts/3_ubuntuPack.sh`: Legacy script - Installs a comprehensive suite of applications for developers.
-*   `scripts/4_snap-apps.sh`: Legacy script - Installs recommended Snap applications.
-*   `scripts/5_samsung-printer-driver.sh`: Legacy script - Installs the driver for Samsung printers.
-*   `scripts/6_zerotier-client.sh`: Legacy script - Installs the ZeroTier client for Ubuntu.
-*   `scripts/7_vbox.py`: Legacy script - Installs VirtualBox and sets up a development environment for virtual machines.
-*   `scripts/ubuntu_snap_packages.txt`: Contains a list of recommended snap packages.
+*   `scripts/1_ubuntuStart.sh` - Устаревший скрипт - Устанавливает системное время, минимальный набор сетевых инструментов, Chrome и Telegram. Также отключает запрос пароля sudo.
+*   `scripts/2_ubuntuDocker.sh` - Устаревший скрипт - Устанавливает Docker и среду разработки. Требует перезагрузку после выполнения.
+*   `scripts/3_ubuntuPack.sh` - Устаревший скрипт - Устанавливает расширенный набор приложений для разработчиков.
+*   `scripts/4_snap-apps.sh` - Устаревший скрипт - Устанавливает рекомендуемые Snap приложения.
+*   `scripts/5_samsung-printer-driver.sh` - Устаревший скрипт - Устанавливает драйвер для принтеров Samsung.
+*   `scripts/6_zerotier-client.sh` - Устаревший скрипт - Устанавливает ZeroTier клиент для Ubuntu.
+*   `scripts/7_vbox.py` - Устаревший скрипт - Устанавливает VirtualBox и настраивает среду для виртуальных машин.
+*   `scripts/ubuntu_snap_packages.txt` - Содержит список рекомендуемых snap пакетов.
 
-## Additional Files
+## Дополнительные файлы
 
-*   `$USER/`: Contains minimal Ubuntu settings, bash/zsh configurations, gitconfig, and cleanup scripts.
-*   `$USER/Dev/AI.code-profile`: Visual Studio Code profile.
-*   `music/`: Contains links to radio streams.
-*   `$USER/OpenRGB/`: Contains scripts and configurations for OpenRGB.
-*   `$USER/Templates/`: Contains HTML, JavaScript, Python, and README templates.
-*   `$USER/themes/`: Contains themes for Ubuntu (BigSur, Graphite, Monterey, Ventoy-Dark, xu).
-*   `PROGRAM_DESCRIPTIONS.md`: Contains detailed descriptions of programs installed by the scripts.
-*   `IMPROVEMENT_SUGGESTIONS.md`: Development roadmap for transitioning from scripts to framework.
+*   `$USER/` - Содержит минимальные настройки Ubuntu, конфигурации bash/zsh, gitconfig и скрипты очистки.
+*   `$USER/Dev/AI.code-profile` - Профиль Visual Studio Code.
+*   `music/` - Содержит ссылки на радиопотоки.
+*   `$USER/OpenRGB/` - Содержит скрипты и конфигурации для OpenRGB.
+*   `$USER/Templates/` - Содержит шаблоны HTML, JavaScript, Python и README.
+*   `$USER/themes/` - Содержит темы для Ubuntu (BigSur, Graphite, Monterey, Ventoy-Dark, xu).
+*   `PROGRAM_DESCRIPTIONS.md` - Содержит подробные описания программ, устанавливаемых скриптами.
+*   `IMPROVEMENT_SUGGESTIONS.md` - Дорожная карта развития для перехода от скриптов к фреймворку.
 
-## Supported Versions
+## Поддерживаемые версии
 
 *   Ubuntu 22.04 LTS
 *   Ubuntu 24.04 LTS
-*   Architecture: amd64
+*   Архитектура: amd64
 
-## Architecture
+## Архитектура
 
-The Ubuntu Installer Framework follows a modular, declarative approach:
+Ubuntu Installer Framework следует модульному, декларативному подходу:
 
-### Configuration-Driven Installation
-* Uses YAML-based configuration files to define the desired system state
-* Supports different profiles (developer, server, wsl) with customizable roles
-* Variables can be passed to roles to customize behavior
+### Конфигурационно-управляемая установка
 
-### Modular Roles System
-* Each component is encapsulated in a role (e.g., base-system, dev-tools, docker)
-* Roles are stored in the `roles/` directory with numeric prefixes for execution order
-* Roles are idempotent - can be run multiple times without side effects
+* Использует конфигурационные файлы в формате YAML для определения желаемого состояния системы
+* Поддерживает различные профили (developer, server, wsl) с настраиваемыми ролями
+* Переменные могут передаваться в роли для настройки поведения
 
-### Library Functions
-* `lib.sh` provides common functions for logging, error handling, package management, etc.
-* Includes functions for dry-run support, system checks, and security verification
-* All scripts and roles utilize these common functions
+### Модульная система ролей
 
-### Makefile Integration
-* Standardized interface for common operations (lint, fmt, dry-run, install)
-* Supports both development and production workflows
+* Каждый компонент инкапсулирован в роль (например, base-system, dev-tools, docker)
+* Роли хранятся в директории `roles/` с числовыми префиксами для определения порядка выполнения
+* Роли идемпотентны - могут запускаться несколько раз без побочных эффектов
 
-## Usage
+### Библиотечные функции
 
-### Using the New Framework
+* `lib.sh` предоставляет общие функции для логирования, обработки ошибок, управления пакетами и т.д.
+* Включает функции для поддержки режима симуляции, проверки системы и верификации безопасности
+* Все скрипты и роли используют эти общие функции
 
-1. Clone the repository:
+### Интеграция с Makefile
+
+* Стандартизированный интерфейс для общих операций (lint, fmt, dry-run, install)
+* Поддерживает как разработческие, так и производственные рабочие процессы
+
+## Использование
+
+### Использование нового фреймворка
+
+1. Клонируйте репозиторий:
     ```bash
     git clone https://github.com/asvspb/ubuntuInstaller.git
     ```
-2. Customize the `config.yaml` file to specify your desired configuration:
+2. Настройте файл `config.yaml` под свои нужды:
     ```yaml
     settings:
       non_interactive: true
@@ -95,156 +88,159 @@ The Ubuntu Installer Framework follows a modular, declarative approach:
       - name: 20-docker
         enabled: true
     ```
-3. Run a dry-run to simulate the installation:
+3. Запустите симуляцию установки:
     ```bash
-    # Using make (simplified simulation)
+    # Используя make (упрощенная симуляция)
     make dry-run
     
-    # Using the main script (full simulation with configuration processing)
+    # Используя основной скрипт (полная симуляция с обработкой конфигурации)
     ./install.sh --dry-run
     ```
-4. Run the installation:
+4. Запустите установку:
     ```bash
     sudo ./install.sh install
-    # Or using make
+    # Или используя make
     sudo make install
     ```
-5. To uninstall components:
+5. Для удаления компонентов:
     ```bash
     sudo ./install.sh uninstall
-    # Or using make
+    # Или используя make
     sudo make uninstall
     ```
-6. To update installed components:
+6. Для обновления установленных компонентов:
     ```bash
     sudo ./install.sh update
-    # Or using make
+    # Или используя make
     sudo make update
     ```
 
-### Profiles
-The framework supports different system profiles:
-- `desktop-developer`: Полнофункциональная десктопная система для разработки
-- `server`: Серверная система с минимальным набором компонентов
-- `wsl`: Система для Windows Subsystem for Linux
-- `auto`: Автоматическое определение профиля на основе характеристик системы
+### Профили
 
-You can specify a profile in the config file or use one of the predefined profile configs in the `profiles/` directory:
+Фреймворк поддерживает различные профили системы:
+- `desktop-developer` - Полнофункциональная десктопная система для разработки
+- `server` - Серверная система с минимальным набором компонентов
+- `wsl` - Система для Windows Subsystem for Linux
+- `auto` - Автоматическое определение профиля на основе характеристик системы
+
+Вы можете указать профиль в конфигурационном файле или использовать один из предопределенных профильных конфигурационных файлов в директории `profiles/`:
     ```bash
     sudo ./install.sh -c profiles/desktop-developer.yaml
     sudo ./install.sh -c profiles/server.yaml
     sudo ./install.sh -c profiles/wsl.yaml
     ```
 
-### Interactive Mode
-The framework includes a mini-TUI for interactive selection of profiles and roles:
+### Интерактивный режим
+
+Фреймворк включает мини-TUI для интерактивного выбора профилей и ролей:
     ```bash
     sudo ./mini-tui.sh
     ```
 
-### Makefile Targets
+### Цели Makefile
 
-* `make lint` - Check syntax of all shell scripts using shellcheck
-* `make fmt` - Format all shell scripts using shfmt
-* `make dry-run` - Simulate installation without making changes (simplified)
-* `make install` - Execute the installation process
-* `make uninstall` - Remove installed components
-* `make update` - Update installed components
-* `make info` - Display framework information
+* `make lint` - Проверка синтаксиса всех shell-скриптов с помощью shellcheck
+* `make fmt` - Форматирование всех shell-скриптов с помощью shfmt
+* `make dry-run` - Симуляция установки без внесения изменений (упрощенная)
+* `make install` - Выполнение процесса установки
+* `make uninstall` - Удаление установленных компонентов
+* `make update` - Обновление установленных компонентов
+* `make info` - Отображение информации о фреймворке
 
-### Configuration Options
+### Опции конфигурации
 
-The `config.yaml` file supports the following options:
+Файл `config.yaml` поддерживает следующие опции:
 
-* `settings.non_interactive` - Run without user prompts (default: true)
-* `settings.log_file` - Path to log file (default: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
-* `profile` - System profile (desktop-developer, server, wsl, auto)
-* `roles_enabled` - List of roles to execute with optional variables
-* `roles_enabled[n].enabled` - Enable or disable specific role (default: true)
-* `roles_enabled[n].vars` - Variables to pass to role
+* `settings.non_interactive` - Запуск без запросов пользователю (по умолчанию: true)
+* `settings.log_file` - Путь к файлу журнала (по умолчанию: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
+* `profile` - Профиль системы (desktop-developer, server, wsl, auto)
+* `roles_enabled` - Список ролей для выполнения с опциональными переменными
+* `roles_enabled[n].enabled` - Включить или отключить конкретную роль (по умолчанию: true)
+* `roles_enabled[n].vars` - Переменные для передачи в роль
 
-### Role Development
+### Разработка ролей
 
-To create a new role:
-1. Create a directory in `roles/` with a numeric prefix (e.g., `30-new-role/`)
-2. Add a `main.sh` script that uses functions from `lib.sh`
-3. Optionally add an `uninstall.sh` script for role removal
-4. Reference the role in `config.yaml`
+Для создания новой роли:
 
-Roles should be idempotent and support dry-run mode through the `DRY_RUN` variable.
+1. Создайте директорию в `roles/` с числовым префиксом (например, `30-new-role/`)
+2. Добавьте скрипт `main.sh`, который использует функции из `lib.sh`
+3. Опционально добавьте скрипт `uninstall.sh` для удаления роли
+4. Добавьте ссылку на роль в `config.yaml`
 
-### Phase 4: Rollback and State Management
+Роли должны быть идемпотентными и поддерживать режим симуляции через переменную `DRY_RUN`.
 
-The framework now supports advanced rollback and state management features:
+### Фаза 4: Откат и управление состоянием
 
-#### Uninstall Support
-* Each role can have an `uninstall.sh` script for component removal
-* Use `./install.sh uninstall` or `make uninstall` to remove installed components
-* Roles are removed in reverse order of installation
+Фреймворк теперь поддерживает расширенные функции отката и управления состоянием:
 
-#### Pre-snapshots for Critical Roles
-* Automatic snapshots are created before installing critical roles (0-base-system, 20-docker, 30-secure-default)
-* Requires Timeshift to be installed for snapshot functionality
-* Snapshots are created with descriptive comments for easy identification
+#### Поддержка удаления
 
-#### Update Mechanism
-* Use `./install.sh update` or `make update` to update installed components
-* Roles are updated or reinstalled as needed
-* State tracking ensures only necessary updates are performed
+* Каждая роль может иметь скрипт `uninstall.sh` для удаления компонентов
+* Используйте `./install.sh uninstall` или `make uninstall` для удаления установленных компонентов
+* Роли удаляются в обратном порядке установки
 
-#### State Tracking
-* Installed roles are tracked in `/var/lib/ubuntuInstaller.state`
-* Prevents duplicate installations and enables proper update/uninstall operations
-* State file is automatically managed by the framework
+#### Предварительные снимки для критических ролей
 
-### Legacy Scripts (Deprecated)
+* Автоматические снимки создаются перед установкой критических ролей (0-base-system, 20-docker, 30-secure-default)
+* Требуется установка Timeshift для функциональности снимков
+* Снимки создаются с описательными комментариями для легкой идентификации
 
-1. Navigate to the scripts directory:
+#### Механизм обновления
+
+* Используйте `./install.sh update` или `make update` для обновления установленных компонентов
+* Роли обновляются или переустанавливаются по мере необходимости
+* Отслеживание состояния гарантирует выполнение только необходимых обновлений
+
+#### Отслеживание состояния
+
+* Установленные роли отслеживаются в `/var/lib/ubuntuInstaller.state`
+* Предотвращает дублирующиеся установки и обеспечивает правильные операции обновления/удаления
+* Файл состояния автоматически управляется фреймворком
+
+### Устаревшие скрипты (Не рекомендуются)
+
+1. Перейдите в директорию скриптов:
     ```bash
     cd ubuntuInstaller/scripts
     ```
-2. Make the desired script executable:
+2. Сделайте нужный скрипт исполняемым:
     ```bash
     chmod +x script_name.sh
     ```
-3. Run the scripts in order, starting with `1_ubuntuStart.sh`:
+3. Запускайте скрипты по порядку, начиная с `1_ubuntuStart.sh`:
     ```bash
     sudo ./1_ubuntuStart.sh
     ```
 
-The `config.yaml` file supports the following options:
+Файл `config.yaml` поддерживает следующие опции:
 
-* `settings.non_interactive` - Run without user prompts (default: true)
-* `settings.log_file` - Path to log file (default: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
-* `profile` - System profile (developer, server, wsl)
-* `roles_enabled` - List of roles to execute with optional variables
-* `roles_enabled[n].enabled` - Enable or disable specific role (default: true)
+* `settings.non_interactive` - Запуск без запросов пользователю (по умолчанию: true)
+* `settings.log_file` - Путь к файлу журнала (по умолчанию: /var/log/ubuntuInstaller/install-$(date +%Y-%m-%d).log)
+* `profile` - Профиль системы (developer, server, wsl)
+* `roles_enabled` - Список ролей для выполнения с опциональными переменными
+* `roles_enabled[n].enabled` - Включить или отключить конкретную роль (по умолчанию: true)
+* `roles_enabled[n].vars` - Переменные для передачи в роль
 
-### Role Development
+### Разработка ролей
 
-To create a new role:
-1. Create a directory in `roles/` with a numeric prefix (e.g., `30-new-role/`)
-2. Add a `main.sh` script that uses functions from `lib.sh`
-3. Reference the role in `config.yaml`
+Для создания новой роли:
 
-Roles should be idempotent and support dry-run mode through the `DRY_RUN` variable.
+1. Создайте директорию в `roles/` с числовым префиксом (например, `30-new-role/`)
+2. Добавьте скрипт `main.sh`, который использует функции из `lib.sh`
+3. Добавьте ссылку на роль в `config.yaml`
 
-### Legacy Scripts (Deprecated)
+Роли должны быть идемпотентными и поддерживать режим симуляции через переменную `DRY_RUN`.
 
-1. Navigate to the scripts directory:
+### Устаревшие скрипты (Не рекомендуются)
+
+1. Перейдите в директорию скриптов:
     ```bash
     cd ubuntuInstaller/scripts
     ```
-2. Make the desired script executable:
+2. Сделайте нужный скрипт исполняемым:
     ```bash
     chmod +x script_name.sh
     ```
-3. Run the scripts in order, starting with `1_ubuntuStart.sh`:
+3. Запускайте скрипты по порядку, начиная с `1_ubuntuStart.sh`:
     ```bash
     sudo ./1_ubuntuStart.sh
-    ```
-
-
-
-
----
