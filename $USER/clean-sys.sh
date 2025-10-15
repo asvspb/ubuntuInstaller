@@ -62,6 +62,9 @@ DOCKER_PRUNE_BUILDER_UNTIL="${DOCKER_PRUNE_BUILDER_UNTIL:-168h}"
 DOCKER_DEEP_PRUNE="${DOCKER_DEEP_PRUNE:-0}"
 DOCKER_DEEP_PRUNE_UNTIL="${DOCKER_DEEP_PRUNE_UNTIL:-336h}"
 
+# Очистка Timeshift (по умолчанию выключено для безопасности)
+CLEAN_TIMESHIFT="${CLEAN_TIMESHIFT:-0}"
+
 log() { printf '%s %s %s\n' "$(date '+%F %T')" "$LOG_PREFIX" "$*"; }
 size_of() { du -sh "$1" 2>/dev/null | awk '{print $1}'; }
 
@@ -436,6 +439,40 @@ docker_prune_safe() {
   fi
 }
 
+clean_timeshift() {
+  [ "$CLEAN_TIMESHIFT" = "1" ] || return 0
+  command -v timeshift >/dev/null 2>&1 || { log "skip: timeshift не найден"; return 0; }
+  if ! sudo -n true 2>/dev/null; then
+    log "skip: требуется sudo для очистки timeshift"
+    return 0
+  fi
+
+  # Проверяем, есть ли вообще снимки
+  # `timeshift --list` has a non-zero exit code if no snapshots are found on some systems.
+  # So we check the output.
+  local snapshot_list
+  snapshot_list=$(sudo timeshift --list 2>/dev/null || true)
+  if ! echo "$snapshot_list" | grep -qE '^[0-9]+\s+>'; then
+    log "Снимки Timeshift не найдены."
+    return 0
+  fi
+
+  log "Удаление ВСЕХ снимков Timeshift..."
+
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: yes | sudo timeshift --delete-all"
+    echo "$snapshot_list" | awk 'NR > 2 {print "DRY-RUN: would delete snapshot", $3}'
+    return 0
+  fi
+
+  # timeshift --delete-all требует интерактивного подтверждения
+  if yes | sudo timeshift --delete-all; then
+    log "Все снимки Timeshift удалены."
+  else
+    log "warn: не удалось удалить снимки Timeshift."
+  fi
+}
+
 clean_tmp_all()   { [ "$CLEAN_TMP" = "1" ] && cleanup_tmp_path "/tmp" "$TMP_MAX_AGE_DAYS"; }
 clean_vartmp_all(){ [ "$CLEAN_VARTMP" = "1" ] && cleanup_tmp_path "/var/tmp" "$VARTMP_MAX_AGE_DAYS"; }
 
@@ -470,6 +507,7 @@ snap_cleanup_disabled
 clean_snapd_cache
 clean_var_crash
 apt_maintenance
+clean_timeshift
 clean_tmp_all
 clean_vartmp_all
 
@@ -479,6 +517,7 @@ flatpak_unused
 # Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
 docker_prune_safe
 
+docker_prune
 docker_prune
 
 # Удаление ML-пакетов и обслуживание БД (опционально)
