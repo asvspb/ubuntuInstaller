@@ -53,6 +53,7 @@ npm install -g @qwen-code/qwen-code@latest
 npm install -g codebuff
 npm install -g @github/copilot
 npm install -g cline
+npm install -g @openai/codex
 
 
 
