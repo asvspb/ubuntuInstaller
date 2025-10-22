@@ -51,9 +51,9 @@ echo "--------------------------------------------------------------"
 npm install -g @google/gemini-cli@latest
 npm install -g @qwen-code/qwen-code@latest
 npm install -g codebuff
-npm install -g @github/copilot
+npm install -g @github/copilot@latest
 npm install -g cline
-npm install -g @openai/codex
+npm install -g @kilocode/cli
 
 
 
