@@ -162,11 +162,128 @@ check_default_printer() {
     fi
 }
 
+
+# --- Diagnose printer status ---
+diagnose_printer_status() {
+    info "Diagnosing printer status"
+
+    # Ensure lpstat is available (cups-client)
+    if ! command -v lpstat >/dev/null 2>&1; then
+        if [ "$AUTO_INSTALL_CUPS_CLIENT" = true ]; then
+            info "cups-client not found. Installing cups-client"
+            if [ "$DRY_RUN" = false ]; then
+                sudo apt-get update
+                sudo apt-get install -y cups-client
+            else
+                echo "[Dry Run] Would install cups-client"
+            fi
+        else
+            echo "lpstat command not found. Install 'cups-client' to enable printer status checks."
+            echo "Example: sudo apt-get install -y cups-client"
+            return 0
+        fi
+    fi
+
+    # Check CUPS service status
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl is-active --quiet cups; then
+            echo "CUPS service is not active. You may need to start it: sudo systemctl enable --now cups"
+            return 0
+        fi
+    fi
+
+    # Get printer status
+    PRINTER_STATUS=$(lpstat -p 2>/dev/null)
+    if [ -z "$PRINTER_STATUS" ]; then
+        echo "No printers are configured yet. Add a printer via 'Settings' > 'Printers' or using lpadmin."
+        return 0
+    fi
+
+    echo "$PRINTER_STATUS" | while read -r line; do
+        if echo "$line" | grep -q "disabled"; then
+            echo "Warning: Printer is disabled: $line"
+            echo "To enable the printer, use: sudo cupsenable <printer_name>"
+        elif echo "$line" | grep -q "offline"; then
+            echo "Warning: Printer is offline: $line"
+            echo "Check the printer's connection and power."
+        elif echo "$line" | grep -q "error"; then
+            echo "Error: Printer has an error: $line"
+            echo "Check the printer's error messages and resolve the issue."
+        elif echo "$line" | grep -q "idle"; then
+            echo "Printer is idle and ready: $line"
+        else
+            echo "Printer status: $line"
+        fi
+    done
+}
+
+# --- Print test page ---
+print_test_page() {
+    info "Printing test page"
+
+    # Ensure lp command is available (cups-client)
+    if ! command -v lp >/dev/null 2>&1; then
+        if [ "$AUTO_INSTALL_CUPS_CLIENT" = true ]; then
+            info "cups-client not found. Installing cups-client"
+            if [ "$DRY_RUN" = false ]; then
+                sudo apt-get update
+                sudo apt-get install -y cups-client
+            else
+                echo "[Dry Run] Would install cups-client"
+            fi
+        else
+            echo "lp command not found. Install 'cups-client' to enable printing."
+            echo "Example: sudo apt-get install -y cups-client"
+            return 0
+        fi
+    fi
+
+    # Check CUPS service status
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl is-active --quiet cups; then
+            echo "CUPS service is not active. You may need to start it: sudo systemctl enable --now cups"
+            return 0
+        fi
+    fi
+
+    # Print test page
+    if [ "$DRY_RUN" = false ]; then
+        # Print test page and capture job ID
+        # Create a temporary file with Ubuntu ASCII art
+        TEMP_FILE=$(mktemp)
+        cat << 'EOF' > "$TEMP_FILE"
+_   _   _   _   _   _
+/ \ / \ / \ / \ / \
+( U | b | u | n | t | u |   | ! )
+\_/ \_/ \_/ \_/ \_/ \_/
+EOF
+        JOB_ID=$(lp "$TEMP_FILE" 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            echo "Test page sent to printer. Job ID: $JOB_ID"
+            # Wait a moment and check if the job is processing
+            sleep 5
+            if lpstat -o | grep -q "$JOB_ID"; then
+                echo "Printer is processing the test page (Job ID: $JOB_ID)."
+            else
+                echo "Test page print completed or failed. Check printer status."
+            fi
+        else
+            echo "Test page print failed. Check printer status and configuration."
+        fi
+        # Clean up the temporary file
+        rm "$TEMP_FILE"
+    else
+        echo "[Dry Run] Would print test page: lp /etc/passwd"
+    fi
+}
+
 # --- Main Execution ---
 parse_args "$@"
 install_samsung_driver
 
 check_default_printer
+diagnose_printer_status
+print_test_page
 
 echo
 echo "The script has finished."
