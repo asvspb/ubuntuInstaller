@@ -20,7 +20,7 @@ curl -qL https://www.npmjs.com/install.sh | sh
 sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip --break-system-packages
 
 print_header "Updating CODE CLI's..."
-npm install -g @google/gemini-cli@latest && npm install -g @qwen-code/qwen-code@latest && npm install -g @github/copilot && npm install -g codebuff
+npm install -g @google/gemini-cli@latest && npm install -g @qwen-code/qwen-code@latest && npm install -g @github/copilot && npm install -g codebuff && npm install -g @kilocode/cli
 
 # Log file
 LOG_FILE="$HOME/vscode-updater.log"
