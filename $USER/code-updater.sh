@@ -72,8 +72,53 @@ sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip --bre
 
 log_message "HEADER" "Updating CODE CLI's..."
 log_message "INFO" "Installing/Updating CODE CLI tools..."
-npm install -g @google/gemini-cli@latest && npm install -g @qwen-code/qwen-code@latest && npm install -g @github/copilot && npm install -g codebuff && npm install -g @kilocode/cli
-log_message "SUCCESS" "CODE CLI tools updated successfully"
+
+# Install @google/gemini-cli
+log_message "INFO" "Installing @google/gemini-cli@latest..."
+if npm install -g @google/gemini-cli@latest; then
+    log_message "SUCCESS" "@google/gemini-cli installed successfully"
+else
+    log_message "ERROR" "Failed to install @google/gemini-cli"
+    exit 1
+fi
+
+# Install @qwen-code/qwen-code
+log_message "INFO" "Installing @qwen-code/qwen-code@latest..."
+if npm install -g @qwen-code/qwen-code@latest; then
+    log_message "SUCCESS" "@qwen-code/qwen-code installed successfully"
+else
+    log_message "ERROR" "Failed to install @qwen-code/qwen-code"
+    exit 1
+fi
+
+# Install @github/copilot
+log_message "INFO" "Installing @github/copilot..."
+if npm install -g @github/copilot; then
+    log_message "SUCCESS" "@github/copilot installed successfully"
+else
+    log_message "ERROR" "Failed to install @github/copilot"
+    exit 1
+fi
+
+# Install codebuff
+log_message "INFO" "Installing codebuff..."
+if npm install -g codebuff; then
+    log_message "SUCCESS" "codebuff installed successfully"
+else
+    log_message "ERROR" "Failed to install codebuff"
+    exit 1
+fi
+
+# Install @kilocode/cli
+log_message "INFO" "Installing @kilocode/cli..."
+if npm install -g @kilocode/cli; then
+    log_message "SUCCESS" "@kilocode/cli installed successfully"
+else
+    log_message "ERROR" "Failed to install @kilocode/cli"
+    exit 1
+fi
+
+log_message "SUCCESS" "All CODE CLI tools updated successfully"
 
 # Determine system architecture
 ARCH=$(uname -m)
