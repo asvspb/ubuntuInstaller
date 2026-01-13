@@ -19,6 +19,13 @@ echo "--------------------------------------------------------------"
 curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg > /dev/null
 echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.microsoft.com/repos/vscode stable main | sudo tee /etc/apt/sources.list.d/vscode.list
 
+# ACLI repository setup
+sudo apt-get install -y wget gnupg2
+sudo mkdir -p -m 755 /etc/apt/keyrings
+wget -nv -O- https://acli.atlassian.com/gpg/public-key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg
+sudo chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] https://acli.atlassian.com/linux/deb stable main" | sudo tee /etc/apt/sources.list.d/acli.list > /dev/null
+
 sudo apt update -y
 echo " "
 echo "Installing programming environment"
@@ -35,7 +42,7 @@ sudo apt install code gcc default-jdk -y
 # install system packages
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common exa batcat fd-find ripgrep duf zoxide rclone -y
-sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor -y
+sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor acli -y
 
 
 echo " "
