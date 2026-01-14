@@ -29,9 +29,9 @@ SQLITE_DB_PATHS="${SQLITE_DB_PATHS:-$HOME/Dev/my-coding/warandpeace/database/art
 ALLOW_RM="${ALLOW_RM:-0}"                              # если нет gio и нужно удалять без корзины (по умолчанию — безопасно: пропуск)
 
 # Дополнительные (опциональные) системные чистки
-APT_CLEAN="${APT_CLEAN:-0}"
-APT_AUTOCLEAN="${APT_AUTOCLEAN:-0}"
-APT_AUTOREMOVE="${APT_AUTOREMOVE:-0}"
+APT_CLEAN="${APT_CLEAN:-1}"
+APT_AUTOCLEAN="${APT_AUTOCLEAN:-1}"
+APT_AUTOREMOVE="${APT_AUTOREMOVE:-1}"
 
 CLEAN_TMP="${CLEAN_TMP:-1}"
 TMP_MAX_AGE_DAYS="${TMP_MAX_AGE_DAYS:-7}"
@@ -42,25 +42,28 @@ CLEAN_SNAPD_CACHE="${CLEAN_SNAPD_CACHE:-1}"
 CLEAN_VAR_CRASH="${CLEAN_VAR_CRASH:-1}"
 
 CLEAN_OLD_LOG_GZ="${CLEAN_OLD_LOG_GZ:-1}"
-LOG_GZ_RETENTION_DAYS="${LOG_GZ_RETENTION_DAYS:-14}"
+LOG_GZ_RETENTION_DAYS="${LOG_GZ_RETENTION_DAYS:-7}"
 
-SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-0}"
+SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-1}"
 SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 
 NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-1}"
-NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"
+NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-1}"
 
-FLATPAK_UNUSED="${FLATPAK_UNUSED:-0}"
+FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 
-DOCKER_PRUNE="${DOCKER_PRUNE:-0}"
+DOCKER_PRUNE="${DOCKER_PRUNE:-1}"
 DOCKER_PRUNE_VOLUMES="${DOCKER_PRUNE_VOLUMES:-0}"
 # Расширенная безопасная очистка Docker (тонкая настройка)
 DOCKER_SAFE_PRUNE="${DOCKER_SAFE_PRUNE:-1}"
-DOCKER_PRUNE_CONTAINERS_UNTIL="${DOCKER_PRUNE_CONTAINERS_UNTIL:-24h}"
+DOCKER_PRUNE_CONTAINERS_UNTIL="${DOCKER_PRUNE_CONTAINERS_UNTIL:-48h}"
 DOCKER_PRUNE_IMAGES_UNTIL="${DOCKER_PRUNE_IMAGES_UNTIL:-168h}"
 DOCKER_PRUNE_BUILDER_UNTIL="${DOCKER_PRUNE_BUILDER_UNTIL:-168h}"
 DOCKER_DEEP_PRUNE="${DOCKER_DEEP_PRUNE:-0}"
 DOCKER_DEEP_PRUNE_UNTIL="${DOCKER_DEEP_PRUNE_UNTIL:-336h}"
+
+# Очистка профилей браузеров (кэши внутри ~/.config)
+CLEAN_CHROME_PROFILE_CACHE="${CLEAN_CHROME_PROFILE_CACHE:-1}"
 
 # Очистка Timeshift (по умолчанию выключено для безопасности)
 CLEAN_TIMESHIFT="${CLEAN_TIMESHIFT:-0}"
@@ -82,7 +85,7 @@ proc_running() { pgrep -x "$1" >/dev/null 2>&1; }
 trash_path() {
   # безопасное перемещение в корзину, либо пропуск, если нет gio
   local p="$1"
-  [ -e "$p" ] || { log "skip: нет $p"; return 0; }
+  [ -e "$p" ] || { return 0; }
   if [ "$DRY_RUN" = "1" ]; then
     log "DRY-RUN: переместил бы в корзину: $p"
     return 0
@@ -96,6 +99,24 @@ trash_path() {
       log "skip: нет gio (корзина), ALLOW_RM!=1, пропускаю $p"
     fi
   fi
+}
+
+clean_chrome_profile_cache() {
+  [ "$CLEAN_CHROME_PROFILE_CACHE" = "1" ] || return 0
+  local base="$HOME/.config/google-chrome"
+  if proc_running chrome || proc_running "google-chrome"; then
+    log "skip: Chrome запущен, кэш профиля не трогаем"
+    return 0
+  fi
+  log "Очистка кэшей в профилях Chrome..."
+  find "$base" -type d \( -name "Cache" -o -name "Code Cache" -o -name "GPUCache" -o -name "Service Worker" \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+show_top_large_files() {
+    log "--- ТОП-10 САМЫХ БОЛЬШИХ ФАЙЛОВ В $HOME ---"
+    find "$HOME" -type f -not -path '*/.*' -exec du -h {} + 2>/dev/null | sort -rh | head -n 10 || true
+    log "--- ТОП-10 САМЫХ БОЛЬШИХ СКРЫТЫХ ПАПОК (КЭШИ/КОНФИГИ) ---"
+    du -sh "$HOME"/.* 2>/dev/null | sort -rh | head -n 10 || true
 }
 
 empty_trash() {
@@ -498,6 +519,7 @@ clean_huggingface
 clean_chrome_model
 clean_vscode_caches
 clean_pyppeteer_share
+clean_chrome_profile_cache
 
 # Системные шаги (по возможности без пароля sudo)
 vacuum_journal
@@ -518,7 +540,6 @@ flatpak_unused
 docker_prune_safe
 
 docker_prune
-docker_prune
 
 # Удаление ML-пакетов и обслуживание БД (опционально)
 uninstall_ml_packages
@@ -530,6 +551,8 @@ vacuum_sqlite
 AFTER_FREE=$(free_bytes)
 DELTA=$(( AFTER_FREE - BEFORE_FREE ))
 log "Свободно ПОСЛЕ: $(printf "%s" "$AFTER_FREE" | human) (Δ=$(printf "%s" "$DELTA" | human))"
+
+show_top_large_files
 
 # Дополнительно мелкие кэши (если есть)
 purge_dir_contents "$CACHE_DIR/node-gyp" || true
