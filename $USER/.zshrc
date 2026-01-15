@@ -149,6 +149,7 @@ alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
 alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@193.148.59.14' #hiplet server
+alias con2='ssh asv-spb@193.148.59.14' #hiplet server
 alias code='~/code-updater.sh'
 
 # --- Configuration ---
