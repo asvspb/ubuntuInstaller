@@ -39,6 +39,11 @@ echo "--------------------------------------------------------------"
 sudo timedatectl set-local-rtc 1 --adjust-system-clock
 sudo timedatectl
 
+echo " "
+echo "Setting the snap refresh to 2 revisions"
+echo "--------------------------------------------------------------"
+sudo snap set system refresh.retain=2
+
 # minimize application on click in the dock
 gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
 
