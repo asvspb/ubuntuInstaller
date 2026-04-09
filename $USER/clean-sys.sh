@@ -49,6 +49,7 @@ SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 
 NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-1}"
 NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-1}"
+CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-1}"  # Очистка директории npm cacache напрямую
 
 FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 
@@ -67,6 +68,12 @@ CLEAN_CHROME_PROFILE_CACHE="${CLEAN_CHROME_PROFILE_CACHE:-1}"
 
 # Очистка Timeshift (по умолчанию выключено для безопасности)
 CLEAN_TIMESHIFT="${CLEAN_TIMESHIFT:-0}"
+
+# Очистка Node.js, Chrome cache, Poetry cache, Copilot cache
+OLD_NODE_CLEAN="${OLD_NODE_CLEAN:-1}"
+CHROME_CACHE_CLEAN="${CHROME_CACHE_CLEAN:-1}"
+POETRY_CACHE_CLEAN="${POETRY_CACHE_CLEAN:-1}"
+COPILOT_CACHE_CLEAN="${COPILOT_CACHE_CLEAN:-1}"
 
 log() { printf '%s %s %s\n' "$(date '+%F %T')" "$LOG_PREFIX" "$*"; }
 size_of() { du -sh "$1" 2>/dev/null | awk '{print $1}'; }
@@ -221,6 +228,113 @@ clean_vscode_caches() {
 clean_pyppeteer_share() {
   [ "$CLEAN_PYPPETEER_SHARE" = "1" ] || return 0
   trash_path "$HOME/.local/share/pyppeteer"
+}
+
+clean_old_node_versions() {
+  [ "$OLD_NODE_CLEAN" = "1" ] || return 0
+  local nvm_dir="$HOME/.nvm"
+  [ -d "$nvm_dir/versions/node" ] || { log "skip: нет $nvm_dir/versions/node"; return 0; }
+
+  # Определяем текущую активную версию
+  local current_ver=""
+  if [ -f "$nvm_dir/alias/default" ]; then
+    current_ver=$(basename "$(readlink -f "$nvm_dir/versions/node/$(cat "$nvm_dir/alias/default" 2>/dev/null)" 2>/dev/null)" 2>/dev/null || true)
+  fi
+  if [ -z "$current_ver" ] && command -v node >/dev/null 2>&1; then
+    current_ver="v$(node --version 2>/dev/null | sed 's/^v//')"
+  fi
+  [ -n "$current_ver" ] || { log "skip: не удалось определить текущую Node.js версию"; return 0; }
+
+  log "Текущая Node.js: $current_ver. Удаляю старые..."
+  local cleaned=0
+  for ver_dir in "$nvm_dir/versions/node"/v*/; do
+    [ -d "$ver_dir" ] || continue
+    local ver
+    ver=$(basename "$ver_dir")
+    if [ "$ver" != "$current_ver" ]; then
+      local sz
+      sz=$(size_of "$ver_dir")
+      log "Удаление Node.js $ver ($sz)"
+      if [ "$DRY_RUN" != "1" ]; then
+        rm -rf "$ver_dir" || log "warn: не удалось удалить $ver_dir"
+      fi
+      cleaned=1
+    fi
+  done
+  [ "$cleaned" = "1" ] || log "Старых версий Node.js не найдено"
+}
+
+clean_chrome_cache_full() {
+  [ "$CHROME_CACHE_CLEAN" = "1" ] || return 0
+  local dir="$HOME/.cache/google-chrome"
+  [ -d "$dir" ] || { log "skip: нет $dir"; return 0; }
+  if proc_running chrome || proc_running "google-chrome"; then
+    log "skip: Chrome запущен — пропускаю очистку кэша"
+    return 0
+  fi
+  local sz
+  sz=$(size_of "$dir")
+  log "Очистка Chrome cache ($sz): $dir"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: rm -rf $dir"
+  else
+    rm -rf "$dir" || log "warn: не удалось удалить $dir"
+  fi
+}
+
+clean_poetry_cache() {
+  [ "$POETRY_CACHE_CLEAN" = "1" ] || return 0
+  local dir="$HOME/.cache/pypoetry"
+  [ -d "$dir" ] || { log "skip: нет $dir"; return 0; }
+  local sz
+  sz=$(size_of "$dir")
+  log "Очистка Poetry cache ($sz): $dir"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: rm -rf $dir"
+  else
+    rm -rf "$dir" || log "warn: не удалось удалить $dir"
+  fi
+}
+
+clean_copilot_cache() {
+  [ "$COPILOT_CACHE_CLEAN" = "1" ] || return 0
+  local dir="$HOME/.cache/copilot"
+  [ -d "$dir" ] || { log "skip: нет $dir"; return 0; }
+  local sz
+  sz=$(size_of "$dir")
+  log "Очистка Copilot cache ($sz): $dir"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: rm -rf $dir"
+  else
+    rm -rf "$dir" || log "warn: не удалось удалить $dir"
+  fi
+}
+
+show_home_summary() {
+  log "=============================================="
+  log "  СВОДКА ПО РАЗМЕРАМ В ДОМАШНЕЙ ДИРЕКТОРИИ"
+  log "=============================================="
+
+  log "--- ТОП-30 ЭЛЕМЕНТОВ В ~ ---"
+  du -sh "$HOME"/* "$HOME"/.[!.]* 2>/dev/null | sort -rh | head -30 || true
+
+  log "--- .config (топ-15) ---"
+  du -sh "$HOME/.config"/*/ 2>/dev/null | sort -rh | head -15 || true
+
+  log "--- .cache (топ-15) ---"
+  du -sh "$HOME/.cache"/*/ 2>/dev/null | sort -rh | head -15 || true
+
+  log "--- .local/share (топ-15) ---"
+  du -sh "$HOME/.local/share"/*/ 2>/dev/null | sort -rh | head -15 || true
+
+  log "--- snap (топ-15) ---"
+  du -sh "$HOME/snap"/*/ 2>/dev/null | sort -rh | head -15 || true
+
+  log "--- .nvm версии ---"
+  du -sh "$HOME/.nvm/versions/node"/*/ 2>/dev/null | sort -rh || true
+
+  log "--- ИТОГО .nvm / .npm ---"
+  du -sh "$HOME/.nvm" "$HOME/.npm" 2>/dev/null || true
 }
 
 vacuum_journal() {
@@ -402,6 +516,18 @@ npm_cache_ops() {
   fi
 }
 
+clean_npm_cache_dir() {
+  [ "$CLEAN_NPM_CACHE_DIR" = "1" ] || return 0
+  local dir="$HOME/.npm/_cacache"
+  [ -d "$dir" ] || { log "skip: нет $dir"; return 0; }
+  log "Очистка npm cacache: $dir"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY-RUN: rm -rf $dir"
+  else
+    rm -rf "$dir" || log "warn: не удалось удалить $dir"
+  fi
+}
+
 flatpak_unused() {
   [ "$FLATPAK_UNUSED" = "1" ] || return 0
   if ! command -v flatpak >/dev/null 2>&1; then
@@ -521,6 +647,12 @@ clean_vscode_caches
 clean_pyppeteer_share
 clean_chrome_profile_cache
 
+# Очистка Node.js, Chrome cache, Poetry cache, Copilot cache
+clean_old_node_versions
+clean_chrome_cache_full
+clean_poetry_cache
+clean_copilot_cache
+
 # Системные шаги (по возможности без пароля sudo)
 vacuum_journal
 clean_old_log_gz
@@ -535,6 +667,7 @@ clean_vartmp_all
 
 # Пакетные менеджеры/платформы (опционально)
 npm_cache_ops
+clean_npm_cache_dir
 flatpak_unused
 # Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
 docker_prune_safe
@@ -552,7 +685,7 @@ AFTER_FREE=$(free_bytes)
 DELTA=$(( AFTER_FREE - BEFORE_FREE ))
 log "Свободно ПОСЛЕ: $(printf "%s" "$AFTER_FREE" | human) (Δ=$(printf "%s" "$DELTA" | human))"
 
-show_top_large_files
+show_home_summary
 
 # Дополнительно мелкие кэши (если есть)
 purge_dir_contents "$CACHE_DIR/node-gyp" || true
@@ -560,3 +693,4 @@ purge_dir_contents "$CACHE_DIR/yarn"     || true
 purge_dir_contents "$CACHE_DIR/vscode-ripgrep" || true
 
 log "Готово. Размер $CACHE_DIR = $(size_of "$CACHE_DIR")"
+
