@@ -63,8 +63,8 @@ SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-1}"
 SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 
 NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-1}"
-NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-1}"
-CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-1}"  # Очистка директории npm cacache напрямую
+NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"         # 0=безопасно: только verify, clean --force требует явного включения
+CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-0}"  # 0=не удалять _cacache напрямую (ломает npm)
 
 FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 

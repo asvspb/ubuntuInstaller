@@ -14,9 +14,8 @@ echo " "
 echo "Installing keys"
 echo "--------------------------------------------------------------"
 
-
 #vscode
-curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg > /dev/null
+curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/vscode.gpg >/dev/null
 echo deb [arch=amd64 signed-by=/usr/share/keyrings/vscode.gpg] https://packages.microsoft.com/repos/vscode stable main | sudo tee /etc/apt/sources.list.d/vscode.list
 
 # ACLI repository setup
@@ -24,14 +23,22 @@ sudo apt-get install -y wget gnupg2
 sudo mkdir -p -m 755 /etc/apt/keyrings
 wget -nv -O- https://acli.atlassian.com/gpg/public-key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg
 sudo chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] https://acli.atlassian.com/linux/deb stable main" | sudo tee /etc/apt/sources.list.d/acli.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] https://acli.atlassian.com/linux/deb stable main" | sudo tee /etc/apt/sources.list.d/acli.list >/dev/null
 
 sudo apt update -y
 echo " "
 echo "Installing programming environment"
 echo "--------------------------------------------------------------"
 # install js
-curl -qL https://www.npmjs.com/install.sh | sh
+sudo apt remove --purge nodejs npm -y
+sudo apt autoremove -y
+sudo apt install nodejs npm -y
+
+# install nvm
+source ~/.nvm/nvm.sh
+nvm install node
+nvm use node
+nvm alias default node
 
 # install latest python
 sudo apt install python3 python3-pip -y
@@ -44,7 +51,6 @@ sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake cop
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common exa batcat fd-find ripgrep duf zoxide rclone -y
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor acli -y
 
-
 echo " "
 echo "Installing Warp Terminal"
 echo "--------------------------------------------------------------"
@@ -56,8 +62,6 @@ echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
 npm install -g @google/gemini-cli@latest @qwen-code/qwen-code@latest codebuff@latest @github/copilot@latest cline@latest @kilocode/cli@latest
-
-
 
 echo " "
 echo "Installing speedtest"
