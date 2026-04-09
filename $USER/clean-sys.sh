@@ -202,6 +202,10 @@ clean_huggingface() {
 
 clean_pip() {
   [ "$PIP_PURGE" = "1" ] || return 0
+  if [ "$(id -u)" -eq 0 ]; then
+    log "skip: pip cache пропускается (запуск от root)"
+    return 0
+  fi
   if command -v pip3 >/dev/null 2>&1; then
     if [ "$DRY_RUN" = "1" ]; then
       log "DRY-RUN: pip3 cache purge"
