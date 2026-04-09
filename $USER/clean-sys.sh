@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Определяем реальный HOME пользователя (даже при запуске через sudo/root)
+# При sudo: $HOME=/root, $SUDO_USER=имя_пользователя
+# Используем eval ~user для получения правильного пути
+_real_home() {
+  if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+    eval echo "~${SUDO_USER}"
+  elif [ -n "${SUDO_USER:-}" ]; then
+    eval echo "~${SUDO_USER}"
+  else
+    echo "$HOME"
+  fi
+}
+HOME="$(_real_home)"
+export HOME
+
 # Конфигурация (можно переопределить через переменные окружения)
 CACHE_DIR="${CACHE_DIR:-$HOME/.cache}"
 LOG_PREFIX="[cache-clean]"
@@ -311,30 +326,139 @@ clean_copilot_cache() {
 }
 
 show_home_summary() {
-  log "=============================================="
-  log "  СВОДКА ПО РАЗМЕРАМ В ДОМАШНЕЙ ДИРЕКТОРИИ"
-  log "=============================================="
+  echo "=============================================="
+  echo "  СВОДКА ПО РАЗМЕРАМ В ДОМАШНЕЙ ДИРЕКТОРИИ"
+  echo "=============================================="
 
-  log "--- ТОП-30 ЭЛЕМЕНТОВ В ~ ---"
+  echo "--- ТОП-30 ЭЛЕМЕНТОВ В ~ ---"
   du -sh "$HOME"/* "$HOME"/.[!.]* 2>/dev/null | sort -rh | head -30 || true
 
-  log "--- .config (топ-15) ---"
+  echo "--- .config (топ-15) ---"
   du -sh "$HOME/.config"/*/ 2>/dev/null | sort -rh | head -15 || true
 
-  log "--- .cache (топ-15) ---"
+  echo "--- .cache (топ-15) ---"
   du -sh "$HOME/.cache"/*/ 2>/dev/null | sort -rh | head -15 || true
 
-  log "--- .local/share (топ-15) ---"
+  echo "--- .local/share (топ-15) ---"
   du -sh "$HOME/.local/share"/*/ 2>/dev/null | sort -rh | head -15 || true
 
-  log "--- snap (топ-15) ---"
+  echo "--- snap (топ-15) ---"
   du -sh "$HOME/snap"/*/ 2>/dev/null | sort -rh | head -15 || true
 
-  log "--- .nvm версии ---"
+  echo "--- .nvm версии ---"
   du -sh "$HOME/.nvm/versions/node"/*/ 2>/dev/null | sort -rh || true
 
-  log "--- ИТОГО .nvm / .npm ---"
+  echo "--- ИТОГО .nvm / .npm ---"
   du -sh "$HOME/.nvm" "$HOME/.npm" 2>/dev/null || true
+
+  # --- Собираем данные для таблиц ---
+  local s_chrome_cfg=0 s_chrome_cache=0 s_brave_cfg=0 s_brave_cache=0 s_vscode_cfg=0
+  local s_codeium=0 s_cline=0 s_copilot_cache=0 s_copilot_cfg=0 s_qwen=0
+  local s_nvm=0 s_npm_cache=0 s_pip=0 s_poetry_cache=0 s_poetry_local=0 s_uv_cache=0 s_uv_local=0
+  local s_playwright=0 s_playwright_go=0 s_puppeteer=0 s_chromium_snap=0
+  local s_snap_chromium=0 s_snap_firefox=0 s_snap_telegram=0 s_snap_obsidian=0
+  local s_kilo=0 s_acli=0 s_backgrounds=0 s_vs_ext=0
+
+  _sz() { local r; r=$(du -sm "$1" 2>/dev/null | awk '{print $1}' || true); echo "${r:-0}"; }
+
+  s_chrome_cfg=$(_sz "$HOME/.config/google-chrome")
+  s_chrome_cache=$(_sz "$HOME/.cache/google-chrome")
+  s_brave_cfg=$(_sz "$HOME/.config/BraveSoftware")
+  s_brave_cache=$(_sz "$HOME/.cache/BraveSoftware")
+  s_vscode_cfg=$(_sz "$HOME/.config/Code")
+  s_vs_ext=$(_sz "$HOME/.vscode")
+  s_codeium=$(_sz "$HOME/.codeium")
+  s_cline=$(_sz "$HOME/.cline")
+  s_copilot_cache=$(_sz "$HOME/.cache/copilot")
+  s_copilot_cfg=$(_sz "$HOME/.copilot")
+  s_qwen=$(_sz "$HOME/.qwen")
+  s_nvm=$(_sz "$HOME/.nvm")
+  s_npm_cache=$(_sz "$HOME/.npm")
+  s_pip=$(_sz "$HOME/.cache/pip")
+  s_poetry_cache=$(_sz "$HOME/.cache/pypoetry")
+  s_poetry_local=$(_sz "$HOME/.local/share/pypoetry")
+  s_uv_cache=$(_sz "$HOME/.cache/uv")
+  s_uv_local=$(_sz "$HOME/.local/share/uv")
+  s_playwright=$(_sz "$HOME/.cache/ms-playwright")
+  s_playwright_go=$(_sz "$HOME/.cache/ms-playwright-go")
+  s_puppeteer=$(_sz "$HOME/.cache/puppeteer")
+  s_chromium_snap=$(_sz "$HOME/.chromium-browser-snapshots")
+  s_snap_chromium=$(_sz "$HOME/snap/chromium")
+  s_snap_firefox=$(_sz "$HOME/snap/firefox")
+  s_snap_telegram=$(_sz "$HOME/snap/telegram-desktop")
+  s_snap_obsidian=$(_sz "$HOME/snap/obsidian")
+  s_kilo=$(_sz "$HOME/.local/share/kilo")
+  s_acli=$(_sz "$HOME/.local/share/acli")
+  s_backgrounds=$(_sz "$HOME/.local/share/backgrounds")
+
+  # Вычисляем суммарные категории
+  local chrome_total=$((s_chrome_cfg + s_chrome_cache))
+  local brave_total=$((s_brave_cfg + s_brave_cache))
+  local ai_total=$((s_codeium + s_cline + s_copilot_cache + s_copilot_cfg + s_qwen))
+  local node_total=$((s_nvm + s_npm_cache))
+  local poetry_total=$((s_poetry_cache + s_poetry_local))
+  local uv_total=$((s_uv_cache + s_uv_local))
+  local playwright_total=$((s_playwright + s_playwright_go))
+  local snap_total=$((s_snap_chromium + s_snap_firefox + s_snap_telegram + s_snap_obsidian))
+  local copilot_total=$((s_copilot_cache + s_copilot_cfg))
+
+  echo "=============================================="
+  echo "  TOP APPLICATIONS (ПОСЛЕ ОЧИСТКИ)"
+  echo "=============================================="
+  printf "%-35s %10s MB  %s\n" "Приложение" "Размер" "Расположение"
+  printf "%-35s %10s MB  %s\n" "-----------------------------------" "----------" "----------------------------"
+  printf "%-35s %10s MB  %s\n" "Google Chrome" "$chrome_total" ".config + .cache"
+  printf "%-35s %10s MB  %s\n" "VS Code" "$s_vscode_cfg" ".config/Code/"
+  printf "%-35s %10s MB  %s\n" "Snap: Chromium" "$s_snap_chromium" "snap/chromium/"
+  printf "%-35s %10s MB  %s\n" "Snap: Telegram" "$s_snap_telegram" "snap/telegram-desktop/"
+  printf "%-35s %10s MB  %s\n" "Codeium" "$s_codeium" ".codeium/"
+  printf "%-35s %10s MB  %s\n" "VS Code extensions" "$s_vs_ext" ".vscode/"
+  printf "%-35s %10s MB  %s\n" "Cline" "$s_cline" ".cline/"
+  printf "%-35s %10s MB  %s\n" "Brave" "$brave_total" ".config + .cache"
+  printf "%-35s %10s MB  %s\n" "Snap: Firefox" "$s_snap_firefox" "snap/firefox/"
+  printf "%-35s %10s MB  %s\n" "Playwright" "$playwright_total" ".cache/ms-playwright(+go)"
+  printf "%-35s %10s MB  %s\n" "Puppeteer" "$s_puppeteer" ".cache/puppeteer/"
+  printf "%-35s %10s MB  %s\n" "Chromium snapshots" "$s_chromium_snap" ".chromium-browser-snapshots/"
+  printf "%-35s %10s MB  %s\n" "pip cache" "$s_pip" ".cache/pip/"
+  printf "%-35s %10s MB  %s\n" "Poetry" "$poetry_total" ".cache + .local"
+  printf "%-35s %10s MB  %s\n" "uv" "$uv_total" ".cache + .local"
+  printf "%-35s %10s MB  %s\n" "Copilot" "$copilot_total" ".cache + .copilot"
+  printf "%-35s %10s MB  %s\n" "Snap: Obsidian" "$s_snap_obsidian" "snap/obsidian/"
+  printf "%-35s %10s MB  %s\n" "Kilo" "$s_kilo" ".local/share/"
+  printf "%-35s %10s MB  %s\n" "acli" "$s_acli" ".local/share/acli/"
+  printf "%-35s %10s MB  %s\n" "Backgrounds" "$s_backgrounds" ".local/share/backgrounds/"
+  echo ""
+
+  echo "=============================================="
+  echo "  ПО КАТЕГОРИЯМ"
+  echo "=============================================="
+  printf "%-35s %10s MB  %s\n" "Категория" "Размер" "Состав"
+  printf "%-35s %10s MB  %s\n" "-----------------------------------" "----------" "----------------------------"
+  printf "%-35s %10s MB  %s\n" "Browsers" "$((chrome_total + brave_total + s_snap_chromium + s_snap_firefox))" "Chrome, Brave, Chromium snap, Firefox snap"
+  printf "%-35s %10s MB  %s\n" "Dev Tools" "$((s_vscode_cfg + s_vs_ext))" "VS Code + extensions"
+  printf "%-35s %10s MB  %s\n" "AI Coding Assistants" "$ai_total" "Codeium, Cline, Copilot, Qwen"
+  printf "%-35s %10s MB  %s\n" "Node.js Tooling" "$node_total" "nvm + npm cache"
+  printf "%-35s %10s MB  %s\n" "Python Tooling" "$((s_pip + poetry_total + uv_total))" "pip + poetry + uv"
+  printf "%-35s %10s MB  %s\n" "Browser Automation" "$((playwright_total + s_puppeteer))" "Playwright + Puppeteer"
+  printf "%-35s %10s MB  %s\n" "Snap Apps" "$snap_total" "Chromium, Telegram, Firefox, Obsidian"
+  echo ""
+
+  echo "=============================================="
+  echo "  ПОТЕНЦИАЛЬНЫЕ КАНДИДАТЫ НА УДАЛЕНИЕ"
+  echo "=============================================="
+  printf "%-35s %10s MB  %s\n" "Что" "Экономия" "Комментарий"
+  printf "%-35s %10s MB  %s\n" "-----------------------------------" "----------" "----------------------------"
+  printf "%-35s %10s MB  %s\n" "Chrome cache" "$s_chrome_cache" "Сбросит кэш, можно почистить из браузера"
+  printf "%-35s %10s MB  %s\n" "Playwright + Puppeteer" "$((playwright_total + s_puppeteer))" "Если не используется для тестов"
+  printf "%-35s %10s MB  %s\n" "pip cache" "$s_pip" "pip cache purge"
+  printf "%-35s %10s MB  %s\n" "Poetry cache" "$s_poetry_cache" "Можно чистить"
+  printf "%-35s %10s MB  %s\n" "Snap: Chromium" "$s_snap_chromium" "Chrome уже установлен"
+  printf "%-35s %10s MB  %s\n" "Snap: Obsidian" "$s_snap_obsidian" "Если не используется"
+  printf "%-35s %10s MB  %s\n" "Chromium snapshots" "$s_chromium_snap" "Скорее всего от Playwright/Puppeteer"
+  printf "%-35s %10s MB  %s\n" "Copilot cache" "$s_copilot_cache" "Кэш Copilot"
+  printf "%-35s %10s MB  %s\n" "BraveSoftware" "$brave_total" "Если не используется"
+  printf "%-35s %10s MB  %s\n" "Backgrounds" "$s_backgrounds" "Обои/фоновые изображения"
+  echo ""
 }
 
 vacuum_journal() {
