@@ -64,11 +64,22 @@ print_header() {
 log_message "INFO" "Script initialization complete, starting updates"
 print_header "Updating js && python..."
 cd ~ # Change to home directory to ensure write permissions
+
+# Load NVM to use the correct Node.js version instead of system version
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+log_message "INFO" "Using Node.js version: $(node --version)"
+
 # Install npm through apt for security reasons instead of piping from website
 log_message "INFO" "Updating system packages and installing Node.js/NPM..."
 sudo apt update && sudo apt install nodejs npm -y
 log_message "INFO" "Installing/updating Python and pip..."
 sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip --break-system-packages --root-user-action=ignore
+
+# Reload NVM after apt install to ensure we're still using the correct Node version
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+log_message "INFO" "Node.js version after updates: $(node --version)"
 
 log_message "HEADER" "Updating CODE CLI's..."
 log_message "INFO" "Installing/Updating CODE CLI tools..."
@@ -366,3 +377,4 @@ else
     log_message "ERROR" "Script finished with an error"
     exit 1
 fi
+
