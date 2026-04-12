@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 
 set -e
 
@@ -50,6 +50,16 @@ sudo apt install code gcc default-jdk -y
 sudo apt install ncdu ranger btop iftop htop neofetch rpm wireguard jq guake copyq xclip pipx -y
 sudo apt install inxi cpu-x tldr fzf rhythmbox vlc alacarte qbittorrent software-properties-common exa batcat fd-find ripgrep duf zoxide rclone -y
 sudo apt install grub-customizer gparted synaptic openrgb ufw timeshift nala dconf-editor acli -y
+
+echo " "
+echo "Installing antigravity"
+echo "--------------------------------------------------------------"
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg |
+	sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" |
+	sudo tee /etc/apt/sources.list.d/antigravity.list >/dev/null
+sudo apt update && sudo apt install antigravity -y
 
 echo " "
 echo "Installing Warp Terminal"
