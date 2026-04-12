@@ -62,9 +62,9 @@ LOG_GZ_RETENTION_DAYS="${LOG_GZ_RETENTION_DAYS:-7}"
 SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-1}"
 SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 
-NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-1}"
-NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"         # 0=безопасно: только verify, clean --force требует явного включения
-CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-0}"  # 0=не удалять _cacache напрямую (ломает npm)
+NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-0}"
+NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"
+CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-0}"
 
 FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 
@@ -84,8 +84,8 @@ CLEAN_CHROME_PROFILE_CACHE="${CLEAN_CHROME_PROFILE_CACHE:-1}"
 # Очистка Timeshift (по умолчанию выключено для безопасности)
 CLEAN_TIMESHIFT="${CLEAN_TIMESHIFT:-0}"
 
-# Очистка Node.js, Chrome cache, Poetry cache, Copilot cache
-OLD_NODE_CLEAN="${OLD_NODE_CLEAN:-1}"
+# Очистка Chrome cache, Poetry cache, Copilot cache
+OLD_NODE_CLEAN="${OLD_NODE_CLEAN:-0}"
 CHROME_CACHE_CLEAN="${CHROME_CACHE_CLEAN:-1}"
 POETRY_CACHE_CLEAN="${POETRY_CACHE_CLEAN:-1}"
 COPILOT_CACHE_CLEAN="${COPILOT_CACHE_CLEAN:-1}"
@@ -776,7 +776,7 @@ clean_pyppeteer_share
 clean_chrome_profile_cache
 
 # Очистка Node.js, Chrome cache, Poetry cache, Copilot cache
-clean_old_node_versions
+# clean_old_node_versions  # отключено
 clean_chrome_cache_full
 clean_poetry_cache
 clean_copilot_cache
@@ -794,8 +794,8 @@ clean_tmp_all
 clean_vartmp_all
 
 # Пакетные менеджеры/платформы (опционально)
-npm_cache_ops
-clean_npm_cache_dir
+# npm_cache_ops  # отключено
+# clean_npm_cache_dir  # отключено
 flatpak_unused
 # Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
 docker_prune_safe
