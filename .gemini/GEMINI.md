@@ -202,20 +202,3 @@ When you notice opportunities for enhancement:
 
 *Last updated: 2026-04-14*
 *This file should evolve as the project grows. Keep it current.*
-
-
-- The user has confirmed multiple times that the .env file is correctly configured with all necessary variables. Future debugging should focus on why the script might not be loading them, rather than questioning the file's existence or content.
-- Когда пользователь говорит 'ОК' после завершения задачи, это означает, что я должен приступить к следующему логическому шагу (например, к коммиту), не задавая дополнительных вопросов.
-- По команде "ОК" я должен: 1. Обновить файл плана (если есть). 2. Обновить файл логов/истории изменений (если есть). 3. Сделать коммит в Git.
-- По команде "ОК" я должен: 1. Обновить PLANNING.md. 2. Обновить developer_log.md. 3. Сделать коммит в Git.
-- По команде "ОК" я должен: 1. Обновить devAI/PLANNING.md. 2. Обновить devAI/developer_log.md. 3. Сделать коммит в Git.
-- Приветствие для новой сессии: "Приветствую Вас, сударь! Вас ждет великий бот от Gemini и прибыльный новостной канал \"Война и мир!\""
-- По команде "ОК" я должен: 1. Провести тестирование. 2. Пересобрать контейнер. 3. Отследить логи на ошибки. 4. Обновить план: doc/PLANNING.md. 5. Обновить логи: doc/developer_log.md. 6. Сделать коммит в Git.
-- Для взаимодействия с ботом через docker-compose следует использовать имя сервиса 'telegram-bot', а не имя контейнера 'warandpeace-bot'.
-- Имя сервиса и имя контейнера в docker-compose - 'warandpeace-bot'.
-- Для взаимодействия с ботом через docker-compose следует использовать имя сервиса 'telegram-bot', а не имя контейнера 'warandpeace-bot'.
-- И сервис, и контейнер в docker-compose называются 'warandpeace-bot'.
-- Из лога разработки (developer_log.md) ничего не удалять, только добавлять.
-- Для взаимодействия с ботом через docker-compose следует использовать имя сервиса 'telegram-bot', а не имя контейнера 'warandpeace-bot'.
-- Перед коммитом в Git всегда выполнять проверку.
-- Перед коммитом в Git всегда выполнять проверку.
