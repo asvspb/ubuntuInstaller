@@ -71,7 +71,7 @@ rm warp.deb
 echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
-npm install -g @google/gemini-cli@latest @qwen-code/qwen-code@latest codebuff@latest @github/copilot@latest cline@latest @kilocode/cli@latest
+npm install -g @google/gemini-cli@latest @qwen-code/qwen-code@latest codebuff@latest cline@latest @kilocode/cli@latest opencode-ai@latest
 
 echo " "
 echo "Installing speedtest"
