@@ -27,22 +27,6 @@ bash scripts/migration-pack.sh
 5. Парсит `package.json` находит точную dev-команду
 6. Генерирует `project-migration-prompt.md` — готовый промпт
 
-### 📋 Что содержит итоговый промпт (для ИИ-агента)
-
-__10 жёстких правил:__
-
-1. __NO MODIFICATIONS__ — копировать символ-в-символ
-2. __CHUNK YOUR WORK__ — 7 файлов за шаг, спросить "continue"
-3. __USE TOOLS SILENTLY__ — не выводить код в чат
-4. __BIG FILE STRATEGY__ — чанковать/скрипт, не обрезать
-5. __INSTALL FIRST__ — npm/pip/cargo до запуска
-6. __EXACT PATHS__ — path="..." из XML, автосоздание директорий
-7. __BINARY PLACEHOLDERS [CRITICAL]__ — 0-byte PNG убивает Vite/Webpack → создавать 1x1 прозрачный PNG через `printf`
-8. __EXACT VERSIONS__ — не апгрейдить
-9. __CDATA ESCAPE FIX__ — `]]]]><![CDATA[>` → `]]>`
-10. __VERIFY__ — "MIGRATION COMPLETE — all N files created"
-
-__PRO TIP:__ Self-extracting Python/Node.js скрипт вместо 50+ вызовов create_file.
 
 ## Additional Files
 
