@@ -93,21 +93,21 @@ else
     exit 1
 fi
 
-# Install @qwen-code/qwen-code
-log_message "INFO" "Installing @qwen-code/qwen-code@latest..."
-if npm install -g @qwen-code/qwen-code@latest; then
-    log_message "SUCCESS" "@qwen-code/qwen-code installed successfully"
+# Install cline
+log_message "INFO" "Installing cline@latest..."
+if npm install -g cline@latest; then
+    log_message "SUCCESS" "cline installed successfully"
 else
-    log_message "ERROR" "Failed to install @qwen-code/qwen-code"
+    log_message "ERROR" "Failed to install cline"
     exit 1
 fi
 
-# Install @github/copilot
-log_message "INFO" "Installing @github/copilot..."
-if npm install -g @github/copilot; then
-    log_message "SUCCESS" "@github/copilot installed successfully"
+# Install opencode
+log_message "INFO" "Installing opencode-ai@latest..."
+if npm install -g opencode-ai@latest; then
+    log_message "SUCCESS" "opencode installed successfully"
 else
-    log_message "ERROR" "Failed to install @github/copilot"
+    log_message "ERROR" "Failed to install opencode"
     exit 1
 fi
 

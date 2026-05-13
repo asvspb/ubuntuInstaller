@@ -15,6 +15,7 @@
 *   **net-tools**: Набор сетевых утилит, включая `ifconfig`, `netstat` и `route`.
 *   **make**: Утилита для автоматизации сборки программ из исходного кода.
 *   **apt-transport-https**: Позволяет использовать репозитории, доступные по протоколу HTTPS.
+*   **ca-certificates**: Пакет с сертификатами центров сертификации.
 *   **gpg**: GNU Privacy Guard, инструмент для шифрования и цифровой подписи.
 *   **gnupg**: Альтернативная реализация OpenPGP.
 *   **dconf-editor**: Графический редактор для базы данных конфигурации dconf.
@@ -39,6 +40,7 @@
 *   **tldr**: Упрощенные и практичные man-страницы.
 *   **fzf**: Интерактивный фильтр командной строки.
 *   **alacarte**: Редактор меню для рабочего стола GNOME.
+*   **software-properties-common**: Утилиты для управления APT-репозиториями.
 *   **grub-customizer**: Графический интерфейс для настройки загрузчика GRUB.
 *   **gparted**: Редактор дисковых разделов.
 *   **synaptic**: Графический менеджер пакетов для APT.
@@ -50,33 +52,129 @@
 *   **zerotier-cli**: Клиент командной строки для ZeroTier, сервиса для создания виртуальных сетей.
 *   **lazydocker**: Терминальный интерфейс для управления Docker.
 *   **exa**: Современная замена `ls` с подсветкой, иконками и древовидным режимом.
-*   **bat**: Улучшенный `cat` с подсветкой синтаксиса и интеграцией с Git.
+*   **bat** (`batcat`): Улучшенный `cat` с подсветкой синтаксиса и интеграцией с Git.
 *   **fd** (`fd-find`): Простая и быстрая альтернатива `find`.
 *   **ripgrep** (`rg`): Чрезвычайно быстрая утилита для рекурсивного поиска по файлам.
 *   **duf**: Улучшенная альтернатива `df` для просмотра информации о дисках.
 *   **zoxide**: "Умный" `cd`, который запоминает часто используемые каталоги.
 *   **rclone**: "Rsync для облачных хранилищ" для синхронизации данных с облачными сервисами.
+*   **antigravity**: Утилита для автоматического обновления Debian-пакетов от Google Cloud.
+*   **gawk**: GNU awk, мощный инструмент для обработки текста.
+*   **m4**: Макропроцессор, используется как зависимость при сборке.
 
 ## Программы для разработки
 
 *   **docker-ce**: Docker Community Edition, платформа для контейнеризации приложений.
-*   **docker-compose**: Инструмент для определения и запуска многоконтейнерных Docker-приложений.
+*   **docker-ce-cli**: CLI для управления Docker.
+*   **containerd.io**: Промышленная среда выполнения контейнеров.
+*   **docker-buildx-plugin**: Плагин Docker BuildX для кросс-платформенной сборки образов.
+*   **docker-compose-plugin**: Плагин Docker Compose v2 для оркестрации контейнеров.
+*   **docker-ce-rootless-extras**: Расширения для запуска Docker без root-прав.
+*   **docker-compose** (standalone): Автономный бинарник Docker Compose v1.
 *   **python3**: Интерпретатор языка программирования Python 3.
 *   **python3-pip**: Система управления пакетами для Python.
 *   **nodejs**: Среда выполнения JavaScript на стороне сервера.
 *   **npm**: Менеджер пакетов для Node.js.
 *   **gcc**: GNU Compiler Collection, набор компиляторов для различных языков программирования.
+*   **g++**: Компилятор C++ из состава GCC.
 *   **default-jdk**: Стандартный Java Development Kit.
+*   **cmake**: Кроссплатформенная система автоматизации сборки.
+*   **libpcre3-dev**: Библиотека для работы с регулярными выражениями (PCRE).
+*   **libxerces-c-dev**: Библиотека для парсинга XML на C++.
+*   **libspdlog-dev**: Быстрая библиотека логирования на C++.
+*   **libuchardet-dev**: Библиотека для определения кодировки текста.
+*   **libssh-dev**: Библиотека для работы с SSH.
+*   **libssl-dev**: Библиотека OpenSSL для шифрования.
+*   **libsmbclient-dev**: Библиотека для работы с SMB/CIFS.
+*   **libnfs-dev**: Библиотека для работы с NFS.
+*   **libneon27-dev**: Библиотека для HTTP/WebDAV клиентов.
+*   **libarchive-dev**: Библиотека для работы с архивами.
+*   **dkms**: Dynamic Kernel Module Support — поддержка сборки модулей ядра.
+*   **build-essential**: Мета-пакет с необходимыми инструментами для сборки.
 *   **@google/gemini-cli**: CLI для взаимодействия с моделями Gemini.
-*   **@qwen-code/qwen-code**: CLI для взаимодействия с моделями QWEN.
-*   **codebuff**: CLI для ... (не удалось найти точное описание).
-*   **@github/copilot**: CLI для GitHub Copilot.
+*   **cline**: CLI для взаимодействия с моделями через Cline (ассистент для кодинга).
+*   **codebuff**: CLI для ассистирования в разработке с помощью AI.
+*   **opencode** (`opencode-ai`): CLI для OpenCode, AI-ассистент для разработки.
+*   **@kilocode/cli**: CLI для Kilo Code, AI-агент для среды разработки.
+*   **freebuff**: CLI для AI-ассистирования в кодинге.
+*   **code**: Visual Studio Code, редактор исходного кода от Microsoft.
+
+## Скрипты репозитория
+
+### `scripts/1_ubuntuStart.sh`
+Базовая настройка системы после установки Ubuntu:
+- Настройка sudo без пароля для текущего пользователя
+- Отключение интерактивных запросов при установке
+- Отключение проверки SSH-ключа для gitlab.com
+- Настройка системного времени (local RTC)
+- Ограничение snap refresh до 2 версий
+- Минимизация приложений при клике в GNOME Dock
+- Установка базовых пакетов: git, gh, mc, tmux, zsh, mosh, curl, wget и др.
+- Установка GNOME расширений и твиков
+- Установка Google Chrome и Telegram Desktop
+
+### `scripts/2_ubuntuDocker.sh`
+Установка Docker и сопутствующих инструментов:
+- Полная установка Docker Engine (docker-ce, containerd, buildx, compose)
+- Установка Docker Compose v1
+- Установка Lazydocker (TUI для Docker)
+- Настройка группы docker для пользователя
+- Создание папки `~/Dev`
+
+### `scripts/3_ubuntuPack.sh`
+Установка дополнительных пакетов и инструментов разработки:
+- Репозитории: OpenRGB, Grub Customizer, Rhythmbox, Python deadsnakes
+- Репозиторий Microsoft для VSCode
+- ACLI от Atlassian
+- Node.js через NVM, Python, VSCode, Java
+- Системные утилиты: ncdu, ranger, btop, htop, neofetch, wireguard, jq, guake, copyq, pipx и др.
+- Графические приложения: Rhythmbox, VLC, qBittorrent
+- Утилиты: inxi, cpu-x, tldr, fzf, exa, bat, fd-find, ripgrep, duf, zoxide, rclone
+- Grub Customizer, GParted, Synaptic, OpenRGB, UFW, Timeshift, Nala
+- Antigravity (автообновления от Google Cloud)
+- Warp Terminal
+- AI CLI инструменты: @google/gemini-cli, cline, codebuff, @kilocode/cli, opencode-ai, freebuff
+- Speedtest CLI
+- WireGuard
+
+### `scripts/4_snap-apps.sh`
+Установка Snap-пакетов из `ubuntu_snap_packages.txt`:
+- cups, bare, gnome-weather, onlyoffice-desktopeditors, stretchly, telegram-desktop, vlc, fbreader, okular, obsidian, color-picker, chromium
+- mesa-2404 (только при наличии GPU NVIDIA)
+
+### `scripts/5_samsung-printer-driver.sh`
+Установка драйвера для принтеров Samsung (SULDR):
+- Добавление репозитория Samsung Unified Linux Driver Repository
+- Установка драйвера suld-driver2-1.00.39 (поддержка M2070 и других моделей)
+- Диагностика статуса принтера
+- Печать тестовой страницы
+
+### `scripts/6_zerotier-client.sh`
+Установка и настройка ZeroTier:
+- Установка ZeroTier через официальный скрипт
+- Присоединение к сети ZeroTier
+- Автоматическое покидание неавторизованных сетей
+- Настройка DNS, Default Route, Global
+
+### `scripts/7_vbox.py`
+Установка VirtualBox (Python-скрипт):
+- Определение последней стабильной версии VirtualBox
+- Скачивание и установка .deb пакета
+- Установка Extension Pack
+- Скачивание Guest Additions ISO
+- Добавление пользователя в группу vboxusers
+
+### `scripts/8_ai_migration-pack.sh`
+Генерация промпта для полного копирования проекта через ИИ:
+- Автоопределение языка проекта (Node.js, Python, Rust, Go, Java, C++, Ruby, PHP)
+- Сбор всех исходных файлов в XML+CDATA
+- Генерация `project-migration-prompt.md` для отправки любому AI-агенту
+- Инструкция по восстановлению проекта (чанкование по 7 файлов)
 
 ## Графические приложения
 
 *   **google-chrome-stable**: Веб-браузер от Google.
 *   **telegram-desktop**: Клиент для обмена сообщениями Telegram.
-*   **code**: Visual Studio Code, редактор исходного кода от Microsoft.
 *   **rhythmbox**: Музыкальный проигрыватель для GNOME.
 *   **vlc**: Кроссплатформенный медиаплеер.
 *   **qbittorrent**: Клиент для файлообменной сети BitTorrent.
