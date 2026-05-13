@@ -165,10 +165,16 @@
 - Добавление пользователя в группу vboxusers
 
 ### `scripts/8_ai_migration-pack.sh`
-Генерация промпта для полного копирования проекта через ИИ:
-- Автоопределение языка проекта (Node.js, Python, Rust, Go, Java, C++, Ruby, PHP)
-- Сбор всех исходных файлов в XML+CDATA
-- Генерация `project-migration-prompt.md` для отправки любому AI-агенту
+Генерация промпта для полного копирования проекта через ИИ (v3.0):
+- Режимы: `--mode full` (весь проект), `ui` (только UI/UX standalone), `backend` (только backend), `split` (оба отдельно)
+- Параметр `--project /path` для запуска в любом каталоге проекта
+- Автоопределение языка (Node.js, Python, Rust, Go, Java, C++, Ruby, PHP)
+- Автоопределение фреймворка (React, Vue, Svelte, Angular, Next.js, Nuxt, Solid, Preact)
+- Сбор файлов в XML+CDATA с классификацией (ui/backend/shared)
+- Трассировка импортов для 100% точного извлечения UI-зависимостей
+- Автоизвлечение frontend-зависимостей из package.json
+- Обнаружение API-маршрутов и генерация mock-сервера (express)
+- Генерация standalone package.json и vite.config для UI проекта
 - Инструкция по восстановлению проекта (чанкование по 7 файлов)
 
 ## Графические приложения
