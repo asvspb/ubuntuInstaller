@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
-# check for installation of ZeroTier
+ZT_NETWORK_FILE="$HOME/.zt-network"
+
 if ! command -v zerotier-cli &> /dev/null; then
     echo "=== ZeroTier not found. Installing..."
     curl -s https://install.zerotier.com | bash
@@ -11,54 +11,94 @@ else
     echo "=== ZeroTier is already installed."
 fi
 
-# You can manually start the ZeroTier service with:
-# sudo systemctl start zerotier-one
+cleanup_dead_networks() {
+    local dead
+    dead=$(sudo zerotier-cli listnetworks | grep -E "ACCESS_DENIED|NOT_FOUND|REQUESTING_CONFIGURATION" | awk '{print $3}')
+    if [[ -n "$dead" ]]; then
+        for nwid in $dead; do
+            echo "=== Leaving dead network: $nwid"
+            sudo zerotier-cli leave "$nwid"
+        done
+        echo "=== Dead networks cleaned up."
+    fi
+}
 
-# Get a list of networks and filter unauthorized ones
-unauthorized_networks=$(sudo zerotier-cli listnetworks | grep -E "ACCESS_DENIED|NOT_FOUND" | awk '{print $3}')
+get_saved_network() {
+    if [[ -f "$ZT_NETWORK_FILE" ]]; then
+        cat "$ZT_NETWORK_FILE"
+    fi
+}
 
-# Check if there are unauthorized networks
-if [ -z "$unauthorized_networks" ]; then
-  echo "=== Unauthorized networks not found."
-  exit 0
+save_network() {
+    echo "$1" > "$ZT_NETWORK_FILE"
+    echo "=== Network $1 saved to $ZT_NETWORK_FILE"
+}
+
+join_and_configure() {
+    local network_id="$1"
+
+    echo "=== Joining network $network_id..."
+    sudo zerotier-cli join "$network_id"
+
+    echo "!!! Please go to https://my.zerotier.com/network/${network_id} and authorize this node"
+
+    read -p "=== Press 'Enter' to continue after authorizing the node..."
+
+    local attempts=0
+    while ! sudo zerotier-cli listnetworks | grep "$network_id" | grep -q "OK"; do
+        sleep 5
+        attempts=$((attempts + 1))
+        if [[ $attempts -gt 60 ]]; then
+            echo "=== Timeout waiting for authorization."
+            exit 1
+        fi
+        echo "=== Still waiting for authorization... (${attempts}0s)"
+    done
+
+    echo "=== Network $network_id authorized. Configuring..."
+    sudo zerotier-cli set "$network_id" allowDNS=1
+    sudo zerotier-cli set "$network_id" allowDefault=1
+    sudo zerotier-cli set "$network_id" allowGlobal=1
+
+    save_network "$network_id"
+
+    echo "=== Current networks:"
+    sudo zerotier-cli listnetworks
+
+    sudo systemctl disable zerotier-one.service
+}
+
+cleanup_dead_networks
+
+saved=$(get_saved_network)
+if [[ -n "$saved" ]]; then
+    ok_networks=$(sudo zerotier-cli listnetworks | grep "OK" | awk '{print $3}')
+    if echo "$ok_networks" | grep -q "$saved"; then
+        echo "=== Already connected to saved network: $saved"
+        echo "=== Current networks:"
+        sudo zerotier-cli listnetworks
+        echo ""
+        read -p "=== Switch to a different network? (y/N): " choice
+        if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
+            echo "=== Keeping current network."
+            exit 0
+        fi
+    else
+        echo "=== Saved network $saved is not connected."
+    fi
 fi
 
-# Leave each unauthorized network
-for nwid in $unauthorized_networks; do
-  echo "=== Leaving unauthorized network: $nwid"
-  sudo zerotier-cli leave "$nwid"
-done
-
-echo "=== All unauthorized networks have been successfully removed."
-
-# Prompt for ZeroTier network ID
 read -p "Enter ZeroTier Network ID: " NETWORK_ID
 
-echo "=== Joining network $NETWORK_ID..."
-sudo zerotier-cli join "$NETWORK_ID"
+if [[ -z "$NETWORK_ID" ]]; then
+    echo "Error: Network ID is required." >&2
+    exit 1
+fi
 
+if [[ -n "$saved" && "$saved" != "$NETWORK_ID" ]]; then
+    echo "=== Leaving old network: $saved"
+    sudo zerotier-cli set "$saved" allowDefault=0 > /dev/null 2>&1 || true
+    sudo zerotier-cli leave "$saved" 2>/dev/null || true
+fi
 
-echo "!!! Please go to https://my.zerotier.com/network/ and authorize this new node"
-echo "!!! for network $NETWORK_ID"
-
-# press enter to continue
-read -p "=== Press 'Enter' to continue after authorizing the node on the ZeroTier network..."
-
-while ! sudo zerotier-cli listnetworks | grep "$NETWORK_ID" | grep -q "OK"; do
-  sleep 30
-  echo "=== Still waiting for authorization... (checking every 30s)"
-done
-
-# Change client configuration
-echo "=== Network $NETWORK_ID authorized. Configuring ZeroTier..."
-sudo zerotier-cli set "$NETWORK_ID" allowDNS=1
-sudo zerotier-cli set "$NETWORK_ID" allowDefault=1
-sudo zerotier-cli set "$NETWORK_ID" allowGlobal=1
-
-echo "=== You may need to restart the ZeroTier service for the changes to take effect:"
-echo "=== sudo systemctl restart zerotier-one"
-
-echo "=== Current networks:"
-sudo zerotier-cli listnetworks
-
-sudo systemctl disable zerotier-one.service
+join_and_configure "$NETWORK_ID"
