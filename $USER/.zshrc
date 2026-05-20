@@ -227,19 +227,19 @@ _zt_set_default_network() {
 
 ztls() {
     echo "=== ZeroTier Networks ==="
-    sudo zerotier-cli listnetworks | while IFS=' ' read -r nwid name mac status type dev ip; do
+    sudo zerotier-cli listnetworks | while IFS=' ' read -r nwid name mac zt_status type dev ip; do
         if [[ "$nwid" == "200" ]]; then
-            nwid="$name"; name="$mac"; mac="$status"; status="$type"; type="$dev"; dev="$ip"; ip=""
+            nwid="$name"; name="$mac"; mac="$zt_status"; zt_status="$type"; type="$dev"; dev="$ip"; ip=""
         fi
-        if [[ -z "$ip" && "$status" != "listnetworks" ]]; then
-            echo "  $nwid  $name  [$status]  (no IP)"
-        elif [[ "$status" != "listnetworks" ]]; then
+        if [[ -z "$ip" && "$zt_status" != "listnetworks" ]]; then
+            echo "  $nwid  $name  [$zt_status]  (no IP)"
+        elif [[ "$zt_status" != "listnetworks" ]]; then
             local ad=""
             local ad_val=$(sudo zerotier-cli get "$nwid" allowDefault 2>/dev/null || echo "")
             if [[ "$ad_val" == "1" ]]; then ad=" <DEFAULT>"; fi
             local saved=$(_zt_get_default_network)
             if [[ "$nwid" == "$saved" ]]; then ad="${ad} [saved]"; fi
-            echo "  $nwid  $name  [$status]  $ip${ad}"
+            echo "  $nwid  $name  [$zt_status]  $ip${ad}"
         fi
     done
     echo ""
@@ -249,6 +249,23 @@ ztls() {
     else
         echo "No saved default network (run: ztswitch <network_id>)"
     fi
+}
+
+ztstop() {
+    echo "=== Stopping ZeroTier ==="
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'ztnet_zerotier'; then
+        echo "Stopping Docker: ztnet_zerotier, ztnet, ztnet_postgres..."
+        docker stop ztnet_zerotier ztnet ztnet_postgres 2>/dev/null
+    fi
+    if systemctl is-active --quiet zerotier-one 2>/dev/null; then
+        echo "Stopping system zerotier-one..."
+        sudo systemctl stop zerotier-one 2>/dev/null
+    fi
+    if pgrep -x zerotier-one >/dev/null 2>&1; then
+        echo "Killing zerotier-one processes..."
+        sudo pkill -9 -x zerotier-one 2>/dev/null
+    fi
+    echo "Done. All ZeroTier services stopped."
 }
 
 ztcleanup() {
@@ -411,6 +428,7 @@ ztup      - включить zerotier
 ztd       - выключить zerotier
 ztls      - показать статус zerotier и список сетей
 ztswitch  - сменить основную сеть: ztswitch <network_id>
+ztstop    - принудительно остановить все службы ZeroTier
 ztcleanup - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
 EOF
 }
