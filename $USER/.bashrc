@@ -121,10 +121,18 @@ alias obsid="cd ~/Dev/Obsidian-Vault/ && gca"
 alias bigfiles="sudo du -ah --max-depth=1 | sort -rh"
 alias pbcopy='xclip -selection clipboard'
 alias pbpaste='xclip -selection clipboard -o'
-alias zts='ztls'
+alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@193.148.59.14' #hiplet server
 alias con2='ssh asv-spb@193.148.59.14' #hiplet server
 alias code='~/code-updater.sh'
+# Zapret aliases
+alias zapon='sudo systemctl start zapret'
+alias zapoff='sudo systemctl stop zapret'
+alias zaprestart='sudo systemctl restart zapret'
+alias zapstatus='systemctl status zapret --no-pager'
+alias zapconfig='sudo nano /opt/zapret/config'
+alias zaplog='journalctl -u zapret --no-pager -n 50'
+alias zapcheck='cd /opt/zapret && sudo ./blockcheck.sh'
 # DNS Switch aliases
 alias dns-xbox="sudo ~/dns-switch.sh xbox"
 alias dns-restore="sudo ~/dns-switch.sh restore"
@@ -133,7 +141,7 @@ alias dns-status="sudo ~/dns-switch.sh status"
 # --- Configuration ---
 # Timeout in seconds to wait for the IP to change.
 if [ -z "${_ZT_TIMEOUT_SECONDS+x}" ]; then
-    readonly _ZT_TIMEOUT_SECONDS=30
+    readonly _ZT_TIMEOUT_SECONDS=60
 fi
 # Interval in seconds between IP checks.
 if [ -z "${_ZT_POLL_INTERVAL_SECONDS+x}" ]; then
@@ -143,7 +151,98 @@ fi
 if [ -z "${_ZT_IP_CHECK_URL+x}" ]; then
     readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
 fi
+_ZT_SERVER_TIMEOUT="${_ZT_SERVER_TIMEOUT:-60}"
+_ZT_SERVER_POLL="${_ZT_SERVER_POLL:-5}"
 # --- End Configuration ---
+
+_zt_gateway_file="$HOME/.zt-gateway"
+_zt_server_ip_file="$HOME/.zt-server-ip"
+
+_zt_save_gateway() {
+    local nwid=$(_zt_get_default_network)
+    [[ -z "$nwid" ]] && return 1
+
+    local gw
+    gw=$(sudo zerotier-cli -j listnetworks 2>/dev/null | python3 -c "
+import sys, json
+for n in json.load(sys.stdin):
+    if n.get('id') == '$nwid':
+        for r in n.get('routes', []):
+            if r.get('target') == '0.0.0.0/0' and r.get('via'):
+                print(r['via'])
+                break
+        break
+" 2>/dev/null)
+
+    [[ -n "$gw" ]] && echo "$gw" > "$_zt_gateway_file"
+}
+
+_zt_save_server_ip() {
+    local nwid=$(_zt_get_default_network)
+    [[ -z "$nwid" ]] && return 1
+
+    local ctrl_addr="${nwid:0:10}"
+
+    local server_ip
+    server_ip=$(sudo zerotier-cli -j listpeers 2>/dev/null | python3 -c "
+import sys, json
+for p in json.load(sys.stdin):
+    if p.get('address') == '$ctrl_addr':
+        for path in p.get('paths', []):
+            addr = path.get('address', '')
+            if '/' in addr and not addr.startswith('127.'):
+                print(addr.split('/')[0])
+                break
+        break
+" 2>/dev/null)
+
+    [[ -n "$server_ip" ]] && echo "$server_ip" > "$_zt_server_ip_file"
+}
+
+_zt_get_gateway() {
+    if [[ -f "$_zt_gateway_file" ]]; then
+        cat "$_zt_gateway_file"
+    fi
+}
+
+_zt_wait_for_connectivity() {
+    local target
+    if [[ -f "$_zt_server_ip_file" ]]; then
+        target=$(cat "$_zt_server_ip_file")
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo "No cached ZT server IP, checking internet..."
+        target="9.9.9.9"
+    fi
+
+    local timeout="${_ZT_SERVER_TIMEOUT:-60}"
+    local poll="${_ZT_SERVER_POLL:-5}"
+    local started
+    started=$(date +%s)
+
+    printf "Checking ZT server (%s) " "$target"
+
+    while true; do
+        if ping -c 1 -W 3 "$target" >/dev/null 2>&1; then
+            printf "\nServer %s is reachable.\n" "$target"
+            return 0
+        fi
+
+        local now
+        now=$(date +%s)
+        local elapsed=$(( now - started ))
+
+        if [[ "$elapsed" -ge "$timeout" ]]; then
+            printf "\nTimeout! %s unreachable after %ds.\n" "$target" "$timeout"
+            myip
+            return 1
+        fi
+
+        printf "."
+        sleep "$poll"
+    done
+}
 
 # Private helper function to wait for the public IP address to change.
 # This function is not intended to be called directly by the user.
@@ -151,27 +250,39 @@ fi
 # Usage: _zt_wait_for_ip_change <initial_ip>
 _zt_wait_for_ip_change() {
     local initial_ip="$1"
-    local retries=$((_ZT_TIMEOUT_SECONDS / _ZT_POLL_INTERVAL_SECONDS))
+    local timeout="$_ZT_TIMEOUT_SECONDS"
+    local poll="$_ZT_POLL_INTERVAL_SECONDS"
+    local url="$_ZT_IP_CHECK_URL"
 
     printf "Waiting for IP address to change"
-    for ((i = 0; i < retries; i++)); do
-        # Fetch current IP, with a 5-second timeout for the request.
-        local current_ip
-        current_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
 
-        if [[ -n "$current_ip" && "$current_ip" != "$initial_ip" ]]; then
-            printf "\n\nSuccess! IP address has changed.\n"
-            myip
-            return 0
+    sh -c '
+      init="$1"; timeout="$2"; poll="$3"; url="$4"
+      retries=$((timeout / poll))
+      i=0
+      while [ "$i" -lt "$retries" ]; do
+        current_ip=$(curl -s --max-time 5 "$url")
+        if [ -n "$current_ip" ] && [ "$current_ip" != "$init" ]; then
+          exit 0
         fi
         printf "."
-        sleep "$_ZT_POLL_INTERVAL_SECONDS"
-    done
+        sleep "$poll"
+        i=$((i+1))
+      done
+      exit 1
+    ' _ "$initial_ip" "$timeout" "$poll" "$url"
+    local rc=$?
 
-    printf "\n\nTimeout! IP address did not change within %d seconds.\n" "$_ZT_TIMEOUT_SECONDS"
-    printf "Current IP:\n"
-    myip
-    return 1
+    if [ "$rc" -eq 0 ]; then
+        printf "\n\nSuccess! IP address has changed.\n"
+        myip
+        return 0
+    else
+        printf "\n\nTimeout! IP address did not change within %d seconds.\n" "$timeout"
+        printf "Current IP:\n"
+        myip
+        return 1
+    fi
 }
 
 _zt_default_network_file="$HOME/.zt-network"
@@ -227,6 +338,7 @@ ztstop() {
         sudo pkill -9 -x zerotier-one 2>/dev/null
     fi
     echo "Done. All ZeroTier services stopped."
+    myip
 }
 
 ztcleanup() {
@@ -289,12 +401,20 @@ ztswitch() {
     sudo zerotier-cli set "$new_nwid" allowGlobal=1
 
     _zt_set_default_network "$new_nwid"
+    _zt_save_gateway
+    _zt_save_server_ip
 
     echo "=== Network $new_nwid is now default. ==="
+    myip
     ztls
 }
 
+# Starts ZeroTier and waits for the public IP to change.
 ztup() {
+    if ! _zt_wait_for_connectivity; then
+        return 1
+    fi
+
     echo "Getting initial IP address..."
     local initial_ip
     initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
@@ -302,7 +422,7 @@ ztup() {
         echo "Error: Could not get the initial IP address from $_ZT_IP_CHECK_URL." >&2
         return 1
     fi
-    echo "Initial IP: $initial_ip"
+    myip
 
     echo "Starting ZeroTier..."
     if ! sudo systemctl start zerotier-one; then
@@ -331,19 +451,27 @@ ztup() {
         fi
     fi
 
-    _zt_wait_for_ip_change "$initial_ip"
+    if _zt_wait_for_ip_change "$initial_ip"; then
+        _zt_save_gateway
+        _zt_save_server_ip
+        return 0
+    fi
+
+    echo "Stopping ZeroTier (connection failed)..."
+    sudo systemctl stop zerotier-one 2>/dev/null
+    return 1
 }
 
 # Stops ZeroTier and waits for the public IP to revert.
 ztd() {
-    echo "Getting current IP address..."
+    echo "Current IP before stopping:"
     local initial_ip
     initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
     if [[ -z "$initial_ip" ]]; then
         echo "Error: Could not get the initial IP address from $_ZT_IP_CHECK_URL." >&2
         return 1
     fi
-    echo "Current IP (before stopping): $initial_ip"
+    myip
 
     echo "Stopping ZeroTier..."
     # Use a subshell to group commands and check the overall result.
