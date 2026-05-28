@@ -381,6 +381,87 @@ ztcleanup() {
     echo "Cleanup done."
 }
 
+ztsw() {
+    local -a nwids
+    nwids=(${(f)"$(sudo zerotier-cli listnetworks | awk '/OK/{print $3}')"})
+
+    if [[ ${#nwids} -lt 2 ]]; then
+        echo "Need at least 2 connected networks, found: ${#nwids}"
+        ztls
+        return 1
+    fi
+
+    local current_nwid=""
+    local nwid
+    for nwid in "${nwids[@]}"; do
+        local ad=$(sudo zerotier-cli get "$nwid" allowDefault 2>/dev/null || echo "0")
+        if [[ "$ad" == "1" ]]; then
+            current_nwid="$nwid"
+            break
+        fi
+    done
+
+    if [[ -z "$current_nwid" ]]; then
+        current_nwid=$(_zt_get_default_network)
+    fi
+
+    if [[ -z "$current_nwid" ]]; then
+        echo "Cannot determine active network."
+        ztls
+        return 1
+    fi
+
+    local target_nwid=""
+    for nwid in "${nwids[@]}"; do
+        if [[ "$nwid" != "$current_nwid" ]]; then
+            target_nwid="$nwid"
+            break
+        fi
+    done
+
+    local current_name=$(sudo zerotier-cli listnetworks | grep "$current_nwid" | awk '/OK/{print $4}')
+    local target_name=$(sudo zerotier-cli listnetworks | grep "$target_nwid" | awk '/OK/{print $4}')
+
+    echo "=== Switching ZeroTier network ==="
+    echo "From: $current_name ($current_nwid)"
+    echo "To:   $target_name ($target_nwid)"
+
+    echo "Getting initial IP address..."
+    local initial_ip
+    initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
+    if [[ -z "$initial_ip" ]]; then
+        echo "Error: Could not get initial IP." >&2
+        return 1
+    fi
+    myip
+
+    echo "Disabling default route on $current_name..."
+    sudo zerotier-cli set "$current_nwid" allowDefault=0 > /dev/null 2>&1
+
+    echo "Enabling default route on $target_name..."
+    sudo zerotier-cli set "$target_nwid" allowDNS=1 > /dev/null
+    sudo zerotier-cli set "$target_nwid" allowDefault=1 > /dev/null
+    sudo zerotier-cli set "$target_nwid" allowGlobal=1 > /dev/null
+
+    _zt_set_default_network "$target_nwid"
+    _zt_save_gateway
+    _zt_save_server_ip
+
+    if _zt_wait_for_ip_change "$initial_ip"; then
+        _zt_save_gateway
+        _zt_save_server_ip
+        echo ""
+        ztls
+        return 0
+    fi
+
+    echo "Reverting..."
+    sudo zerotier-cli set "$target_nwid" allowDefault=0 > /dev/null 2>&1
+    sudo zerotier-cli set "$current_nwid" allowDefault=1 > /dev/null 2>&1
+    _zt_set_default_network "$current_nwid"
+    return 1
+}
+
 ztswitch() {
     if [[ -z "$1" ]]; then
         echo "Usage: ztswitch <network_id>"
@@ -423,9 +504,9 @@ ztswitch() {
     done
 
     echo "Enabling default route..."
-    sudo zerotier-cli set "$new_nwid" allowDNS=1
-    sudo zerotier-cli set "$new_nwid" allowDefault=1
-    sudo zerotier-cli set "$new_nwid" allowGlobal=1
+    sudo zerotier-cli set "$new_nwid" allowDNS=1 > /dev/null
+    sudo zerotier-cli set "$new_nwid" allowDefault=1 > /dev/null
+    sudo zerotier-cli set "$new_nwid" allowGlobal=1 > /dev/null
 
     _zt_set_default_network "$new_nwid"
     _zt_save_gateway
@@ -472,9 +553,9 @@ ztup() {
         done
         if [[ "$has_default" == "0" ]]; then
             echo "Enabling default route for saved network: $saved"
-            sudo zerotier-cli set "$saved" allowDNS=1
-            sudo zerotier-cli set "$saved" allowDefault=1
-            sudo zerotier-cli set "$saved" allowGlobal=1
+            sudo zerotier-cli set "$saved" allowDNS=1 > /dev/null
+            sudo zerotier-cli set "$saved" allowDefault=1 > /dev/null
+            sudo zerotier-cli set "$saved" allowGlobal=1 > /dev/null
         fi
     fi
 
@@ -545,6 +626,7 @@ ztls      - показать статус zerotier и список сетей
 ztswitch  - сменить основную сеть: ztswitch <network_id>
 ztstop    - принудительно остановить все службы ZeroTier
 ztcleanup - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
+ztsw      - переключиться на другую ZT сеть (автоматически)
 zapon     - запустить zapret
 zapoff    - остановить zapret
 zaprestart - перезапустить zapret

@@ -56,9 +56,9 @@ join_and_configure() {
     done
 
     echo "=== Network $network_id authorized. Configuring..."
-    sudo zerotier-cli set "$network_id" allowDNS=1
-    sudo zerotier-cli set "$network_id" allowDefault=1
-    sudo zerotier-cli set "$network_id" allowGlobal=1
+    sudo zerotier-cli set "$network_id" allowDNS=1 > /dev/null
+    sudo zerotier-cli set "$network_id" allowDefault=1 > /dev/null
+    sudo zerotier-cli set "$network_id" allowGlobal=1 > /dev/null
 
     save_network "$network_id"
 
