@@ -205,43 +205,71 @@ _zt_get_gateway() {
     fi
 }
 
-_zt_wait_for_connectivity() {
-    local target
+_zt_get_all_server_ips() {
+    local -a ips=()
+
     if [[ -f "$_zt_server_ip_file" ]]; then
-        target=$(cat "$_zt_server_ip_file")
+        local cached
+        cached=$(cat "$_zt_server_ip_file")
+        [[ -n "$cached" ]] && ips+=("$cached")
     fi
 
-    if [[ -z "$target" ]]; then
-        echo "No cached ZT server IP, checking internet..."
-        target="9.9.9.9"
+    local peer_ips
+    peer_ips=$(sudo zerotier-cli -j listpeers 2>/dev/null | python3 -c "
+import sys, json
+seen = set()
+for p in json.load(sys.stdin):
+    for path in p.get('paths', []):
+        addr = path.get('address', '')
+        if '/' in addr and not addr.startswith('127.'):
+            ip = addr.split('/')[0]
+            if ip not in seen:
+                seen.add(ip)
+                print(ip)
+" 2>/dev/null)
+
+    local ip
+    while IFS= read -r ip; do
+        [[ -n "$ip" ]] || continue
+        local found=0
+        local existing
+        for existing in "${ips[@]}"; do
+            [[ "$existing" == "$ip" ]] && found=1 && break
+        done
+        [[ "$found" == "0" ]] && ips+=("$ip")
+    done <<< "$peer_ips"
+
+    if [[ ${#ips[@]} -eq 0 ]]; then
+        echo "9.9.9.9"
+    else
+        printf '%s\n' "${ips[@]}"
     fi
+}
 
-    local timeout="${_ZT_SERVER_TIMEOUT:-60}"
-    local poll="${_ZT_SERVER_POLL:-5}"
-    local started
-    started=$(date +%s)
+_zt_wait_for_connectivity() {
+    local -a targets
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && targets+=("$line")
+    done < <(_zt_get_all_server_ips)
 
-    printf "Checking ZT server (%s) " "$target"
+    printf "Checking %d ZT server(s): %s\n" "${#targets[@]}" "$(IFS=, ; echo "${targets[*]}")"
 
-    while true; do
+    local target
+    for target in "${targets[@]}"; do
+        printf "  %-20s " "$target"
         if ping -c 1 -W 3 "$target" >/dev/null 2>&1; then
-            printf "\nServer %s is reachable.\n" "$target"
+            printf "OK\n"
+            echo "$target" > "$_zt_server_ip_file"
+            printf "Active server: %s\n" "$target"
             return 0
+        else
+            printf "FAIL\n"
         fi
-
-        local now
-        now=$(date +%s)
-        local elapsed=$(( now - started ))
-
-        if [[ "$elapsed" -ge "$timeout" ]]; then
-            printf "\nTimeout! %s unreachable after %ds.\n" "$target" "$timeout"
-            myip
-            return 1
-        fi
-
-        printf "."
-        sleep "$poll"
     done
+
+    printf "No active servers found. ZeroTier will NOT be started.\n"
+    myip
+    return 1
 }
 
 # Private helper function to wait for the public IP address to change.
