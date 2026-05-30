@@ -12,43 +12,39 @@ CONFIG_FILE="/etc/sudoers.d/${REAL_USER}-nopasswd"
 
 # Проверка, запущен ли скрипт от root
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Пожалуйста, запустите этот скрипт с sudo:"
-  echo "   sudo ./sudo_toggle.sh [on|off]"
+    echo "Please run this script with sudo:"
+    echo "   sudo ./sudoer.sh [on|off]"
   exit 1
 fi
 
 case "$1" in
   off)
-    echo "🔓 Отключаем запрос пароля sudo для пользователя $REAL_USER..."
-    # Создаем файл с правилом NOPASSWD
+    echo "Disabling sudo password for user $REAL_USER..."
     echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" > "$CONFIG_FILE"
-    # Устанавливаем правильные права (обязательно 0440, иначе sudo будет ругаться)
     chmod 0440 "$CONFIG_FILE"
-    
-    # Проверяем синтаксис (на всякий случай)
     if visudo -c -f "$CONFIG_FILE" > /dev/null; then
-        echo "✅ Готово! Теперь sudo не будет просить пароль."
+        echo "Done! sudo will not ask for password."
     else
-        echo "⚠️ Ошибка синтаксиса! Отменяем изменения..."
+        echo "Syntax error! Reverting..."
         rm "$CONFIG_FILE"
         exit 1
     fi
     ;;
 
   on)
-    echo "🔒 Включаем запрос пароля sudo обратно..."
+    echo "Enabling sudo password for user $REAL_USER..."
     if [ -f "$CONFIG_FILE" ]; then
       rm "$CONFIG_FILE"
-      echo "✅ Готово! Пароль снова требуется."
+      echo "Done! Password is now required."
     else
-      echo "ℹ️ Пароль и так включен (файл настроек не найден)."
+      echo "Password is already enabled (config file not found)."
     fi
     ;;
 
   *)
-    echo "Использование:"
-    echo "  sudo ./sudo_toggle.sh off  -> Отключить пароль (удобно для установки)"
-    echo "  sudo ./sudo_toggle.sh on   -> Включить пароль обратно (безопасно)"
+    echo "Usage:"
+    echo "  sudo ./sudoer.sh off  - Disable password (convenient for setup)"
+    echo "  sudo ./sudoer.sh on   - Enable password back (secure)"
     exit 1
     ;;
 esac

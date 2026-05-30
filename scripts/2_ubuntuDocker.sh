@@ -2,11 +2,15 @@
 
 set -e
 
+export DEBIAN_FRONTEND=noninteractive
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo " "
 echo "Setting up passwords"
 echo "--------------------------------------------------------------"
 # so that it does not ask for a password with sudo
-sudo bash -c 'echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd'
+sudo bash -c "echo '${SUDO_USER:-$USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-nopasswd"
 sudo chmod 0440 /etc/sudoers.d/90-nopasswd
 
 # so that it does not wait for confirmation during installation
@@ -88,9 +92,9 @@ mkdir -p ~/Dev
 echo " "
 echo "Creating docker group. Reboot required!"
 echo "--------------------------------------------------------------"
-sudo usermod -aG docker $USER
+sudo usermod -aG docker ${SUDO_USER:-$USER}
 sudo systemctl start docker
-sudo gpasswd -a $USER docker
+sudo gpasswd -a ${SUDO_USER:-$USER} docker
 
 
 echo '-------------------------------------------------------------------'

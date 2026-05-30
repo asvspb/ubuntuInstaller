@@ -8,7 +8,7 @@ echo "--------------------------------------------------------------"
 sudo add-apt-repository ppa:thopiekar/openrgb -y
 sudo add-apt-repository ppa:trebelnik-stefina/grub-customizer -y
 sudo add-apt-repository ppa:ubuntuhandbook1/rhythmbox -y
-sudo add-apt-repository -y ppa:deadsnakes/ppa -y #python
+sudo add-apt-repository -y ppa:deadsnakes/ppa #python
 
 echo " "
 echo "Installing keys"
@@ -35,7 +35,11 @@ sudo apt autoremove -y
 sudo apt install nodejs npm -y
 
 # install nvm
-source ~/.nvm/nvm.sh
+if [ ! -d "$HOME/.nvm" ]; then
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+fi
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 nvm install node
 nvm use node
 nvm alias default node
@@ -71,7 +75,7 @@ rm warp.deb
 echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
-npm install -g @google/gemini-cli@latest codebuff@latest cline@latest @kilocode/cli@latest opencode-ai@latest freebuff@latest
+npm install -g @google/gemini-cli@latest cline@latest opencode-ai@latest
 
 echo " "
 echo "Installing speedtest"

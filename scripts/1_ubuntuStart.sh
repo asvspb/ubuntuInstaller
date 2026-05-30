@@ -61,7 +61,7 @@ sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restric
 echo "                                                              "
 echo "Installing telegram"
 echo "--------------------------------------------------------------"
-snap install telegram-desktop
+snap install telegram-desktop 2>/dev/null || sudo snap install telegram-desktop
 
 echo "                                                              "
 echo "Installing Chrome"

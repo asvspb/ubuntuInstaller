@@ -3,7 +3,7 @@ echo " "
 echo "Installing snap system applications"
 echo "--------------------------------------------------------------"
 # Path to the file where the list of snap packages is saved
-PACKAGE_FILE="ubuntu_snap_packages.txt"
+PACKAGE_FILE="$(dirname "${BASH_SOURCE[0]}")/ubuntu_snap_packages.txt"
 
 # Reading the file and installing packages if they are not in the system
 while IFS= read -r package; do
