@@ -13,7 +13,7 @@ V2RAYA_VERSION="v2.2.7.5"
 V2RAY_CORE_VERSION="v5.49.0"
 V2RAYA_BIN="/usr/local/bin/v2raya"
 V2RAY_CORE_BIN="/usr/local/bin/v2ray"
-V2RAYA_CONFIG_DIR="/usr/local/etc/v2raya"
+V2RAYA_CONFIG_DIR="/etc/v2raya"
 V2RAYA_SERVICE="/etc/systemd/system/v2raya.service"
 V2RAYA_LOG_FILE="/tmp/v2raya.log"
 
@@ -102,7 +102,7 @@ After=network.target nss-lookup.target iptables.service ip6tables.service nftabl
 Wants=network.target
 
 [Service]
-Environment="V2RAYA_CONFIG=/usr/local/etc/v2raya"
+Environment="V2RAYA_CONFIG=/etc/v2raya"
 Environment="V2RAYA_LOG_FILE=/tmp/v2raya.log"
 Type=simple
 User=root
@@ -218,6 +218,10 @@ show_info() {
     echo "    1. Open http://127.0.0.1:2017, add server, connect"
     echo "    2. For CLI proxy: proxy-switch on"
     echo "    3. For TUN (full system): Web UI -> Settings -> TUN mode"
+    echo
+    echo "  Reset Password:"
+    echo "    sudo systemctl stop v2raya && sudo v2raya --reset-password && sudo systemctl start v2raya"
+    echo
     echo "  !!! IMPORTANT: Do NOT use 'proxy-switch on' when TUN mode is active"
     echo "      in the Web UI — it will cause a routing loop!"
     echo
