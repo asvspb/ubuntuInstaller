@@ -30,9 +30,9 @@ echo " "
 echo "Installing programming environment"
 echo "--------------------------------------------------------------"
 # install js
-sudo apt remove --purge nodejs npm -y
+sudo apt remove --purge nodejs -y
 sudo apt autoremove -y
-sudo apt install nodejs npm -y
+sudo apt install nodejs -y
 
 # install nvm
 if [ ! -d "$HOME/.nvm" ]; then

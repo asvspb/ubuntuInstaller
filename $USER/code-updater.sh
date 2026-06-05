@@ -72,7 +72,7 @@ log_message "INFO" "Using Node.js version: $(node --version)"
 
 # Install npm through apt for security reasons instead of piping from website
 log_message "INFO" "Updating system packages and installing Node.js/NPM..."
-sudo apt update && sudo apt install nodejs npm -y
+sudo apt update && sudo apt install nodejs -y
 log_message "INFO" "Installing/updating Python and pip..."
 sudo apt install python3 python3-pip -y && sudo pip3 install --upgrade pip --break-system-packages --root-user-action=ignore
 

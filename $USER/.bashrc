@@ -125,14 +125,7 @@ alias zts='myip && sudo systemctl status zerotier-one'
 alias con1='ssh root@193.148.59.14' #hiplet server
 alias con2='ssh asv-spb@193.148.59.14' #hiplet server
 alias code='~/code-updater.sh'
-# Zapret aliases
-alias zapon='sudo systemctl start zapret'
-alias zapoff='sudo systemctl stop zapret'
-alias zaprestart='sudo systemctl restart zapret'
-alias zapstatus='systemctl status zapret --no-pager'
-alias zapconfig='sudo nano /opt/zapret/config'
-alias zaplog='journalctl -u zapret --no-pager -n 50'
-alias zapcheck='cd /opt/zapret && sudo ./blockcheck.sh'
+alias systart='sysupg; code; cls'
 # DNS Switch aliases
 alias dns-xbox="sudo ~/dns-switch.sh xbox"
 alias dns-restore="sudo ~/dns-switch.sh restore"

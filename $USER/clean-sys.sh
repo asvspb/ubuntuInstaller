@@ -542,18 +542,18 @@ cleanup_tmp_path() {
   local path="$1" days="$2"
   if [ "$DRY_RUN" = "1" ]; then
     if sudo -n true 2>/dev/null; then
-      log "DRY-RUN: sudo find $path -xdev -type f -mtime +$days -delete && sudo find $path -xdev -type d -empty -delete"
+      log "DRY-RUN: sudo find $path -xdev -type f -mtime +$days -delete && sudo find $path -mindepth 1 -xdev -type d -empty -delete"
     else
-      log "DRY-RUN: find $path -xdev -type f -user $(id -u) -mtime +$days -delete && find $path -xdev -type d -user $(id -u) -empty -delete"
+      log "DRY-RUN: find $path -xdev -type f -user $(id -u) -mtime +$days -delete && find $path -mindepth 1 -xdev -type d -user $(id -u) -empty -delete"
     fi
     return 0
   fi
   if sudo -n true 2>/dev/null; then
     sudo find "$path" -xdev -type f -mtime +"$days" -delete || true
-    sudo find "$path" -xdev -type d -empty -delete || true
+    sudo find "$path" -mindepth 1 -xdev -type d -empty -delete || true
   else
     find "$path" -xdev -type f -user "$(id -u)" -mtime +"$days" -delete || true
-    find "$path" -xdev -type d -user "$(id -u)" -empty -delete || true
+    find "$path" -mindepth 1 -xdev -type d -user "$(id -u)" -empty -delete || true
   fi
 }
 
