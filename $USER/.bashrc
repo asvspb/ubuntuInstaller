@@ -13,7 +13,6 @@ esac
 HISTCONTROL=ignoreboth
 
 # append to the history file, don't overwrite it
-shopt -s histappend
 
 # for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
 HISTSIZE=1000
@@ -21,7 +20,6 @@ HISTFILESIZE=2000
 
 # check the window size after each command and, if necessary,
 # update the values of LINES and COLUMNS.
-shopt -s checkwinsize
 
 # If set, the pattern "**" used in a pathname expansion context will
 # match all files and zero or more directories and subdirectories.
@@ -35,42 +33,65 @@ if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
     debian_chroot=$(cat /etc/debian_chroot)
 fi
 
-# set a fancy prompt (non-color, unless we know we "want" color)
-case "$TERM" in
-    xterm-color|*-256color) color_prompt=yes;;
-esac
+# zsh interactive configuration
+if [ -n "$ZSH_VERSION" ]; then
+  emulate -L zsh
+  # History behavior similar to bash's histappend/ignoreboth
+  setopt APPEND_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE
+  HISTFILE="$HOME/.zsh_history"
+  HISTSIZE=10000
+  SAVEHIST=20000
+  # Prompt and completion
+  setopt PROMPT_SUBST
+  autoload -Uz compinit && compinit
+  # Prompt: green user@host, blue cwd
+  if [ -n "$debian_chroot" ]; then
+    PROMPT="($debian_chroot)%F{green}%n@%m%f:%F{blue}%~%f$ "
+  else
+    PROMPT="%F{green}%n@%m%f:%F{blue}%~%f$ "
+  fi
+  # Terminal title: user@host: dir
+  precmd() { print -Pn "\e]0;%n@%m: %~\a"; }
 
-# uncomment for a colored prompt, if the terminal has the capability; turned
-# off by default to not distract the user: the focus in a terminal window
-# should be on the output of commands, not on the prompt
-#force_color_prompt=yes
+  # Powerlevel10k prompt settings (from previous .zshrc)
+  POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(host user dir)
+  POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status root_indicator vcs battery time)
+  POWERLEVEL9K_PROMPT_ON_NEWLINE=true
+  POWERLEVEL9K_KUBECONTEXT_SHOW_ON_COMMAND='kubectl|helm|kubens|kubectx|oc|istioctl|kogito'
 
-if [ -n "$force_color_prompt" ]; then
-    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
-	# We have color support; assume it's compliant with Ecma-48
-	# (ISO/IEC-6429). (Lack of such support is extremely rare, and such
-	# a case would tend to support setf rather than setaf.)
-	color_prompt=yes
-    else
-	color_prompt=
+  # Zplug plugin manager and plugins (from previous .zshrc)
+  if [ ! -d "$HOME/.zplug" ]; then
+    command -v git >/dev/null 2>&1 && git clone https://github.com/b4b4r07/zplug "$HOME/.zplug" >/dev/null 2>&1 || true
+  fi
+  if [ -r "$HOME/.zplug/init.zsh" ]; then
+    source "$HOME/.zplug/init.zsh"
+    zplug romkatv/powerlevel10k, as:theme
+
+    zplug "robbyrussell/oh-my-zsh", as:plugin, use:"lib/*.zsh"
+    zplug "plugins/archlinux",         from:oh-my-zsh
+    zplug "plugins/colored-man-pages", from:oh-my-zsh
+    zplug "plugins/colorize",          from:oh-my-zsh
+    zplug "lib/completion",            from:oh-my-zsh
+    zplug "lib/history",               from:oh-my-zsh
+    zplug "lib/key-bindings",          from:oh-my-zsh
+    zplug "lib/termsupport",           from:oh-my-zsh
+    zplug "lib/directories",           from:oh-my-zsh
+    zplug "plugins/git",               from:oh-my-zsh
+    zplug "plugins/history",           from:oh-my-zsh
+
+    zplug "zsh-users/zsh-autosuggestions"
+    # zplug "zsh-users/zsh-syntax-highlighting"
+    zplug "zdharma/fast-syntax-highlighting"
+    zplug "zsh-users/zsh-completions"
+    zplug "zsh-users/zsh-history-substring-search"
+    zplug "MichaelAquilina/zsh-you-should-use"
+
+    if ! zplug check; then
+      zplug install
     fi
+    zplug load
+  fi
 fi
-
-if [ "$color_prompt" = yes ]; then
-    PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-else
-    PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
-fi
-unset color_prompt force_color_prompt
-
-# If this is an xterm set the title to user@host:dir
-case "$TERM" in
-xterm*|rxvt*)
-    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
-    ;;
-*)
-    ;;
-esac
 
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]; then
@@ -92,6 +113,10 @@ alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
 
+# sleep commands
+alias disablesleep='sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target'
+alias enablesleep='sudo systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target'
+
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert
 alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
@@ -99,6 +124,7 @@ alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo
 # New terminal scheme
 # https://gogh-co.github.io/Gogh/
 alias trm='bash -c  "$(wget -qO- https://git.io/vQgMr)"'
+
 
 
 #
@@ -131,20 +157,56 @@ alias dns-xbox="sudo ~/dns-switch.sh xbox"
 alias dns-restore="sudo ~/dns-switch.sh restore"
 alias dns-status="sudo ~/dns-switch.sh status"
 
-# ZeroTier functions (config, helpers, zt*, myhelp)
-[ -f ~/.zt-functions.sh ] && source ~/.zt-functions.sh
+# --- Configuration ---
+# Timeout in seconds to wait for the IP to change.
+if [ -z "${_ZT_TIMEOUT_SECONDS+x}" ]; then
+    readonly _ZT_TIMEOUT_SECONDS=60
+fi
+# Interval in seconds between IP checks.
+if [ -z "${_ZT_POLL_INTERVAL_SECONDS+x}" ]; then
+    readonly _ZT_POLL_INTERVAL_SECONDS=2
+fi
+# URL to check for the public IP address.
+if [ -z "${_ZT_IP_CHECK_URL+x}" ]; then
+    readonly _ZT_IP_CHECK_URL="https://ipinfo.io/ip"
+fi
+_ZT_SERVER_TIMEOUT="${_ZT_SERVER_TIMEOUT:-60}"
+_ZT_SERVER_POLL="${_ZT_SERVER_POLL:-5}"
+# --- End Configuration ---
+
+_zt_gateway_file="$HOME/.zt-gateway"
+_zt_server_ip_file="$HOME/.zt-server-ip"
+
+_zt_save_gateway() {
+    local nwid=$(_zt_get_default_network)
+    [[ -z "$nwid" ]] && return 1
+
+    local gw
+    gw=$(sudo zerotier-cli -j listnetworks 2>/dev/null | python3 -c "
+import sys, json
+for n in json.load(sys.stdin):
+    if n.get('id') == '$nwid':
+        for r in n.get('routes', []):
+            if r.get('target') == '0.0.0.0/0' and r.get('via'):
+                print(r['via'])
+                break
+        break
+" 2>/dev/null)
+
+    [[ -n "$gw" ]] && echo "$gw" > "$_zt_gateway_file"
+}
 
 _zt_save_server_ip() {
     local nwid=$(_zt_get_default_network)
     [[ -z "$nwid" ]] && return 1
-
-    local ctrl_addr="${nwid:0:10}"
 
     local server_ips
     server_ips=$(sudo zerotier-cli -j listpeers 2>/dev/null | python3 -c "
 import sys, json
 seen = set()
 for p in json.load(sys.stdin):
+    if p.get('role') != 'LEAF':
+        continue
     for path in p.get('paths', []):
         addr = path.get('address', '')
         if '/' in addr and not addr.startswith('127.'):
@@ -207,29 +269,47 @@ for p in json.load(sys.stdin):
 }
 
 _zt_wait_for_connectivity() {
-    local -a targets
-    while IFS= read -r line; do
-        [[ -n "$line" ]] && targets+=("$line")
-    done < <(_zt_get_all_server_ips)
+    printf "Checking internet connectivity...\n"
+    if ! ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+        printf "  %-20s FAIL\n" "8.8.8.8"
+        printf "No internet. ZeroTier will NOT be started.\n"
+        myip
+        return 1
+    fi
+    printf "  %-20s OK\n" "8.8.8.8"
 
-    printf "Checking %d ZT server(s): %s\n" "${#targets[@]}" "$(IFS=, ; echo "${targets[*]}")"
+    printf "Checking ZT servers...\n"
+    local -a servers
+    if [[ -f "$_zt_server_ip_file" ]]; then
+        while IFS= read -r ip; do
+            [[ -n "$ip" ]] && servers+=("$ip")
+        done < "$_zt_server_ip_file"
+    fi
+    if [[ ${#servers[@]} -eq 0 ]]; then
+        printf "  No saved ZT servers. Skipping server check.\n"
+        return 0
+    fi
 
-    local target
-    for target in "${targets[@]}"; do
-        printf "  %-20s " "$target"
-        if ping -c 1 -W 3 "$target" >/dev/null 2>&1; then
+    local ok_count=0
+    local ip
+    for ip in "${servers[@]}"; do
+        printf "  %-20s " "$ip"
+        if ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
             printf "OK\n"
-            echo "$target" > "$_zt_server_ip_file"
-            printf "Active server: %s\n" "$target"
-            return 0
+            ok_count=$((ok_count + 1))
         else
             printf "FAIL\n"
         fi
     done
 
-    printf "No active servers found. ZeroTier will NOT be started.\n"
-    myip
-    return 1
+    if [[ $ok_count -eq 0 ]]; then
+        printf "All %d ZT servers unreachable. ZeroTier will NOT be started.\n" "${#servers[@]}"
+        myip
+        return 1
+    fi
+
+    printf "ZT servers: %d/%d available\n" "$ok_count" "${#servers[@]}"
+    return 0
 }
 
 # Private helper function to wait for the public IP address to change.
@@ -244,6 +324,7 @@ _zt_wait_for_ip_change() {
 
     printf "Waiting for IP address to change"
 
+    # Run polling in a clean child shell so tracing/verbose options from the parent don't leak into it
     sh -c '
       init="$1"; timeout="$2"; poll="$3"; url="$4"
       retries=$((timeout / poll))
@@ -344,10 +425,10 @@ ztcleanup() {
 
 ztsw() {
     local -a nwids
-    while IFS= read -r line; do nwids+=("$line"); done < <(sudo zerotier-cli listnetworks | awk '/OK/{print $3}')
+    nwids=(${(f)"$(sudo zerotier-cli listnetworks | awk '/OK/{print $3}')"})
 
-    if [[ ${#nwids[@]} -lt 2 ]]; then
-        echo "Need at least 2 connected networks, found: ${#nwids[@]}"
+    if [[ ${#nwids} -lt 2 ]]; then
+        echo "Need at least 2 connected networks, found: ${#nwids}"
         ztls
         return 1
     fi
@@ -486,6 +567,24 @@ ztup() {
         return 1
     fi
 
+    if systemctl is-active --quiet zerotier-one 2>/dev/null; then
+        local saved=$(_zt_get_default_network)
+        local zt_ok=0
+        if [[ -n "$saved" ]]; then
+            for nwid in $(sudo zerotier-cli listnetworks 2>/dev/null | grep "OK" | awk '{print $3}'); do
+                if [[ "$nwid" == "$saved" ]]; then
+                    zt_ok=1
+                    break
+                fi
+            done
+        fi
+        if [[ "$zt_ok" == "1" ]]; then
+            echo "ZeroTier is already running with network $saved"
+            myip
+            return 0
+        fi
+    fi
+
     echo "Getting initial IP address..."
     local initial_ip
     initial_ip=$(curl --silent --max-time 5 "$_ZT_IP_CHECK_URL")
@@ -556,6 +655,7 @@ ztd() {
     _zt_wait_for_ip_change "$initial_ip"
 }
 
+
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
@@ -589,6 +689,9 @@ ztswitch  - сменить основную сеть: ztswitch <network_id>
 ztstop    - принудительно остановить все службы ZeroTier
 ztcleanup - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
 ztsw      - переключиться на другую ZT сеть (автоматически)
+
+agy-reinstall - полная переустановка Antigravity
+2agy      - запустить 2 экземпляра agy в разных окнах
 EOF
 }
 
@@ -599,21 +702,133 @@ EOF
 # ~/.bash_aliases, instead of adding them here directly.
 # See /usr/share/doc/bash-doc/examples in the bash-doc package.
 
-if [ -f ~/.bash_aliases ]; then
-    . ~/.bash_aliases
-fi
 
-# enable programmable completion features (you don't need to enable
-# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
-# sources /etc/bash.bashrc).
-if ! shopt -oq posix; then
-  if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
-  elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
-  fi
+
+# Environment from previous .zshrc
+[ -z "$TERM" ] && export TERM="xterm-256color"
+export KWIN_TRIPLE_BUFFER="${KWIN_TRIPLE_BUFFER:-1}"
+[ -z "$LC_ALL" ] && export LC_ALL="en_GB.UTF-8"
+
+# Rust cargo binaries
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# SDKMAN
+export SDKMAN_DIR="$HOME/.sdkman"
+[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+# Fancy system info on interactive zsh
+if [ -n "$ZSH_VERSION" ] && [[ $- == *i* ]] && command -v neofetch >/dev/null 2>&1; then
+  neofetch
 fi
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Added by Antigravity CLI installer
+export PATH="/home/asv-spb/.local/bin:$PATH"
+
+# --- Antigravity Functions ---
+agy-reinstall() {
+    echo "Начинаем полное удаление Antigravity CLI и всех связанных данных о Gemini..."
+
+    pkill -x agy 2>/dev/null
+    pkill -x agentapi 2>/dev/null
+    echo "Завершены активные процессы agy и agentapi"
+
+    rm -f "$HOME/.local/bin/antigravity" "$HOME/.local/bin/agy"
+    echo "Удалены файлы ~/.local/bin/antigravity и ~/.local/bin/agy"
+
+    rm -rf "$HOME/Downloads/Antigravity"
+    echo "Удалена директория ~/Downloads/Antigravity"
+
+    rm -rf "$HOME/.gemini" "$HOME/.antigravity" "$HOME/.antigravitycli" "$HOME/.config/Antigravity" "$HOME/.local/share/antigravity-ide" "$HOME/.cache/antigravity"
+    echo "Удалены директории конфигурации и кэша"
+
+    echo "Очистка системной связки ключей (Keyring)..."
+    if command -v python3 &>/dev/null; then
+        python3 -c "
+try:
+    import secretstorage
+    connection = secretstorage.dbus_init()
+    collection = secretstorage.get_default_collection(connection)
+    for item in list(collection.get_all_items()):
+        attrs = item.get_attributes()
+        if attrs.get('application') == 'Antigravity' or (attrs.get('service') == 'gemini' and attrs.get('username') == 'antigravity'):
+            item.delete()
+except Exception:
+    pass
+" 2>/dev/null
+        echo "Связка ключей Keyring очищена."
+    fi
+
+    echo "Начинаем установку Antigravity CLI..."
+    curl -fsSL https://antigravity.google/cli/install.sh | bash
+    echo "Установка завершена! Перезапустите терминал или выполните source ~/.bashrc (или ~/.zshrc)"
+}
+
+2agy() {
+    local AGY_HOME_1="$HOME/.agy_account_1"
+    local AGY_HOME_2="$HOME/.agy_account_2"
+
+    mkdir -p "$AGY_HOME_1" "$AGY_HOME_2"
+
+    setup_fake_home() {
+        local fake_home="$1"
+        for item in .ssh .gitconfig .bashrc .zshrc .bash_profile .profile; do
+            if [ -e "$HOME/$item" ] && [ ! -e "$fake_home/$item" ]; then
+                ln -s "$HOME/$item" "$fake_home/$item"
+            fi
+        done
+
+        # Скрипт-обертка для браузера: временно возвращает настоящий HOME
+        mkdir -p "$fake_home/bin"
+        local browser_wrapper="$fake_home/bin/xdg-open"
+        echo '#!/bin/bash' > "$browser_wrapper"
+        echo 'export HOME="/home/asv-spb"' >> "$browser_wrapper"
+        echo 'exec /usr/bin/xdg-open "$@"' >> "$browser_wrapper"
+        chmod +x "$browser_wrapper"
+        
+        # Симлинк на случай, если вызывается google-chrome напрямую
+        ln -sf "$browser_wrapper" "$fake_home/bin/google-chrome"
+    }
+
+    setup_fake_home "$AGY_HOME_1"
+    setup_fake_home "$AGY_HOME_2"
+
+    echo "Запускаем терминалы с agy..."
+
+    gnome-terminal --window --title="AGY - Account 1" -- bash -c "
+        echo '--- AGY Аккаунт 1 ---'
+        export HOME=\"$AGY_HOME_1\"
+        export PATH=\"$AGY_HOME_1/bin:\$PATH:/home/asv-spb/.local/bin\"
+        agy
+        exec bash
+    "
+
+    gnome-terminal --window --title="AGY - Account 2" -- bash -c "
+        echo '--- AGY Аккаунт 2 ---'
+        export HOME=\"$AGY_HOME_2\"
+        export PATH=\"$AGY_HOME_2/bin:\$PATH:/home/asv-spb/.local/bin\"
+        agy
+        exec bash
+    "
+
+    echo "Готово!"
+}
+# --- End Antigravity Functions ---
