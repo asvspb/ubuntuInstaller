@@ -47,6 +47,7 @@ nvm alias default node
 # install latest python
 sudo apt install python3 python3-pip -y
 sudo pip3 install --upgrade pip
+pip3 install keyrings.alt --user --break-system-packages 2>/dev/null || pip3 install keyrings.alt --user
 
 # install vsc java
 sudo apt install code gcc default-jdk -y

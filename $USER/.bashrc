@@ -693,6 +693,8 @@ ztsw      - переключиться на другую ZT сеть (автом
 
 agy-reinstall - полная переустановка Antigravity
 2agy      - запустить 2 экземпляра agy в разных окнах
+agy1      - запустить agy под первым аккаунтом в текущем окне
+agy2      - запустить agy под вторым аккаунтом в текущем окне
 EOF
 }
 
@@ -783,34 +785,49 @@ except Exception:
     echo "Установка завершена! Перезапустите терминал или выполните source ~/.bashrc (или ~/.zshrc)"
 }
 
-2agy() {
-    local AGY_HOME_1="$HOME/.agy_account_1"
-    local AGY_HOME_2="$HOME/.agy_account_2"
+_setup_agy_home() {
+    local fake_home="$1"
+    mkdir -p "$fake_home"
+    for item in .ssh .gitconfig .bashrc .zshrc .bash_profile .profile; do
+        if [ -e "$HOME/$item" ] && [ ! -e "$fake_home/$item" ]; then
+            ln -s "$HOME/$item" "$fake_home/$item"
+        fi
+    done
 
-    mkdir -p "$AGY_HOME_1" "$AGY_HOME_2"
-
-    setup_fake_home() {
-        local fake_home="$1"
-        for item in .ssh .gitconfig .bashrc .zshrc .bash_profile .profile; do
-            if [ -e "$HOME/$item" ] && [ ! -e "$fake_home/$item" ]; then
-                ln -s "$HOME/$item" "$fake_home/$item"
-            fi
-        done
-
-        # Скрипт-обертка для браузера: временно возвращает настоящий HOME
-        mkdir -p "$fake_home/bin"
-        local browser_wrapper="$fake_home/bin/xdg-open"
+    # Скрипт-обертка для браузера: временно возвращает настоящий HOME
+    mkdir -p "$fake_home/bin"
+    local browser_wrapper="$fake_home/bin/xdg-open"
+    if [ ! -e "$browser_wrapper" ]; then
         echo '#!/bin/bash' > "$browser_wrapper"
         echo 'export HOME="/home/asv-spb"' >> "$browser_wrapper"
         echo 'exec /usr/bin/xdg-open "$@"' >> "$browser_wrapper"
         chmod +x "$browser_wrapper"
-        
-        # Симлинк на случай, если вызывается google-chrome напрямую
+    fi
+    
+    # Симлинк на случай, если вызывается google-chrome напрямую
+    if [ ! -e "$fake_home/bin/google-chrome" ]; then
         ln -sf "$browser_wrapper" "$fake_home/bin/google-chrome"
-    }
+    fi
+}
 
-    setup_fake_home "$AGY_HOME_1"
-    setup_fake_home "$AGY_HOME_2"
+agy1() {
+    local AGY_HOME="$HOME/.agy_account_1"
+    _setup_agy_home "$AGY_HOME"
+    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring command agy "$@"
+}
+
+agy2() {
+    local AGY_HOME="$HOME/.agy_account_2"
+    _setup_agy_home "$AGY_HOME"
+    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring command agy "$@"
+}
+
+2agy() {
+    local AGY_HOME_1="$HOME/.agy_account_1"
+    local AGY_HOME_2="$HOME/.agy_account_2"
+
+    _setup_agy_home "$AGY_HOME_1"
+    _setup_agy_home "$AGY_HOME_2"
 
     echo "Запускаем терминалы с agy..."
 
@@ -818,6 +835,7 @@ except Exception:
         echo '--- AGY Аккаунт 1 ---'
         export HOME=\"$AGY_HOME_1\"
         export PATH=\"$AGY_HOME_1/bin:\$PATH:/home/asv-spb/.local/bin\"
+        export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
         agy
         exec bash
     "
@@ -826,6 +844,7 @@ except Exception:
         echo '--- AGY Аккаунт 2 ---'
         export HOME=\"$AGY_HOME_2\"
         export PATH=\"$AGY_HOME_2/bin:\$PATH:/home/asv-spb/.local/bin\"
+        export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
         agy
         exec bash
     "
