@@ -790,6 +790,34 @@ except Exception:
     echo "Установка завершена! Перезапустите терминал или выполните source ~/.bashrc (или ~/.zshrc)"
 }
 
+_dbus_isolated_conf() {
+    local fake_home="$1"
+    local dbus_conf="$fake_home/.dbus-isolated.conf"
+    if [ ! -f "$dbus_conf" ]; then
+        cat > "$dbus_conf" << 'DBUSCONF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <!-- NO <standard_session_servicedirs/> — ключевой момент изоляции -->
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+    <allow user="*"/>
+  </policy>
+  <policy context="mandatory">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+DBUSCONF
+    fi
+}
+
 _setup_agy_home() {
     local fake_home="$1"
     mkdir -p "$fake_home"
@@ -799,7 +827,6 @@ _setup_agy_home() {
         fi
     done
 
-    # Скрипт-обертка для браузера: временно возвращает настоящий HOME
     mkdir -p "$fake_home/bin"
     local browser_wrapper="$fake_home/bin/xdg-open"
     if [ ! -e "$browser_wrapper" ]; then
@@ -808,35 +835,75 @@ _setup_agy_home() {
         echo 'exec /usr/bin/xdg-open "$@"' >> "$browser_wrapper"
         chmod +x "$browser_wrapper"
     fi
-    
-    # Симлинк на случай, если вызывается google-chrome напрямую
     if [ ! -e "$fake_home/bin/google-chrome" ]; then
         ln -sf "$browser_wrapper" "$fake_home/bin/google-chrome"
     fi
 
-    # Автоматическая установка keyrings.alt для работы PlaintextKeyring (чтобы проблема с хранилищем не повторилась)
+    _dbus_isolated_conf "$fake_home"
+
     if ! HOME="$fake_home" pip3 show keyrings.alt >/dev/null 2>&1; then
-        echo "Устанавливаем keyrings.alt для изолированного хранилища $fake_home..."
+        echo "Installing keyrings.alt for $fake_home..."
         HOME="$fake_home" pip3 install --quiet --user keyrings.alt || true
     fi
+}
+
+_start_isolated_dbus() {
+    local conf="$1"
+    local dbus_output
+    dbus_output=$(dbus-daemon --config-file="$conf" --print-address=1 --print-pid=1 --fork 2>/dev/null)
+    _ISOLATED_DBUS_ADDR=$(echo "$dbus_output" | head -1)
+    _ISOLATED_DBUS_PID=$(echo "$dbus_output" | sed -n '2p')
+    if [ -z "$_ISOLATED_DBUS_ADDR" ] || ! echo "$_ISOLATED_DBUS_ADDR" | grep -q '^unix:'; then
+        echo "ERROR: Failed to start isolated dbus-daemon" >&2
+        return 1
+    fi
+    return 0
+}
+
+_stop_isolated_dbus() {
+    [ -n "$_ISOLATED_DBUS_PID" ] && kill "$_ISOLATED_DBUS_PID" 2>/dev/null
+    _ISOLATED_DBUS_ADDR=""
+    _ISOLATED_DBUS_PID=""
 }
 
 agy1() {
     local AGY_HOME="$HOME/.agy_account_1"
     _setup_agy_home "$AGY_HOME"
-    export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
-    mkdir -p "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
-    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring dbus-run-session -- command agy "$@"
+    local _runtime="$AGY_HOME/.runtime"
+    mkdir -p "$_runtime"
+    chmod 700 "$_runtime"
+
+    if ! _start_isolated_dbus "$AGY_HOME/.dbus-isolated.conf"; then
+        return 1
+    fi
+
+    HOME="$AGY_HOME" \
+    PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    XDG_RUNTIME_DIR="$_runtime" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command agy "$@"
+
+    _stop_isolated_dbus
 }
 
 agy2() {
     local AGY_HOME="$HOME/.agy_account_2"
     _setup_agy_home "$AGY_HOME"
-    export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
-    mkdir -p "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
-    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring dbus-run-session -- command agy "$@"
+    local _runtime="$AGY_HOME/.runtime"
+    mkdir -p "$_runtime"
+    chmod 700 "$_runtime"
+
+    if ! _start_isolated_dbus "$AGY_HOME/.dbus-isolated.conf"; then
+        return 1
+    fi
+
+    HOME="$AGY_HOME" \
+    PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    XDG_RUNTIME_DIR="$_runtime" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command agy "$@"
+
+    _stop_isolated_dbus
 }
 
 2agy() {
@@ -846,32 +913,46 @@ agy2() {
     _setup_agy_home "$AGY_HOME_1"
     _setup_agy_home "$AGY_HOME_2"
 
-    echo "Запускаем терминалы с agy..."
+    echo "Starting isolated agy terminals..."
 
     gnome-terminal --window --title="AGY - Account 1" -- bash -c "
-        echo '--- AGY Аккаунт 1 ---'
+        echo '--- AGY Account 1 (isolated) ---'
         export HOME=\"$AGY_HOME_1\"
         export PATH=\"$AGY_HOME_1/bin:\$PATH:/home/asv-spb/.local/bin\"
-        export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
         export XDG_RUNTIME_DIR=\"$AGY_HOME_1/.runtime\"
         mkdir -p \"\$XDG_RUNTIME_DIR\"
         chmod 700 \"\$XDG_RUNTIME_DIR\"
-        dbus-run-session -- agy
+        _dbo=\$(dbus-daemon --config-file=\"$AGY_HOME_1/.dbus-isolated.conf\" --print-address=1 --print-pid=1 --fork 2>/dev/null)
+        _dba=\$(echo \"\$_dbo\" | head -1)
+        _dbp=\$(echo \"\$_dbo\" | sed -n '2p')
+        if [ -n \"\$_dba\" ] && echo \"\$_dba\" | grep -q '^unix:'; then
+            DBUS_SESSION_BUS_ADDRESS=\"\$_dba\" command agy
+            kill \"\$_dbp\" 2>/dev/null
+        else
+            echo 'ERROR: Failed to start isolated dbus-daemon'
+        fi
         exec bash
     "
 
     gnome-terminal --window --title="AGY - Account 2" -- bash -c "
-        echo '--- AGY Аккаунт 2 ---'
+        echo '--- AGY Account 2 (isolated) ---'
         export HOME=\"$AGY_HOME_2\"
         export PATH=\"$AGY_HOME_2/bin:\$PATH:/home/asv-spb/.local/bin\"
-        export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
         export XDG_RUNTIME_DIR=\"$AGY_HOME_2/.runtime\"
         mkdir -p \"\$XDG_RUNTIME_DIR\"
         chmod 700 \"\$XDG_RUNTIME_DIR\"
-        dbus-run-session -- agy
+        _dbo=\$(dbus-daemon --config-file=\"$AGY_HOME_2/.dbus-isolated.conf\" --print-address=1 --print-pid=1 --fork 2>/dev/null)
+        _dba=\$(echo \"\$_dbo\" | head -1)
+        _dbp=\$(echo \"\$_dbo\" | sed -n '2p')
+        if [ -n \"\$_dba\" ] && echo \"\$_dba\" | grep -q '^unix:'; then
+            DBUS_SESSION_BUS_ADDRESS=\"\$_dba\" command agy
+            kill \"\$_dbp\" 2>/dev/null
+        else
+            echo 'ERROR: Failed to start isolated dbus-daemon'
+        fi
         exec bash
     "
 
-    echo "Готово!"
+    echo "Done!"
 }
 # --- End Antigravity Functions ---
