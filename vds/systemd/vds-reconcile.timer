@@ -1,0 +1,10 @@
+[Unit]
+Description=Timer for VDS ZeroTier Network Reconciler
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=10s
+
+[Install]
+WantedBy=timers.target

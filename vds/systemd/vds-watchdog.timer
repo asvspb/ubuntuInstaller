@@ -1,0 +1,10 @@
+[Unit]
+Description=VDS ZeroTier Watchdog Timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

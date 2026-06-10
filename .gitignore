@@ -41,3 +41,10 @@ node_modules/
 .qodo
 .vscode
 .kilo
+
+# VDS Python artifacts
+vds/venv/
+vds/__pycache__/
+vds/**/__pycache__/
+vds/**/*.pyc
+vds/.kilo/

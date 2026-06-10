@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+echo -e "${BOLD}${CYAN}=== Команды управления сервером VDS ===${NC}"
+echo -e "${YELLOW}vds${NC}                   — Запуск главного интерактивного меню (TUI)"
+echo -e "${YELLOW}vds sysinfo${NC}           — Статус сервера (CPU, RAM, Docker, Disk)"
+echo -e "${YELLOW}vds server-setup${NC}      — Первичная настройка сервера"
+echo -e "${YELLOW}vds cleanup${NC}           — Системная очистка (кэш, Docker, логи)"
+echo ""
+echo -e "${BOLD}${CYAN}--- Управление ZeroTier ---${NC}"
+echo -e "${YELLOW}vds zerotier install${NC}  — Установить ZeroTier + ZTNET Panel"
+echo -e "${YELLOW}vds zerotier status${NC}   — Показать статус сетей, пиров и NAT"
+echo -e "${YELLOW}vds zerotier diagnose${NC} — Диагностика и авто-исправление ошибок"
+echo -e "${YELLOW}vds zerotier reconcile${NC}— Синхронизация сетей с topology.json"
+echo -e "${YELLOW}vds zerotier nat${NC}      — Восстановить правила NAT"
+echo -e "${YELLOW}vds zerotier add-network${NC}— Подключить новую сеть"
+echo -e "${YELLOW}vds zerotier watchdog${NC} — Запуск фонового мониторинга"
+echo -e "${YELLOW}vds zerotier cleanup${NC}  — Полное удаление ZeroTier + ZTNET"
+echo ""
+echo -e "${BOLD}${CYAN}--- Управление WireGuard ---${NC}"
+echo -e "${YELLOW}vds wireguard install${NC} — Установить WireGuard VPN сервер"
+echo -e "${YELLOW}vds wireguard add-client${NC}— Добавить нового клиента"
+echo -e "${YELLOW}vds wireguard remove${NC}  — Удалить WireGuard"
+echo ""
+echo -e "${BOLD}${CYAN}--- Управление Coturn (TURN) ---${NC}"
+echo -e "${YELLOW}vds coturn install${NC}    — Установить TURN сервер"
+echo -e "${YELLOW}vds coturn status${NC}     — Показать статус и конфигурацию TURN"
+echo -e "${YELLOW}vds coturn remove${NC}     — Удалить Coturn"
+echo ""
+echo -e "${BOLD}${CYAN}--- Полезные системные команды ---${NC}"
+echo -e "${YELLOW}docker ps${NC}               — Список запущенных контейнеры Docker"
+echo -e "${YELLOW}systemctl status docker${NC} — Статус службы Docker"
+echo -e "${YELLOW}htop${NC}                    — Мониторинг ресурсов в реальном времени"
+echo -e "${YELLOW}df -h${NC}                   — Использование дискового пространства"
+echo -e "${YELLOW}free -m${NC}                 — Статус оперативной памяти"
+echo ""
