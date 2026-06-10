@@ -85,11 +85,13 @@ log_message "HEADER" "Updating CODE CLI's..."
 log_message "INFO" "Installing/Updating CODE CLI tools..."
 
 # Install agy
-log_message "INFO" "Installing agy (Antigravity)..."
-if curl -fsSL https://antigravity.google/cli/install.sh | bash; then
-    log_message "SUCCESS" "agy installed successfully"
+log_message "INFO" "Installing/Updating agy (Antigravity)..."
+if curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh && bash /tmp/agy-install.sh; then
+    log_message "SUCCESS" "agy checked successfully"
+    rm -f /tmp/agy-install.sh
 else
-    log_message "ERROR" "Failed to install agy"
+    log_message "ERROR" "Failed to check agy"
+    rm -f /tmp/agy-install.sh
     exit 1
 fi
 
