@@ -865,6 +865,7 @@ _stop_isolated_dbus() {
 }
 
 agy1() {
+    set-title "GOLDEN project"
     local AGY_HOME="$HOME/.agy_account_1"
     _setup_agy_home "$AGY_HOME"
     export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
@@ -884,6 +885,7 @@ agy1() {
 }
 
 agy2() {
+    set-title "SILVER project"
     local AGY_HOME="$HOME/.agy_account_2"
     _setup_agy_home "$AGY_HOME"
     export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
@@ -904,8 +906,21 @@ agy2() {
 
 2agy() {
     echo "Starting isolated agy terminals..."
-    gnome-terminal --window --title="AGY - Account 1" -- zsh -ic "echo '--- AGY Account 1 (isolated) ---'; agy1; exec zsh"
-    gnome-terminal --window --title="AGY - Account 2" -- zsh -ic "echo '--- AGY Account 2 (isolated) ---'; agy2; exec zsh"
+    gnome-terminal --window --title="GOLDEN project" -- zsh -ic "echo '--- AGY Account 1 (isolated) ---'; agy1; exec zsh"
+    gnome-terminal --window --title="SILVER project" -- zsh -ic "echo '--- AGY Account 2 (isolated) ---'; agy2; exec zsh"
     echo "Done!"
 }
 # --- End Antigravity Functions ---
+
+# --- Terminal Title Function ---
+# Automatically added to rename terminal tabs
+set-title() {
+    printf "\033]0;%s\007" "$1"
+    if [ -n "$BASH_VERSION" ]; then
+        export PS1="\[\e]0;$1\a\]\u@\h:\w\$ "
+    elif [ -n "$ZSH_VERSION" ]; then
+        export PROMPT="%{\e]0;$1\a%}%n@%m:%~%# "
+    fi
+}
+# -------------------------------
+
