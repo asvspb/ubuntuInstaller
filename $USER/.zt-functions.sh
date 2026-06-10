@@ -497,38 +497,193 @@ ztd() {
 # Function to display help information.
 myhelp() {
     cat <<-'EOF'
-bigfiles    - покажет размеры самых больших файлов
-cls         - очистка от мусора
-code        - обновление vscode, js, py, gemini-cli, qwen-cli
-con1        - подключиться к удаленному серверу (root)
-con2        - подключиться к удаленному серверу (user)
-dns-xbox    - переключить DNS для Xbox
-dns-restore - восстановить DNS
-dns-status  - показать текущий DNS
-fzf         - консольный поисковик
-gca         - автокомит и пуш на репозиторий
-lan         - показывает список IP в локальной сети
-myip        - показывает текущий IP
-ncdu        - показывает размеры директорий
-nettest     - проверка пинга, опрос локальной сети, замер скорости интернета
-nmon        - миниторинг сетевых процессов
-obsid       - сохранение obsidian
-pbcopy      - скопировать в буфер обмена
-pbpaste     - вставить из буфера обмена
-ranger      - консольный файловый менеджер
-smon        - миниторинг процессов
-stt         - консольный замер скорости
-systart     - полный цикл: апгрейд, обновление инструментов, очистка
-sysupg      - апгрейд всей системы
-tldr        - упрощенный хелпер линукс
-trm         - сменить цветовую схему терминала (Gogh)
-zts         - показать текущий IP и статус ZeroTier
-ztup        - включить zerotier
-ztd         - выключить zerotier
-ztls        - показать статус zerotier и список сетей
-ztswitch    - сменить основную сеть: ztswitch <network_id>
-ztstop      - принудительно остановить все службы ZeroTier
-ztcleanup   - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
-ztsw        - переключиться на другую ZT сеть (автоматически)
+bigfiles       - покажет размеры самых больших файлов
+cls            - очистка от мусора
+code           - обновление vscode, js, py, gemini-cli, qwen-cli
+con1           - подключиться к удаленному серверу (root)
+con2           - подключиться к удаленному серверу (user)
+dns-xbox       - переключить DNS для Xbox
+dns-restore    - восстановить DNS
+dns-status     - показать текущий DNS
+fzf            - консольный поисковик
+gca            - автокомит и пуш на репозиторий
+lan            - показывает список IP в локальной сети
+myip           - показывает текущий IP
+ncdu           - показывает размеры директорий
+nettest        - проверка пинга, опрос локальной сети, замер скорости интернета
+nmon           - миниторинг сетевых процессов
+obsid          - сохранение obsidian
+pbcopy         - скопировать в буфер обмена
+pbpaste        - вставить из буфера обмена
+ranger         - консольный файловый менеджер
+smon           - миниторинг процессов
+stt            - консольный замер скорости
+systart        - полный цикл: апгрейд, обновление инструментов, очистка
+sysupg         - апгрейд всей системы
+tldr           - упрощенный хелпер линукс
+trm            - сменить цветовую схему терминала (Gogh)
+zts            - показать текущий IP и статус ZeroTier
+ztup           - включить zerotier
+ztd            - выключить zerotier
+ztls           - показать статус zerotier и список сетей (включая VDS-сети)
+ztswitch       - сменить основную сеть: ztswitch <network_id>
+ztstop         - принудительно остановить все службы ZeroTier
+ztcleanup      - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
+ztsw           - переключиться на другую ZT сеть (автоматически)
+zt_vds_networks - показать сети с VDS-сервера (~/.zt-vds-server)
+ztjoin_vds      - интерактивное подключение к сети VDS-сервера
 EOF
+}
+
+# =============================================================================
+# VDS Server Integration
+# Файл конфига: ~/.zt-vds-server  (содержимое: root@<server-ip>)
+# =============================================================================
+_zt_vds_server_file="$HOME/.zt-vds-server"
+
+_zt_get_vds_server() {
+    [[ -f "$_zt_vds_server_file" ]] && head -1 "$_zt_vds_server_file"
+}
+
+# Показать сети доступные на VDS-сервере
+zt_vds_networks() {
+    local server
+    server=$(_zt_get_vds_server)
+    if [[ -z "$server" ]]; then
+        echo "Нет VDS-сервера. Создайте ~/.zt-vds-server с содержимым: root@<ip>"
+        return 1
+    fi
+    echo "=== Сети на VDS-сервере ($server) ==="
+    ssh -o ConnectTimeout=5 -o BatchMode=yes "$server" \
+'python3 -c "
+import json, os, sys
+env_file = \"/opt/ztnet/.env.info\"
+topo_file = \"/opt/ztnet/topology.json\"
+env = {}
+if os.path.exists(env_file):
+    for line in open(env_file):
+        k, _, v = line.strip().partition(\"=\")
+        env[k] = v
+url = env.get(\"ZTNET_URL\", \"http://server:3000\")
+nets = {}
+if os.path.exists(topo_file):
+    data = json.load(open(topo_file))
+    for nid, net in data.get(\"networks\", {}).items():
+        nets[nid] = net
+if not nets:
+    print(\"Нет сетей в topology.json. Запустите: vds zerotier reconcile --init\")
+    sys.exit(1)
+for nid, net in sorted(nets.items()):
+    print(f\"  {nid}  {net.get(\"name\",\"\"):20s}  {net.get(\"role\",\"mesh\"):12s}  {net.get(\"subnet\",\"\"):18s}  авторизация: {url}\")
+" 2>/dev/null' 2>/dev/null \
+    || echo "Ошибка подключения к $server"
+}
+
+# Интерактивное подключение к сети VDS-сервера
+ztjoin_vds() {
+    local server
+    server=$(_zt_get_vds_server)
+    if [[ -z "$server" ]]; then
+        echo "Нет VDS-сервера. Создайте ~/.zt-vds-server с содержимым: root@<ip>"
+        return 1
+    fi
+
+    echo "=== Получение сетей с $server ==="
+    local nets_raw
+    nets_raw=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$server" \
+'python3 -c "
+import json, os
+env_file = \"/opt/ztnet/.env.info\"
+topo_file = \"/opt/ztnet/topology.json\"
+env = {}
+if os.path.exists(env_file):
+    for line in open(env_file):
+        k, _, v = line.strip().partition(\"=\")
+        env[k] = v
+url = env.get(\"ZTNET_URL\", \"\")
+nets = {}
+if os.path.exists(topo_file):
+    data = json.load(open(topo_file))
+    for nid, net in data.get(\"networks\", {}).items():
+        nets[nid] = net
+for nid in sorted(nets):
+    name = nets[nid].get(\"name\", nid)
+    role = nets[nid].get(\"role\", \"mesh\")
+    print(f\"{nid} {name} {role} {url}\")
+" 2>/dev/null' 2>/dev/null)
+
+    if [[ -z "$nets_raw" ]]; then
+        echo "Сети не найдены или нет подключения к $server"
+        return 1
+    fi
+
+    local -a nwids names roles urls
+    while IFS=' ' read -r nwid name role url; do
+        nwids+=("$nwid"); names+=("$name"); roles+=("$role"); urls+=("$url")
+    done <<< "$nets_raw"
+
+    echo ""
+    echo "Доступные сети на VDS-сервере:"
+    local i
+    for i in "${!nwids[@]}"; do
+        local cur_status="не подключена"
+        if sudo zerotier-cli listnetworks 2>/dev/null | grep -q "${nwids[$i]}"; then
+            cur_status=$(sudo zerotier-cli listnetworks 2>/dev/null | grep "${nwids[$i]}" | awk '{print $5}')
+        fi
+        printf "  %d. %-20s  %-18s  %-10s  [%s]\n" \
+            $((i+1)) "${names[$i]}" "${nwids[$i]}" "${roles[$i]}" "$cur_status"
+    done
+    echo ""
+
+    read -p "К какой сети подключиться? (номер, Enter — отмена): " choice
+    [[ -z "$choice" ]] && return 0
+
+    local idx=$((choice - 1))
+    if [[ $idx -lt 0 || $idx -ge ${#nwids[@]} ]]; then
+        echo "Неверный выбор."
+        return 1
+    fi
+
+    local nwid="${nwids[$idx]}"
+    local role="${roles[$idx]}"
+    local ztnet_url="${urls[$idx]}"
+    local server_host="${server#*@}"
+
+    echo "=== Подключение к ${names[$idx]} ($nwid) ==="
+    sudo zerotier-cli join "$nwid"
+
+    echo ""
+    echo "!!! Авторизуйте этот узел в ZTNET-панели: ${ztnet_url:-http://$server_host:3000}"
+    read -p "=== Нажмите Enter после авторизации ==="
+
+    local attempts=0
+    echo "=== Ожидание авторизации..."
+    while ! sudo zerotier-cli listnetworks 2>/dev/null | grep "$nwid" | grep -q "OK"; do
+        sleep 5
+        attempts=$((attempts + 1))
+        if [[ $attempts -gt 24 ]]; then
+            echo "Тайм-аут ожидания авторизации."
+            return 1
+        fi
+        echo "  Ожидание... (${attempts}x5s)"
+    done
+
+    echo "=== Успешно подключено: ${names[$idx]}!"
+
+    if [[ "$role" == "exit-node" ]]; then
+        read -p "=== Маршрутизировать ВЕСЬ трафик через эту сеть (VPN-режим)? [y/N]: " use_default
+        if [[ "$use_default" == "y" || "$use_default" == "Y" ]]; then
+            sudo zerotier-cli set "$nwid" allowDefault=1 > /dev/null
+            sudo zerotier-cli set "$nwid" allowDNS=1 > /dev/null
+            sudo zerotier-cli set "$nwid" allowGlobal=1 > /dev/null
+            _zt_set_default_network "$nwid"
+            _zt_save_gateway
+            _zt_save_server_ip
+            echo "=== Сеть установлена как маршрут по умолчанию (VPN активен)."
+        fi
+    fi
+
+    echo ""
+    echo "=== Текущие сети:"
+    sudo zerotier-cli listnetworks
 }
