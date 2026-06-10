@@ -111,6 +111,10 @@ def restart_container() -> bool:
 
     run(f"docker stop {CONTAINER} >/dev/null 2>&1")
     time.sleep(3)
+    
+    logger.info("Очистка зависших файлов блокировки (.pid и .port)...")
+    run("docker run --rm -v ztnet_zerotier:/zt alpine rm -f /zt/zerotier-one.pid /zt/zerotier-one.port >/dev/null 2>&1")
+    
     run(f"docker start {CONTAINER} >/dev/null 2>&1")
     logger.info("Контейнер перезапущен, ожидаем ONLINE...")
 
