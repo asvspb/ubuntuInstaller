@@ -84,12 +84,12 @@ log_message "INFO" "Node.js version after updates: $(node --version)"
 log_message "HEADER" "Updating CODE CLI's..."
 log_message "INFO" "Installing/Updating CODE CLI tools..."
 
-# Install @google/gemini-cli
-log_message "INFO" "Installing @google/gemini-cli@latest..."
-if npm install -g @google/gemini-cli@latest; then
-    log_message "SUCCESS" "@google/gemini-cli installed successfully"
+# Install agy
+log_message "INFO" "Installing agy (Antigravity)..."
+if curl -fsSL https://antigravity.google/cli/install.sh | bash; then
+    log_message "SUCCESS" "agy installed successfully"
 else
-    log_message "ERROR" "Failed to install @google/gemini-cli"
+    log_message "ERROR" "Failed to install agy"
     exit 1
 fi
 
