@@ -907,52 +907,9 @@ agy2() {
 }
 
 2agy() {
-    local AGY_HOME_1="$HOME/.agy_account_1"
-    local AGY_HOME_2="$HOME/.agy_account_2"
-
-    _setup_agy_home "$AGY_HOME_1"
-    _setup_agy_home "$AGY_HOME_2"
-
     echo "Starting isolated agy terminals..."
-
-    gnome-terminal --window --title="AGY - Account 1" -- bash -c "
-        echo '--- AGY Account 1 (isolated) ---'
-        export HOME=\"$AGY_HOME_1\"
-        export PATH=\"$AGY_HOME_1/bin:\$PATH:/home/asv-spb/.local/bin\"
-        export XDG_RUNTIME_DIR=\"$AGY_HOME_1/.runtime\"
-        mkdir -p \"\$XDG_RUNTIME_DIR\"
-        chmod 700 \"\$XDG_RUNTIME_DIR\"
-        _dbo=\$(dbus-daemon --config-file=\"$AGY_HOME_1/.dbus-isolated.conf\" --print-address=1 --print-pid=1 --fork 2>/dev/null)
-        _dba=\$(echo \"\$_dbo\" | head -1)
-        _dbp=\$(echo \"\$_dbo\" | sed -n '2p')
-        if [ -n \"\$_dba\" ] && echo \"\$_dba\" | grep -q '^unix:'; then
-            DBUS_SESSION_BUS_ADDRESS=\"\$_dba\" command agy
-            kill \"\$_dbp\" 2>/dev/null
-        else
-            echo 'ERROR: Failed to start isolated dbus-daemon'
-        fi
-        exec bash
-    "
-
-    gnome-terminal --window --title="AGY - Account 2" -- bash -c "
-        echo '--- AGY Account 2 (isolated) ---'
-        export HOME=\"$AGY_HOME_2\"
-        export PATH=\"$AGY_HOME_2/bin:\$PATH:/home/asv-spb/.local/bin\"
-        export XDG_RUNTIME_DIR=\"$AGY_HOME_2/.runtime\"
-        mkdir -p \"\$XDG_RUNTIME_DIR\"
-        chmod 700 \"\$XDG_RUNTIME_DIR\"
-        _dbo=\$(dbus-daemon --config-file=\"$AGY_HOME_2/.dbus-isolated.conf\" --print-address=1 --print-pid=1 --fork 2>/dev/null)
-        _dba=\$(echo \"\$_dbo\" | head -1)
-        _dbp=\$(echo \"\$_dbo\" | sed -n '2p')
-        if [ -n \"\$_dba\" ] && echo \"\$_dba\" | grep -q '^unix:'; then
-            DBUS_SESSION_BUS_ADDRESS=\"\$_dba\" command agy
-            kill \"\$_dbp\" 2>/dev/null
-        else
-            echo 'ERROR: Failed to start isolated dbus-daemon'
-        fi
-        exec bash
-    "
-
+    gnome-terminal --window --title="AGY - Account 1" -- bash -ic "echo '--- AGY Account 1 (isolated) ---'; agy1; exec bash"
+    gnome-terminal --window --title="AGY - Account 2" -- bash -ic "echo '--- AGY Account 2 (isolated) ---'; agy2; exec bash"
     echo "Done!"
 }
 # --- End Antigravity Functions ---

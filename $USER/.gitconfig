@@ -69,4 +69,4 @@
 	auto = 256
 
 [safe]
-	directory = /mnt/BASIC/Dev/
+	directory = ~/Dev/
