@@ -683,13 +683,16 @@ stt       - консольный замер скорости
 sysupg    - апгрейд всей системы
 systart   - полный цикл: апгрейд, обновление инструментов, очистка
 tldr      - упрощенный хелпер линукс
-ztup      - включить zerotier
-ztd       - выключить zerotier
-ztls      - показать статус zerotier и список сетей
-ztswitch  - сменить основную сеть: ztswitch <network_id>
-ztstop    - принудительно остановить все службы ZeroTier
-ztcleanup - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
-ztsw      - переключиться на другую ZT сеть (автоматически)
+zts            - показать текущий IP и статус ZeroTier
+ztup           - включить zerotier
+ztd            - выключить zerotier
+ztls           - показать статус zerotier и список сетей (включая VDS-сети)
+ztswitch       - сменить основную сеть: ztswitch <network_id>
+ztstop         - принудительно остановить все службы ZeroTier
+ztcleanup      - удалить мертвые сети (ACCESS_DENIED/NOT_FOUND)
+ztsw           - переключиться на другую ZT сеть (автоматически)
+zt_vds_networks - показать сети с VDS-сервера (~/.zt-vds-server)
+ztjoin_vds      - интерактивное подключение к сети VDS-сервера
 
 agy-reinstall - полная переустановка Antigravity
 2agy      - запустить 2 экземпляра agy в разных окнах
