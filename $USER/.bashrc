@@ -781,6 +781,11 @@ except Exception:
     fi
 
     echo "Начинаем установку Antigravity CLI..."
+    # Автоматическая установка keyrings.alt для работы PlaintextKeyring (чтобы проблема с хранилищем не повторилась)
+    if ! pip3 show keyrings.alt >/dev/null 2>&1; then
+        echo "Устанавливаем пакет keyrings.alt..."
+        pip3 install --quiet --user keyrings.alt || true
+    fi
     curl -fsSL https://antigravity.google/cli/install.sh | bash
     echo "Установка завершена! Перезапустите терминал или выполните source ~/.bashrc (или ~/.zshrc)"
 }
@@ -808,18 +813,30 @@ _setup_agy_home() {
     if [ ! -e "$fake_home/bin/google-chrome" ]; then
         ln -sf "$browser_wrapper" "$fake_home/bin/google-chrome"
     fi
+
+    # Автоматическая установка keyrings.alt для работы PlaintextKeyring (чтобы проблема с хранилищем не повторилась)
+    if ! HOME="$fake_home" pip3 show keyrings.alt >/dev/null 2>&1; then
+        echo "Устанавливаем keyrings.alt для изолированного хранилища $fake_home..."
+        HOME="$fake_home" pip3 install --quiet --user keyrings.alt || true
+    fi
 }
 
 agy1() {
     local AGY_HOME="$HOME/.agy_account_1"
     _setup_agy_home "$AGY_HOME"
-    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring command agy "$@"
+    export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring dbus-run-session -- command agy "$@"
 }
 
 agy2() {
     local AGY_HOME="$HOME/.agy_account_2"
     _setup_agy_home "$AGY_HOME"
-    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring command agy "$@"
+    export XDG_RUNTIME_DIR="$AGY_HOME/.runtime"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+    HOME="$AGY_HOME" PATH="$AGY_HOME/bin:$PATH:/home/asv-spb/.local/bin" PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring dbus-run-session -- command agy "$@"
 }
 
 2agy() {
@@ -836,7 +853,10 @@ agy2() {
         export HOME=\"$AGY_HOME_1\"
         export PATH=\"$AGY_HOME_1/bin:\$PATH:/home/asv-spb/.local/bin\"
         export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
-        agy
+        export XDG_RUNTIME_DIR=\"$AGY_HOME_1/.runtime\"
+        mkdir -p \"\$XDG_RUNTIME_DIR\"
+        chmod 700 \"\$XDG_RUNTIME_DIR\"
+        dbus-run-session -- agy
         exec bash
     "
 
@@ -845,7 +865,10 @@ agy2() {
         export HOME=\"$AGY_HOME_2\"
         export PATH=\"$AGY_HOME_2/bin:\$PATH:/home/asv-spb/.local/bin\"
         export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
-        agy
+        export XDG_RUNTIME_DIR=\"$AGY_HOME_2/.runtime\"
+        mkdir -p \"\$XDG_RUNTIME_DIR\"
+        chmod 700 \"\$XDG_RUNTIME_DIR\"
+        dbus-run-session -- agy
         exec bash
     "
 
