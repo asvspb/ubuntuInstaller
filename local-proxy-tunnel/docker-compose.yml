@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  proxy:
+    image: vimagick/tinyproxy
+    container_name: rutube_tinyproxy
+    ports:
+      - "8888:8888"
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: rutube_ngrok
+    restart: unless-stopped
+    depends_on:
+      - proxy
+    environment:
+      - NGROK_AUTHTOKEN=твой_токен_ngrok
+    command: "http proxy:8888"
