@@ -15,5 +15,5 @@ services:
     depends_on:
       - proxy
     environment:
-      - NGROK_AUTHTOKEN=твой_токен_ngrok
-    command: "http proxy:8888"
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: "http proxy:8888 --log=stdout"

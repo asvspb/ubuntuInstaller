@@ -75,9 +75,7 @@ ask_token() {
 }
 
 inject_token() {
-    source "$ENV_FILE"
-    sed -i "s/твой_токен_ngrok/${NGROK_AUTHTOKEN}/" "$COMPOSE_FILE"
-    ok "Токен внедрён в docker-compose.yml"
+    ok "Токен готов для использования в Docker Compose"
 }
 
 is_running() {
@@ -104,9 +102,27 @@ start_services() {
 
 wait_for_ngrok_url() {
     info "Ожидание URL туннеля от ngrok..."
+
+    if ! docker ps --format '{{.Names}}' | grep -q "rutube_ngrok" 2>/dev/null; then
+        err "Контейнер rutube_ngrok не запущен. Сначала запустите прокси-туннель (пункт 1)."
+        return 1
+    fi
+
     local url=""
     for i in $(seq 1 30); do
-        url=$(docker logs rutube_ngrok 2>&1 | grep -oP 'url=https://[a-zA-Z0-9\-]+\.ngrok-free\.app' | head -1 | sed 's/url=//')
+        local error_msg
+        error_msg=$(docker logs rutube_ngrok 2>&1 | grep -oP 'ERR_NGROK_\d+' | tail -1 || true)
+        if [[ -n "$error_msg" ]]; then
+            err "ngrok вернул ошибку: $error_msg"
+            docker logs rutube_ngrok 2>&1 | grep -i "error\|authentication failed" | tail -5 || true
+            echo ""
+            echo -e "  ${YELLOW}Возможные причины:${NC}"
+            echo "  - Неверный authtoken (обновите через пункт 6)"
+            echo "  - Токен получен здесь: https://dashboard.ngrok.com/get-started/your-authtoken"
+            return 1
+        fi
+
+        url=$(docker logs rutube_ngrok 2>&1 | grep -oP 'url=https://[a-zA-Z0-9\-]+\.ngrok[a-zA-Z0-9\-.]+' | head -1 | sed 's/url=//' || true)
         if [[ -n "$url" ]]; then
             break
         fi
@@ -114,11 +130,11 @@ wait_for_ngrok_url() {
     done
 
     if [[ -z "$url" ]]; then
-        warn "Не удалось автоматически получить URL. Проверьте логи:"
+        warn "Не удалось автоматически получить URL за 60 сек. Проверьте логи:"
         echo "  docker logs rutube_ngrok"
         echo ""
         echo "Или откройте панель ngrok: https://dashboard.ngrok.com/tunnels/agents"
-        return
+        return 1
     fi
 
     echo ""
