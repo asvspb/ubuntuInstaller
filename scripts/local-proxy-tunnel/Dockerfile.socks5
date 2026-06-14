@@ -1,0 +1,5 @@
+FROM serjs/go-socks5-proxy AS proxy
+FROM alpine:latest
+COPY --from=proxy /socks5 /usr/local/bin/socks5
+ENV REQUIRE_AUTH=false
+CMD while ! ip link show eth1; do sleep 1; done; ip route del default && ip route add default via 192.168.1.1 dev eth1 && socks5

@@ -29,6 +29,22 @@ services:
     networks:
       - default
 
+  socks5:
+    build:
+      context: .
+      dockerfile: Dockerfile.socks5
+    image: ruzone_proxy
+    container_name: ruzone_proxy
+    restart: unless-stopped
+    ports:
+      - "1080:1080"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      default:
+      physical_net:
+        ipv4_address: 192.168.1.198
+
 networks:
   default:
   physical_net:

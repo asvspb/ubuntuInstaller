@@ -27,6 +27,7 @@ ubuntuInstaller/
 | `6_zerotier-client.sh` | ZeroTier клиент + функции управления сетями |
 | `7_v2raya-proxy.sh` | Установка и настройка v2rayA прокси |
 | `8_vds-server.sh` | Инициализация нового VDS-сервера через VDS Orchestrator |
+| `9_local-proxy-tunnel.sh` | Локальный SOCKS5/Nginx прокси для обхода системного VPN |
 
 ## VDS Orchestrator (vds/)
 
@@ -85,6 +86,7 @@ bash ~/Dev/ubuntuInstaller/scripts/8_vds-server.sh
 | [PROGRAM_DESCRIPTIONS.md](doc/PROGRAM_DESCRIPTIONS.md) | Описания устанавливаемых программ |
 | [v2raya_guide.md](doc/v2raya_guide.md) | Руководство по v2rayA |
 | [antigravity-isolation.md](doc/antigravity-isolation.md) | Изолированное окружение AI-агента |
+| [local-proxy-tunnel.md](doc/local-proxy-tunnel.md) | Документация по локальному прокси (обход VPN) |
 
 ## Быстрый старт
 
