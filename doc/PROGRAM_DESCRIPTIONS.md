@@ -134,13 +134,14 @@
 - Grub Customizer, GParted, Synaptic, OpenRGB, UFW, Timeshift, Nala
 - Antigravity (автообновления от Google Cloud)
 - Warp Terminal
+- OnlyOffice Desktop Editors
 - AI CLI инструменты: @google/gemini-cli, cline, codebuff, @kilocode/cli, opencode-ai, freebuff
 - Speedtest CLI
 - WireGuard
 
 ### `scripts/4_snap-apps.sh`
 Установка Snap-пакетов из `ubuntu_snap_packages.txt`:
-- cups, bare, gnome-weather, onlyoffice-desktopeditors, stretchly, telegram-desktop, vlc, fbreader, okular, obsidian, color-picker, chromium
+- bare, gnome-weather, stretchly, telegram-desktop, vlc, fbreader, okular, obsidian, color-picker, chromium
 - mesa-2404 (только при наличии GPU NVIDIA)
 
 ### `scripts/5_samsung-printer-driver.sh`

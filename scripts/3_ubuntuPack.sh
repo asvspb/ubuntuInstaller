@@ -74,6 +74,13 @@ sudo apt install ./warp.deb -y
 rm warp.deb
 
 echo " "
+echo "Installing OnlyOffice Desktop Editors"
+echo "--------------------------------------------------------------"
+wget -O /tmp/onlyoffice.deb https://download.onlyoffice.com/install/desktop/editors/linux/onlyoffice-desktopeditors_amd64.deb
+sudo apt-get install -y /tmp/onlyoffice.deb
+rm /tmp/onlyoffice.deb
+
+echo " "
 echo "Installing code CLI's"
 echo "--------------------------------------------------------------"
 npm install -g @google/gemini-cli@latest cline@latest opencode-ai@latest

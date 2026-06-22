@@ -1,7 +1,5 @@
-cups
 bare
 gnome-weather
-onlyoffice-desktopeditors
 stretchly
 telegram-desktop
 vlc
