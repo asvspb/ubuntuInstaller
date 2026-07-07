@@ -153,6 +153,78 @@ _zt_wait_for_connectivity() {
     return 0
 }
 
+# Diagnose ZeroTier tunnel health. Called when ztup() times out so the user
+# can see WHY connectivity did not come up, instead of just a cryptic failure.
+_zt_diagnose_tunnel() {
+    printf "\n=== ZeroTier tunnel diagnostics ===\n"
+
+    # Service state
+    local svc
+    svc=$(systemctl is-active zerotier-one 2>/dev/null)
+    printf "  Service:           %s\n" "${svc:-unknown}"
+    if [[ "$svc" != "active" ]]; then
+        printf "  -> ZeroTier service is not running. Check: sudo systemctl status zerotier-one\n"
+        return 1
+    fi
+
+    # Node online status (ONLINE / OFFLINE / RELAY)
+    local info
+    info=$(sudo zerotier-cli info 2>/dev/null)
+    if [[ -n "$info" ]]; then
+        # info line: "200 info <nodeid> <version> <status>"
+        local node_status
+        node_status=$(echo "$info" | awk '{print $5}')
+        printf "  Node status:       %s\n" "${node_status:-unknown}"
+    else
+        printf "  Node status:       (zerotier-cli not responding)\n"
+    fi
+
+    # Active peers (latency != -1)
+    local active_peers=0
+    active_peers=$(sudo zerotier-cli listpeers 2>/dev/null | awk 'NR>2 && $4 != "-" && $4 != "-1" {c++} END{print c+0}')
+    printf "  Active peers:      %s\n" "$active_peers"
+    if [[ "$active_peers" -eq 0 ]]; then
+        printf "  -> No active peers. ZeroTier cannot reach root servers or any node.\n"
+    fi
+
+    # Networks
+    local nets
+    nets=$(sudo zerotier-cli listnetworks 2>/dev/null | awk 'NR>2 {print $1, $4, $5, $6}')
+    if [[ -n "$nets" ]]; then
+        printf "  Networks:\n"
+        echo "$nets" | while IFS=' ' read -r nwid name status dev; do
+            printf "    %-18s %-10s [%s]  %s\n" "$nwid" "${name}" "${status}" "${dev}"
+            if [[ "$status" == "ACCESS_DENIED" ]]; then
+                printf "      -> Authorize node at https://my.zerotier.com/network/%s\n" "$nwid"
+            fi
+        done
+    else
+        printf "  Networks:          (none joined)\n"
+    fi
+
+    # Default-route gateway reachability
+    local gw
+    gw=$(_zt_get_gateway)
+    if [[ -n "$gw" ]]; then
+        printf "  Saved gateway:     %s\n" "$gw"
+        local zt_dev
+        zt_dev=$(sudo zerotier-cli listnetworks 2>/dev/null | awk 'NR>2 && $5=="OK"{print $6; exit}')
+        if [[ -n "$zt_dev" ]]; then
+            if ping -c 1 -W 2 -I "$zt_dev" "$gw" >/dev/null 2>&1; then
+                printf "    Gateway ping:    OK\n"
+            else
+                printf "    Gateway ping:    FAIL (gateway %s unreachable via %s)\n" "$gw" "$zt_dev"
+                printf "    -> Exit-node may be down, or this node is not authorized on the controller.\n"
+            fi
+        fi
+    else
+        printf "  Saved gateway:     (none, run: ztswitch <network_id>)\n"
+    fi
+
+    printf "\n  Next steps: 'ztls' to list networks, 'ztsw' to switch, or check\n"
+    printf "  authorization at the ZeroTier controller for the saved default network.\n"
+}
+
 # Private helper function to wait for the public IP address to change.
 # This function is not intended to be called directly by the user.
 #
@@ -467,8 +539,14 @@ ztup() {
         return 0
     fi
 
-    echo "Stopping ZeroTier (connection failed)..."
-    sudo systemctl stop zerotier-one 2>/dev/null
+    # Public IP did not change within the timeout. Rather than killing the
+    # service (which left the node offline after every transient hiccup),
+    # leave ZeroTier running and show why the tunnel is not coming up.
+    # The user can inspect / switch / stop manually via ztls / ztsw / ztd.
+    echo ""
+    echo "Public IP did not change within ${_ZT_TIMEOUT_SECONDS} seconds."
+    echo "Leaving ZeroTier running for diagnosis."
+    _zt_diagnose_tunnel
     return 1
 }
 
