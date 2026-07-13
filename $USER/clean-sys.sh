@@ -63,12 +63,12 @@ SNAP_SET_RETAIN="${SNAP_SET_RETAIN:-1}"
 SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 
 NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-0}"
-NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-0}"
-CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-0}"
+NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-1}"
+CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-1}"
 
 FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 
-DOCKER_PRUNE="${DOCKER_PRUNE:-1}"
+DOCKER_PRUNE="${DOCKER_PRUNE:-0}"
 DOCKER_PRUNE_VOLUMES="${DOCKER_PRUNE_VOLUMES:-0}"
 # Расширенная безопасная очистка Docker (тонкая настройка)
 DOCKER_SAFE_PRUNE="${DOCKER_SAFE_PRUNE:-1}"
@@ -89,6 +89,7 @@ OLD_NODE_CLEAN="${OLD_NODE_CLEAN:-0}"
 CHROME_CACHE_CLEAN="${CHROME_CACHE_CLEAN:-1}"
 POETRY_CACHE_CLEAN="${POETRY_CACHE_CLEAN:-1}"
 COPILOT_CACHE_CLEAN="${COPILOT_CACHE_CLEAN:-1}"
+CLEAN_OLD_NODE_MODULES="${CLEAN_OLD_NODE_MODULES:-1}"
 
 log() { printf '%s %s %s\n' "$(date '+%F %T')" "$LOG_PREFIX" "$*"; }
 size_of() { du -sh "$1" 2>/dev/null | awk '{print $1}'; }
@@ -239,7 +240,7 @@ clean_chrome_model() {
 clean_vscode_caches() {
   [ "$CLEAN_VSCODE_CACHES" = "1" ] || return 0
   local base="$HOME/.config/Code"
-  for d in "WebStorage" "Cache" "CachedData" "CachedExtensionVSIXs"; do
+  for d in "WebStorage" "Cache" "CachedData" "CachedExtensionVSIXs" "User/workspaceStorage"; do
     trash_path "$base/$d"
   done
 }
@@ -656,6 +657,18 @@ clean_npm_cache_dir() {
   fi
 }
 
+clean_old_node_modules() {
+  [ "$CLEAN_OLD_NODE_MODULES" = "1" ] || return 0
+  log "Поиск и удаление старых node_modules (>30 дней без изменений) в ~/Dev..."
+  if [ -d "$HOME/Dev" ]; then
+    if [ "$DRY_RUN" = "1" ]; then
+      find "$HOME/Dev" -type d -name "node_modules" -prune -mtime +30 -exec echo "DRY-RUN: удалил бы {}" \;
+    else
+      find "$HOME/Dev" -type d -name "node_modules" -prune -mtime +30 -exec rm -rf {} + 2>/dev/null || true
+    fi
+  fi
+}
+
 flatpak_unused() {
   [ "$FLATPAK_UNUSED" = "1" ] || return 0
   if ! command -v flatpak >/dev/null 2>&1; then
@@ -780,6 +793,7 @@ clean_chrome_profile_cache
 clean_chrome_cache_full
 clean_poetry_cache
 clean_copilot_cache
+clean_old_node_modules
 
 # Системные шаги (по возможности без пароля sudo)
 vacuum_journal
@@ -794,8 +808,8 @@ clean_tmp_all
 clean_vartmp_all
 
 # Пакетные менеджеры/платформы (опционально)
-# npm_cache_ops  # отключено
-# clean_npm_cache_dir  # отключено
+npm_cache_ops
+clean_npm_cache_dir
 flatpak_unused
 # Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
 docker_prune_safe
