@@ -418,6 +418,96 @@ agy2() {
     gnome-terminal --window --title="SILVER project" -- zsh -ic "echo '--- AGY Account 2 (isolated) ---'; agy2; exec zsh"
     echo "Done!"
 }
+# --- OpenCode Isolated Functions ---
+oc1() {
+    set-title "OpenCode - Account 1"
+    local OC_HOME="$HOME/.oc_account_1"
+    _setup_agy_home "$OC_HOME"
+    export XDG_RUNTIME_DIR="$OC_HOME/.runtime"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+    if ! _start_isolated_dbus "$OC_HOME/.dbus-isolated.conf"; then return 1; fi
+
+    HOME="$OC_HOME" \
+    PATH="$OC_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command /home/asv-spb/.opencode/bin/opencode "$@"
+
+    _stop_isolated_dbus
+}
+
+oc2() {
+    set-title "OpenCode - Account 2"
+    local OC_HOME="$HOME/.oc_account_2"
+    _setup_agy_home "$OC_HOME"
+    export XDG_RUNTIME_DIR="$OC_HOME/.runtime"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+    if ! _start_isolated_dbus "$OC_HOME/.dbus-isolated.conf"; then return 1; fi
+
+    HOME="$OC_HOME" \
+    PATH="$OC_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command /home/asv-spb/.opencode/bin/opencode "$@"
+
+    _stop_isolated_dbus
+}
+
+2oc() {
+    echo "Starting isolated OpenCode terminals..."
+    local shell_cmd="bash"
+    [ -n "$ZSH_VERSION" ] && shell_cmd="zsh"
+    gnome-terminal --window --title="OpenCode - Account 1" -- $shell_cmd -ic "echo '--- OpenCode Account 1 (isolated) ---'; oc1; exec $shell_cmd"
+    gnome-terminal --window --title="OpenCode - Account 2" -- $shell_cmd -ic "echo '--- OpenCode Account 2 (isolated) ---'; oc2; exec $shell_cmd"
+    echo "Done!"
+}
+# --- End OpenCode Functions ---
+
+# --- Cline Isolated Functions ---
+cl1() {
+    set-title "Cline - Account 1"
+    local CL_HOME="$HOME/.cl_account_1"
+    _setup_agy_home "$CL_HOME"
+    export XDG_RUNTIME_DIR="$CL_HOME/.runtime"
+    mkdir -p "$CL_HOME/.runtime"
+    chmod 700 "$CL_HOME/.runtime"
+    if ! _start_isolated_dbus "$CL_HOME/.dbus-isolated.conf"; then return 1; fi
+
+    HOME="$CL_HOME" \
+    PATH="$CL_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command cline "$@"
+
+    _stop_isolated_dbus
+}
+
+cl2() {
+    set-title "Cline - Account 2"
+    local CL_HOME="$HOME/.cl_account_2"
+    _setup_agy_home "$CL_HOME"
+    export XDG_RUNTIME_DIR="$CL_HOME/.runtime"
+    mkdir -p "$CL_HOME/.runtime"
+    chmod 700 "$CL_HOME/.runtime"
+    if ! _start_isolated_dbus "$CL_HOME/.dbus-isolated.conf"; then return 1; fi
+
+    HOME="$CL_HOME" \
+    PATH="$CL_HOME/bin:$PATH:/home/asv-spb/.local/bin" \
+    DBUS_SESSION_BUS_ADDRESS="$_ISOLATED_DBUS_ADDR" \
+    command cline "$@"
+
+    _stop_isolated_dbus
+}
+
+2cl() {
+    echo "Starting isolated Cline terminals..."
+    local shell_cmd="bash"
+    [ -n "$ZSH_VERSION" ] && shell_cmd="zsh"
+    gnome-terminal --window --title="Cline - Account 1" -- $shell_cmd -ic "echo '--- Cline Account 1 (isolated) ---'; cl1; exec $shell_cmd"
+    gnome-terminal --window --title="Cline - Account 2" -- $shell_cmd -ic "echo '--- Cline Account 2 (isolated) ---'; cl2; exec $shell_cmd"
+    echo "Done!"
+}
+# --- End Cline Functions ---
+
 # --- End Antigravity Functions ---
 
 # --- Terminal Title Function ---
