@@ -550,11 +550,11 @@ cleanup_tmp_path() {
     return 0
   fi
   if sudo -n true 2>/dev/null; then
-    sudo find "$path" -xdev -type f -mtime +"$days" -delete || true
-    sudo find "$path" -mindepth 1 -xdev -type d -empty -delete || true
+    sudo find "$path" -mindepth 1 -path "$path/snap-private-tmp" -prune -o -path "$path/systemd-private-*" -prune -o -xdev -type f -mtime +"$days" -exec rm -f {} + || true
+    sudo find "$path" -mindepth 1 -path "$path/snap-private-tmp" -prune -o -path "$path/systemd-private-*" -prune -o -xdev -type d -empty -exec rmdir {} + 2>/dev/null || true
   else
-    find "$path" -xdev -type f -user "$(id -u)" -mtime +"$days" -delete || true
-    find "$path" -mindepth 1 -xdev -type d -user "$(id -u)" -empty -delete || true
+    find "$path" -mindepth 1 -path "$path/snap-private-tmp" -prune -o -path "$path/systemd-private-*" -prune -o -xdev -type f -user "$(id -u)" -mtime +"$days" -exec rm -f {} + || true
+    find "$path" -mindepth 1 -path "$path/snap-private-tmp" -prune -o -path "$path/systemd-private-*" -prune -o -xdev -type d -user "$(id -u)" -empty -exec rmdir {} + 2>/dev/null || true
   fi
 }
 
