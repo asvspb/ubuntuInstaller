@@ -49,7 +49,12 @@ else
 fi
 
 # --- 2. Ожидание полного закрытия Telegram ----------------------------
-while pgrep -x telegram-desktop >/dev/null 2>&1; do
+# Используем pgrep -f (по полному cmdline), а не -x: ядро урезает имя
+# процесса (comm) до 15 символов -> "telegram-desktop" не совпадает с
+# фактическим "telegram-deskto". Паттерн "telegram-desktop" безопасно
+# матчит только реальный клиент (/snap/telegram-desktop/...), но не саму
+# обёртку (telegram-clean.sh), а pgrep исключает собственный PID.
+while pgrep -f telegram-desktop >/dev/null 2>&1; do
   sleep 5
 done
 log "Telegram закрыт — начинается очистка."
