@@ -223,3 +223,21 @@
 *   **suld-driver2-1.00.39**: Драйвер для принтеров и МФУ Samsung.
 *   **VirtualBox**: Программное обеспечение для виртуализации.
 *   **mesa-2404**: Реализация графического API OpenGL (устанавливается при наличии видеокарты NVIDIA).
+
+## Пользовательские скрипты ($USER/)
+
+Скрипты из каталога `$USER/` разворачиваются симлинками в домашний каталог пользователя.
+
+### `$USER/clean-sys.sh`
+
+Глубокая безопасная очистка системы: кэши (`~/.cache`, Chrome, VS Code, puppeteer/playwright, huggingface, npm, mesa, thumbnails), корзина, журналы (`journalctl --vacuum`), отключённые snap-ревизии, apt-maintenance, tmp, Timeshift-снимки, опционально Docker prune и удаление ML-пакетов. Запуск: алиас `cls` (= `sudo ~/clean-sys.sh`). Поддерживает `DRY_RUN=1` и множество env-флагов для тонкой настройки.
+
+### `$USER/.local/bin/telegram-clean.sh`
+
+Обёртка-лаунчер Telegram Desktop. Запускает `/snap/bin/telegram-desktop`, а после полного закрытия приложения:
+
+- очищает кэш Telegram (`cache`, `media_cache`, `wvother`, `wvbots/cache`) — база аккаунта (`tdata/<account>`) и эмодзи не трогаются, сессия и история сохраняются;
+- опустошает пользовательскую корзину `~/.local/share/Trash`;
+- выполняет `sudo -n fstrim -v /` — физическое стирание свободных блоков на SSD, чтобы удалённые данные не подлежали восстановлению forensic-утилитами.
+
+Развёртывание: симлинк `~/.local/bin/telegram-clean.sh` → `$USER/.local/bin/telegram-clean.sh` (каталог уже в `$PATH` через `.bashrc`). Ярлык `$USER/.local/share/applications/telegram-desktop_telegram-desktop.desktop` переопределяет системный и запускает обёртку по клику на иконку Telegram. Лог: `~/.local/share/telegram-clean.log`. Конфигурация через env: `CLEAN_TG_CACHE`, `EMPTY_TRASH`, `DO_FSTRIM`, `DRY_RUN`, `TELEGRAM_TDATA`, `TRASH_DIR`.

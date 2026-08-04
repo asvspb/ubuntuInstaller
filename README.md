@@ -56,6 +56,22 @@ bash ~/Dev/ubuntuInstaller/scripts/8_vds-server.sh
 | `Templates/` | Шаблоны HTML, JS, Python, README |
 | `themes/` | Темы Ubuntu (BigSur, Graphite, Monterey, Ventoy-Dark) |
 | `OpenRGB/` | Скрипты и конфиги для OpenRGB |
+| `clean-sys.sh` | Глубокая очистка кэшей/корзины/журналов (симлинк `~/clean-sys.sh`, алиас `cls`) |
+| `.local/bin/telegram-clean.sh` | Обёртка-лаунчер Telegram: после закрытия чистит кэш TG + корзину и прогоняет `fstrim` |
+| `.local/share/applications/telegram-desktop_telegram-desktop.desktop` | Ярлык Telegram, запускающий обёртку вместо прямого `telegram-desktop` |
+
+### `telegram-clean.sh` — автоочистка после Telegram
+
+Обёртка над `/snap/bin/telegram-desktop`: запускает клиент, а после его полного закрытия
+
+1. удаляет кэш Telegram (`cache`, `media_cache`, `wvother`, `wvbots/cache`) — база аккаунта и эмодзи не трогаются;
+2. опустошает пользовательскую корзину `~/.local/share/Trash`;
+3. выполняет `sudo -n fstrim -v /` — физическое стирание свободных блоков на SSD, чтобы удалённое было невосстановимо.
+
+Развёртывание: симлинк `~/.local/bin/telegram-clean.sh` → `$USER/.local/bin/telegram-clean.sh`
+(каталог `~/.local/bin` уже в `$PATH` через `.bashrc`); ярлык в `~/.local/share/applications/`
+переопределяет системный `telegram-desktop_telegram-desktop.desktop`. Лог: `~/.local/share/telegram-clean.log`.
+Конфигурация через env: `CLEAN_TG_CACHE`, `EMPTY_TRASH`, `DO_FSTRIM`, `DRY_RUN`, `TELEGRAM_TDATA`, `TRASH_DIR`.
 
 ## ZeroTier (клиент)
 

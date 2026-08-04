@@ -1,0 +1,25 @@
+[Desktop Entry]
+X-SnapInstanceName=telegram-desktop
+Name=Telegram
+Comment=New era of messaging
+X-SnapAppName=telegram-desktop
+X-SnapCommonID=org.telegram.desktop
+# Запуск через обёртку telegram-clean.sh, которая после закрытия Telegram
+# очищает кэш + корзину и прогоняет fstrim (см. $USER/.local/bin/telegram-clean.sh).
+Exec=/home/asv-spb/.local/bin/telegram-clean.sh -- %U
+Icon=/snap/telegram-desktop/current/meta/gui/icon.png
+Terminal=false
+StartupWMClass=TelegramDesktop
+Type=Application
+Categories=Chat;Network;InstantMessaging;Qt;
+MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;
+Keywords=tg;chat;im;messaging;messenger;sms;tdesktop;
+Actions=quit;
+SingleMainWindow=true
+
+[Desktop Action quit]
+X-SnapAppName=telegram-desktop
+X-SnapCommonID=org.telegram.desktop
+Exec=/snap/bin/telegram-desktop -quit
+Name=Quit Telegram
+Icon=/snap/telegram-desktop/current/meta/gui/icon.png
