@@ -43,7 +43,7 @@ if [ -n "$ZSH_VERSION" ]; then
   SAVEHIST=20000
   # Prompt and completion
   setopt PROMPT_SUBST
-  autoload -Uz compinit && compinit
+  # autoload -Uz compinit && compinit # Initialized by zplug
   # Prompt: green user@host, blue cwd
   if [ -n "$debian_chroot" ]; then
     PROMPT="($debian_chroot)%F{green}%n@%m%f:%F{blue}%~%f$ "
@@ -68,7 +68,7 @@ if [ -n "$ZSH_VERSION" ]; then
     zplug romkatv/powerlevel10k, as:theme
 
     zplug "robbyrussell/oh-my-zsh", as:plugin, use:"lib/*.zsh"
-    zplug "plugins/archlinux",         from:oh-my-zsh
+    zplug "plugins/ubuntu",            from:oh-my-zsh
     zplug "plugins/colored-man-pages", from:oh-my-zsh
     zplug "plugins/colorize",          from:oh-my-zsh
     zplug "lib/completion",            from:oh-my-zsh
@@ -81,7 +81,7 @@ if [ -n "$ZSH_VERSION" ]; then
 
     zplug "zsh-users/zsh-autosuggestions"
     # zplug "zsh-users/zsh-syntax-highlighting"
-    zplug "zdharma/fast-syntax-highlighting"
+    zplug "zdharma-continuum/fast-syntax-highlighting"
     zplug "zsh-users/zsh-completions"
     zplug "zsh-users/zsh-history-substring-search"
     zplug "MichaelAquilina/zsh-you-should-use"
