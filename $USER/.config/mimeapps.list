@@ -1,0 +1,22 @@
+[Default Applications]
+text/html=zcode.desktop
+x-scheme-handler/http=google-chrome.desktop
+x-scheme-handler/https=google-chrome.desktop
+x-scheme-handler/about=google-chrome.desktop
+x-scheme-handler/unknown=google-chrome.desktop
+application/vnd.debian.binary-package=antigravity-url-handler.desktop
+text/markdown=org.gnome.gedit.desktop
+x-scheme-handler/antigravity=antigravity.desktop
+x-scheme-handler/zcode=zcode.desktop
+x-scheme-handler/tg=telegram-desktop_telegram-desktop.desktop
+x-scheme-handler/tonsite=telegram-desktop_telegram-desktop.desktop
+
+[Added Associations]
+application/vnd.debian.binary-package=snap-store_ubuntu-software-local-file.desktop;antigravity-url-handler.desktop;
+audio/x-scpls=code.desktop;
+application/json=org.gnome.gedit.desktop;
+text/markdown=dev.warp.Warp.desktop;onlyoffice-desktopeditors_onlyoffice-desktopeditors.desktop;org.gnome.gedit.desktop;
+application/octet-stream=code.desktop;
+application/pdf=onlyoffice-desktopeditors_onlyoffice-desktopeditors.desktop;dev.warp.Warp.desktop;
+text/plain=onlyoffice-desktopeditors_onlyoffice-desktopeditors.desktop;
+image/svg+xml=org.gnome.gedit.desktop;

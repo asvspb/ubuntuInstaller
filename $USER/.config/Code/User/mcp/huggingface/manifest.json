@@ -1,0 +1,1 @@
+{"id":"huggingface","name":"huggingface","displayName":"Hugging Face","description":"Access models, datasets, and Spaces on the Hugging Face Hub.","publisher":"huggingface","publisherDisplayName":"Hugging Face","codicon":"codicon-hubot","manifest":{"remotes":[{"url":"https://hf.co/mcp"}]}}

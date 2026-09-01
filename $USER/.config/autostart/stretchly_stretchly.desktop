@@ -8,3 +8,4 @@ Icon=/snap/stretchly/42/meta/gui/icon.png
 StartupWMClass=Stretchly
 Comment=The break time reminder app
 Categories=Utility;
+X-GNOME-Autostart-enabled=false

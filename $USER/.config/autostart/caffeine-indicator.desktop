@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Exec=/usr/bin/caffeine-indicator
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=false
+Name[en_US]=caffein indicator
+Name=caffein indicator
+Comment[en_US]=
+Comment=

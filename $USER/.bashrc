@@ -526,3 +526,9 @@ set-title() {
 }
 # -------------------------------
 
+
+# kimi-code
+export PATH="/home/asv-spb/.kimi-code/bin:$PATH"
+
+# opencode
+export PATH=/home/asv-spb/.oc_account_1/.opencode/bin:$PATH

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=FlClashX
+Comment=FlClashX startup script
+Exec=/tmp/.mount_FlClasv2riF4/FlClashX
+StartupNotify=false
+Terminal=false

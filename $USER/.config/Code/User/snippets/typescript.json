@@ -1,0 +1,16 @@
+{
+    "console.log": {
+        "prefix": "ts-cl",
+        "body": [
+            "console.log();"
+        ],
+        "description": "console.log"
+    },
+    "console.dir": {
+        "prefix": "ts-cd",
+        "body": [
+            "console.dir();"
+        ],
+        "description": "console.dir"
+    },
+}

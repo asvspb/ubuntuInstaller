@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "timestamp": 1693952794,
+    "timestamp": 1787550272,
     "workspace": {
         "0": [
             [
@@ -8,7 +8,7 @@
                     "panes": [
                         {
                             "type": "term",
-                            "directory": "/home/asv-spb",
+                            "directory": "/home/asv-spb/Dev/my-coding/repair-calc/docs",
                             "custom_colors": {
                                 "fg_color": null,
                                 "bg_color": null,
@@ -16,7 +16,52 @@
                             }
                         }
                     ],
-                    "label": "asv-spb",
+                    "label": "repair-calc",
+                    "custom_label_set": false
+                },
+                {
+                    "panes": [
+                        {
+                            "type": "term",
+                            "directory": "/home/asv-spb/Dev/my-coding/kino-club",
+                            "custom_colors": {
+                                "fg_color": null,
+                                "bg_color": null,
+                                "palette": null
+                            }
+                        }
+                    ],
+                    "label": "kino-club",
+                    "custom_label_set": false
+                },
+                {
+                    "panes": [
+                        {
+                            "type": "term",
+                            "directory": "/home/asv-spb/Dev/my-coding/private-cinema",
+                            "custom_colors": {
+                                "fg_color": null,
+                                "bg_color": null,
+                                "palette": null
+                            }
+                        }
+                    ],
+                    "label": "private-cinema",
+                    "custom_label_set": false
+                },
+                {
+                    "panes": [
+                        {
+                            "type": "term",
+                            "directory": "/home/asv-spb/Dev/my-coding/kolumbaZHKH",
+                            "custom_colors": {
+                                "fg_color": null,
+                                "bg_color": null,
+                                "palette": null
+                            }
+                        }
+                    ],
+                    "label": "kolumbaZHKH",
                     "custom_label_set": false
                 },
                 {

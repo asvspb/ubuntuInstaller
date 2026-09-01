@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # deploy-dotfiles.sh — Автоматическое развертывание пользовательских конфигов
-#                      из папки $USER/ в домашнюю директорию $HOME
+#                      из папки $USER/ в домашнюю директорию $HOME + dconf GNOME
 # ==============================================================================
 set -e
 
@@ -38,8 +38,8 @@ backup_and_link() {
     cp -rf "$src" "$dest"
 }
 
-info "1. Развертывание базовых shell-конфигураций (.bashrc, .zshrc, .zt-functions.sh)"
-for file in .bashrc .zshrc .zt-functions.sh .gitconfig; do
+info "1. Развертывание базовых shell-конфигураций (.bashrc, .zshrc, .zt-functions.sh, .gitconfig)"
+for file in .bashrc .zshrc .zt-functions.sh .gitconfig .p10k.zsh; do
     if [[ -f "$USER_DIR/$file" ]]; then
         backup_and_link "$USER_DIR/$file" "$HOME/$file"
         success "Синхронизирован: ~/$file"
@@ -52,7 +52,6 @@ for script in clean-sys.sh code-updater.sh dns-switch.sh; do
     if [[ -f "$USER_DIR/$script" ]]; then
         backup_and_link "$USER_DIR/$script" "$HOME/.local/bin/$script"
         chmod +x "$HOME/.local/bin/$script"
-        # Симлинк в корень домашней директории для привычных алиасов
         ln -sf "$HOME/.local/bin/$script" "$HOME/$script"
         success "Установлен скрипт: ~/.local/bin/$script"
     fi
@@ -78,7 +77,13 @@ if [[ -d "$USER_DIR/.config" ]]; then
     success "Конфигурации ~/.config успешно обновлены!"
 fi
 
-info "5. Развертывание шрифтов (~/.fonts/) и шаблонов (~/Templates/)"
+info "5. Развертывание настроек десктопа GNOME (Док, тема, иконки, горячие клавиши)"
+if [[ -f "$USER_DIR/.config/dconf/gnome-desktop.dconf" ]] && command -v dconf &>/dev/null; then
+    dconf load /org/gnome/ < "$USER_DIR/.config/dconf/gnome-desktop.dconf" 2>/dev/null || true
+    success "Параметры десктопа GNOME (док, темы, ярлыки) успешно применены!"
+fi
+
+info "6. Развертывание шрифтов (~/.fonts/) и шаблонов (~/Templates/)"
 if [[ -d "$USER_DIR/.fonts" ]]; then
     mkdir -p "$HOME/.fonts"
     cp -rf "$USER_DIR/.fonts/"* "$HOME/.fonts/"
@@ -102,6 +107,14 @@ if [[ -d "$USER_DIR/Dev" ]]; then
     mkdir -p "$HOME/Dev"
     cp -rf "$USER_DIR/Dev/"* "$HOME/Dev/"
     success "Профили VS Code скопированы в ~/Dev/"
+fi
+
+info "7. Установка расширений VS Code (если доступен code)"
+if command -v code &>/dev/null && [[ -f "$USER_DIR/Dev/vscode-extensions.txt" ]]; then
+    while IFS= read -r ext; do
+        [[ -n "$ext" ]] && code --install-extension "$ext" --force 2>/dev/null || true
+    done < "$USER_DIR/Dev/vscode-extensions.txt"
+    success "Плагины VS Code успешно установлены!"
 fi
 
 echo

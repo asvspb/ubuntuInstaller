@@ -9,8 +9,8 @@
 	windowMemory = 2047m
 
 [user]
-	email = asvdevpro@gmail.com
-	name = asv-spb
+	email = bot@example.com
+	name = AI Bot
 
 [cola]
 	spellcheck = false
@@ -69,4 +69,7 @@
 	auto = 256
 
 [safe]
-	directory = ~/Dev/
+	directory = /mnt/BASIC/Dev/my-coding/zerotier-via-docker
+	directory = /mnt/BASIC/Dev/my-coding/trae/warandpeace
+[credential]
+	helper = store

@@ -1,0 +1,113 @@
+{
+    "Подключение шрифтов": {
+        "prefix": "css-@ff",
+        "body": [
+            "@font-face {",
+            "  font-family: \"$1\";",
+            "  src:  url(\"$2\") format(\"woff2\"),",
+            "        url(\"$3\") format(\"woff\");",
+            "  font-weight: $4;",
+            "  font-style: $5;",
+            "  font-display: swap;",
+            "}"
+        ],
+        "description": "Подключение шрифтов"
+    },
+    "Граница бокса": {
+        "prefix": "css-bb1",
+        "body": [
+            "border: 1px solid red;"
+        ],
+        "description": "Граница бокса"
+    },
+    "Обнуление корневое": {
+        "prefix": "css-null",
+        "body": [
+            "padding: 0;",
+            "margin: 0;",
+            "box-sizing: border-box;",
+        ],
+        "description": "Граница бокса"
+    },
+    "Центрование маржином": {
+        "prefix": "css-m00",
+        "body": [
+            "margin: 0 auto;"
+        ],
+        "description": "margin-center"
+    },
+    "Flex-pack": {
+        "prefix": "css-dfl",
+        "body": [
+            "  display: -webkit-flex;",
+            "  display: -moz-flex;",
+            "  display: -ms-flexbox;",
+            "  display: -o-flex;",
+            "  display: flex;"
+        ],
+        "description": "Flex-pack"
+    },
+    "Font-pack": {
+        "prefix": "css-ftp",
+        "body": [
+            "  font-family: $1;",
+            "  font-style: $2;",
+            "  font-weight: $3;",
+            "  line-height: none;",
+            "  text-transform: none;",
+            "  text-decoration: none;",
+            "  color: #000;"
+        ],
+        "description": "Font-pack"
+    },
+    "Pos-ablolute-center": {
+        "prefix": "css-pac1",
+        "body": [
+            "  position: absolute;",
+            "  z-index: 3;",
+            "  left: 0;",
+            "  top: 0;",
+            "  bottom: 0;",
+            "  right: 0;",
+            "  margin: 0 auto;"
+        ],
+        "description": "Pos-ablolute-center"
+    },
+    "Block form": {
+        "prefix": "css-dbl",
+        "body": [
+            "  display: block;",
+            "  width: $1;",
+            "  height: $2;",
+            "  background-color: rgb(151, 151, 151);"
+        ],
+        "description": "Block form"
+    },
+    "Position absolute center": {
+        "prefix": "css-pac2",
+        "body": [
+            "    position: absolute;",
+            "    top: 50%;",
+            "    left: 50%;",
+            "    margin-right: -50%;",
+            "    transform: translate(-50%, -50%);",
+            "    -webkit-transform: translate(-50%, -50%);",
+            "    -moz-transform: translate(-50%, -50%);",
+            "    -ms-transform: translate(-50%, -50%);",
+            "    -o-transform: translate(-50%, -50%);"
+        ],
+        "description": "Position absolute center"
+    },
+    "Wrapper": {
+        "prefix": "css-wraper1",
+        "body": [
+            "    display: flex;",
+            "    flex-direction: column;",
+            "    justify-content: center;",
+            "    align-items: center;",
+            "    max-width: 1200px;",
+            "    margin: 0 auto;"
+        ],
+        "description": "Wrapper"
+    },
+}

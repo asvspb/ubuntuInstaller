@@ -7,3 +7,4 @@ StartupNotify=true
 Terminal=false
 Type=Application
 Exec=/usr/bin/openrgb --startminimized --profile "hackTrick"
+X-GNOME-Autostart-enabled=false

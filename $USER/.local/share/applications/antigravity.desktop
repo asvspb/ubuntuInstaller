@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Antigravity
+Comment=Antigravity Application
+Exec=/home/asv-spb/.local/share/Antigravity-x64/antigravity %u
+Icon=/home/asv-spb/.local/share/Antigravity-x64/icon.png
+Terminal=false
+Type=Application
+Categories=Utility;Development;
+StartupWMClass=antigravity
+MimeType=x-scheme-handler/antigravity;text/html;

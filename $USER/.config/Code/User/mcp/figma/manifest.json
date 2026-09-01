@@ -1,0 +1,1 @@
+{"id":"figma","name":"figma","displayName":"Figma","description":"Extract UI content and generate code from Figma designs.","publisher":"figma","publisherDisplayName":"Figma","codicon":"codicon-symbol-color","manifest":{"remotes":[{"url":"http://127.0.0.1:3845/sse"}]}}

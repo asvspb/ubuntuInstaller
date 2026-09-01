@@ -1,0 +1,24 @@
+{
+	"Quasar-base-template": {
+	"prefix": "vue-qq",
+	"body": [
+		"<template>",
+		"  <q-layout>",
+		"    <q-page>",
+		"    </q-page>",
+		"  </q-layout>",
+		"</template>",
+		"",
+		"<script lang='ts'>",
+		"import { Vue } from 'vue-class-component';",
+		"export default class Home extends Vue { }",
+		"</script>",
+		"",
+		"<style scoped lang=\"sass\">",
+		"</style>",
+		""
+	],
+	"description": "Quasar-base-template"
+},
+
+}
