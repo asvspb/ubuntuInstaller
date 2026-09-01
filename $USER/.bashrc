@@ -374,7 +374,33 @@ _stop_isolated_dbus() {
     _ISOLATED_DBUS_PID=""
 }
 
+_check_vpn_active() {
+    local zt_active=0
+    local wg_active=0
+
+    # Проверка ZeroTier (по статусу CLI или активным интерфейсам zt*)
+    if sudo -n zerotier-cli status 2>/dev/null | grep -q "ONLINE" || ip -br link show 2>/dev/null | grep -qE "^zt.*(UP|UNKNOWN)"; then
+        zt_active=1
+    fi
+
+    # Проверка WireGuard (по wg show или активным интерфейсам wg*)
+    if sudo -n wg show 2>/dev/null | grep -q "interface" || ip -br link show 2>/dev/null | grep -qE "^wg.*(UP|UNKNOWN)"; then
+        wg_active=1
+    fi
+
+    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ]; then
+        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m ZeroTier и WireGuard ДЕАКТИВИРОВАНЫ!" >&2
+        echo -e "Запуск Antigravity отменен для предотвращения утечки прямого IP." >&2
+        echo -e "Для запуска включите ZeroTier (команда: \033[1;32mztup\033[0m) или WireGuard." >&2
+        return 1
+    fi
+
+    return 0
+}
+
+
 agy1() {
+    if ! _check_vpn_active; then return 1; fi
     set-title "GOLDEN project"
     local AGY_HOME="$HOME/.agy_account_1"
     _setup_agy_home "$AGY_HOME"
@@ -396,6 +422,7 @@ agy1() {
 }
 
 agy2() {
+    if ! _check_vpn_active; then return 1; fi
     set-title "SILVER project"
     local AGY_HOME="$HOME/.agy_account_2"
     _setup_agy_home "$AGY_HOME"
@@ -417,6 +444,7 @@ agy2() {
 }
 
 2agy() {
+    if ! _check_vpn_active; then return 1; fi
     echo "Starting isolated agy terminals..."
     gnome-terminal --window --title="GOLDEN project" -- bash -ic "echo '--- AGY Account 1 (isolated) ---'; agy1; exec bash"
     gnome-terminal --window --title="SILVER project" -- bash -ic "echo '--- AGY Account 2 (isolated) ---'; agy2; exec bash"
