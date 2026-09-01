@@ -1,78 +1,75 @@
 #!/bin/bash
-
+# ==============================================================================
+# 1_ubuntuStart.sh — Базовая настройка системы, sudo, часов и основных утилит
+# ==============================================================================
 set -e
 
-echo " "
-echo "Setting up passwords"
-echo "--------------------------------------------------------------"
+C_RESET="\033[0m"
+C_GREEN="\033[1;32m"
+C_BLUE="\033[1;34m"
 
-# so that it does not ask for a password with sudo
-echo "${USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-nopasswd
+info()    { echo -e "\n${C_BLUE}[ИНФО]${C_RESET} $*"; }
+success() { echo -e "${C_GREEN}[УСПЕХ]${C_RESET} $*"; }
+
+TARGET_USER="${SUDO_USER:-$USER}"
+
+info "1. Настройка прав sudo (без запроса пароля)"
+echo "${TARGET_USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-nopasswd >/dev/null
 sudo chmod 0440 /etc/sudoers.d/90-nopasswd
+success "Sudo без пароля настроен для ${TARGET_USER}"
 
-# so that it does not wait for confirmation during installation
+info "2. Отключение интерактивных пауз при обновлениях (needrestart & debconf)"
 export DEBIAN_FRONTEND=noninteractive
-if [ -f /etc/needrestart/needrestart.conf ]; then
-  # Update existing config file
-  sudo sed -i '/\$nrconf{restart}/s/^#//g' /etc/needrestart/needrestart.conf
-  sudo sed -i "/nrconf{restart}/s/'i'/'a'/g" /etc/needrestart/needrestart.conf
-else
-  # Create new config file
-  sudo mkdir -p /etc/needrestart
-  cat <<EOF | sudo tee /etc/needrestart/needrestart.conf
-$nrconf{restart} = 'a'
-EOF
-fi
+sudo mkdir -p /etc/needrestart
+cat << 'NR_EOF' | sudo tee /etc/needrestart/needrestart.conf >/dev/null
+$nrconf{restart} = 'a';
+NR_EOF
 
-# so that it does not ask for authenticity of host gitlab.com
-mkdir -p ~/.ssh
-chmod 0700 ~/.ssh
-cat <<EOF > ~/.ssh/config
+info "3. Базовая настройка SSH для GitLab/GitHub"
+mkdir -p ~/.ssh && chmod 0700 ~/.ssh
+if [[ ! -f ~/.ssh/config ]] || ! grep -q "Host gitlab.com" ~/.ssh/config 2>/dev/null; then
+    cat << 'SSH_EOF' >> ~/.ssh/config
 Host gitlab.com
   StrictHostKeyChecking no
   UserKnownHostsFile=/dev/null
-EOF
+Host github.com
+  StrictHostKeyChecking accept-new
+SSH_EOF
+    chmod 0600 ~/.ssh/config
+fi
 
-echo " "
-echo "Setting the time"
-echo "--------------------------------------------------------------"
-sudo timedatectl set-local-rtc 1 --adjust-system-clock
-sudo timedatectl
+info "4. Настройка аппаратных часов (UTC)"
+sudo timedatectl set-local-rtc 0 --adjust-system-clock 2>/dev/null || sudo timedatectl set-local-rtc 0 || true
 
-echo " "
-echo "Setting the snap refresh to 2 revisions"
-echo "--------------------------------------------------------------"
-sudo snap set system refresh.retain=2
+info "5. Оптимизация Snap (хранить не более 2 ревизий пакетов)"
+sudo snap set system refresh.retain=2 2>/dev/null || true
 
-# minimize application on click in the dock
-gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize'
+info "6. Настройка GNOME Dock (сворачивание окон по клику)"
+gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'minimize' 2>/dev/null || true
 
-echo "                                                              "
-echo "Installing system applications"
-echo "--------------------------------------------------------------"
+info "7. Обновление репозиториев и установка системных утилит"
 sudo apt update -y
-sudo apt-get install git gh mc tmux zsh mosh curl wget ca-certificates net-tools make apt-transport-https gpg gnupg -y
+sudo apt install -y git gh mc tmux zsh mosh curl wget ca-certificates \
+    net-tools make apt-transport-https gpg gnupg software-properties-common \
+    dconf-editor gnome-tweaks ubuntu-restricted-extras
 
-echo "                                                              "
-echo "install gnome extensions"
-echo "--------------------------------------------------------------"
-sudo apt install dconf-editor gnome-shell-extensions gnome-tweaks ubuntu-restricted-extras -y
+info "8. Установка Google Chrome"
+if ! command -v google-chrome &>/dev/null; then
+    wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb
+    sudo apt install -y /tmp/google-chrome.deb
+    rm -f /tmp/google-chrome.deb
+    success "Google Chrome успешно установлен!"
+else
+    success "Google Chrome уже установлен."
+fi
 
-echo "                                                              "
-echo "Installing telegram"
-echo "--------------------------------------------------------------"
-snap install telegram-desktop 2>/dev/null || sudo snap install telegram-desktop
+info "9. Установка Telegram Desktop"
+if ! command -v telegram-desktop &>/dev/null; then
+    sudo snap install telegram-desktop || true
+    success "Telegram Desktop установлен!"
+fi
 
-echo "                                                              "
-echo "Installing Chrome"
-echo "--------------------------------------------------------------"
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo dpkg -i ./google-chrome*.deb
-sudo apt-get install -f
-sudo rm ./google-chrome*.deb
-
-sudo apt -f install
-
-echo "                                                              "
-echo "You can copy system files to: /$HOME"
-echo "--------------------------------------------------------------"
+echo
+success "======================================================================="
+success " Шаг 1 успешно завершен! Переходите к 2_ubuntuDocker.sh или install.sh"
+success "======================================================================="
