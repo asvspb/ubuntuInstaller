@@ -57,6 +57,31 @@ sudo apt install -y bat || true
 mkdir -p ~/.local/bin
 if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
     ln -sf "$(which batcat)" ~/.local/bin/bat
+    sudo ln -sf "$(which batcat)" /usr/local/bin/bat 2>/dev/null || true
+fi
+
+# Установка git-delta (красивые diff-ы для git)
+if ! command -v delta &>/dev/null; then
+    DELTA_DEB_URL=$(curl -s https://api.github.com/repos/dandavison/delta/releases/latest | grep "browser_download_url.*_amd64.deb" | head -n 1 | cut -d '"' -f 4)
+    if [[ -n "$DELTA_DEB_URL" ]]; then
+        wget -q "$DELTA_DEB_URL" -O /tmp/git-delta.deb && sudo dpkg -i /tmp/git-delta.deb && rm -f /tmp/git-delta.deb || true
+    fi
+fi
+
+# Установка eza (современная замена ls)
+if ! command -v eza &>/dev/null; then
+    EZA_TAR_URL=$(curl -s https://api.github.com/repos/eza-community/eza/releases/latest | grep "browser_download_url.*x86_64-unknown-linux-gnu.tar.gz" | head -n 1 | cut -d '"' -f 4)
+    if [[ -n "$EZA_TAR_URL" ]]; then
+        wget -q "$EZA_TAR_URL" -O /tmp/eza.tar.gz && tar -xzf /tmp/eza.tar.gz -C /tmp && sudo install -m 755 /tmp/eza /usr/local/bin/eza && rm -f /tmp/eza* || true
+    fi
+fi
+
+# Установка yazi (современный файловый менеджер)
+if ! command -v yazi &>/dev/null; then
+    YAZI_ZIP_URL=$(curl -s https://api.github.com/repos/sxyazi/yazi/releases/latest | grep "browser_download_url.*x86_64-unknown-linux-musl.zip" | head -n 1 | cut -d '"' -f 4)
+    if [[ -n "$YAZI_ZIP_URL" ]]; then
+        wget -q "$YAZI_ZIP_URL" -O /tmp/yazi.zip && unzip -q /tmp/yazi.zip -d /tmp && sudo install -m 755 /tmp/yazi-*/yazi /usr/local/bin/yazi && sudo install -m 755 /tmp/yazi-*/ya /usr/local/bin/ya && rm -rf /tmp/yazi* || true
+    fi
 fi
 
 info "3. Настройка окружения Node.js (через NVM)"
@@ -92,7 +117,35 @@ if ! command -v flatpak &>/dev/null; then
 fi
 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 sudo flatpak install -y flathub app.devsuite.Ptyxis 2>/dev/null || true
-success "Ptyxis Terminal установлен!"
+
+# Регистрация Ptyxis в качестве системного терминала по умолчанию (x-terminal-emulator)
+sudo tee /usr/local/bin/ptyxis-terminal.wrapper > /dev/null << 'EOF'
+#!/bin/bash
+FLATPAK_PTYXIS="/var/lib/flatpak/exports/bin/app.devsuite.Ptyxis"
+if [[ ! -x "$FLATPAK_PTYXIS" ]]; then
+    FLATPAK_PTYXIS="flatpak run app.devsuite.Ptyxis"
+fi
+if [[ "$1" == "-e" ]]; then
+    shift
+    exec $FLATPAK_PTYXIS -- "$@"
+elif [[ "$1" == "-x" ]]; then
+    shift
+    exec $FLATPAK_PTYXIS -x "$@"
+else
+    exec $FLATPAK_PTYXIS "$@"
+fi
+EOF
+sudo chmod +x /usr/local/bin/ptyxis-terminal.wrapper
+
+sudo tee /usr/local/bin/ptyxis > /dev/null << 'EOF'
+#!/bin/bash
+exec /var/lib/flatpak/exports/bin/app.devsuite.Ptyxis "$@"
+EOF
+sudo chmod +x /usr/local/bin/ptyxis
+
+sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/local/bin/ptyxis-terminal.wrapper 60 2>/dev/null || true
+sudo update-alternatives --set x-terminal-emulator /usr/local/bin/ptyxis-terminal.wrapper 2>/dev/null || true
+success "Ptyxis Terminal установлен и назначен терминалом по умолчанию!"
 
 info "7. Установка OnlyOffice Desktop Editors"
 if ! command -v onlyoffice-desktopeditors &>/dev/null; then

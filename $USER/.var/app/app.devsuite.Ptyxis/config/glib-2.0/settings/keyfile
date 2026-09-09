@@ -1,11 +1,37 @@
 [org/gnome/Ptyxis]
-profile-uuids=['610b6cb09c39dca11d34f34c6aa15761']
+profile-uuids=['610b6cb09c39dca11d34f34c6aa15761', '91a4b5e2978a4ea9bd332467d1234567']
 default-profile-uuid='610b6cb09c39dca11d34f34c6aa15761'
 window-size=(116, 32)
 use-system-font=false
 font-name='JetBrains Mono 14'
 interface-style='dark'
+audible-bell=false
+visual-bell=false
+visual-process-leader=true
+restore-session=true
+restore-window-size=true
+toast-on-copy-clipboard=true
+new-tab-position='next'
 
 [org/gnome/Ptyxis/Profiles/610b6cb09c39dca11d34f34c6aa15761]
 palette='Royal blue'
-label='asv'
+label='Royal blue (asv)'
+opacity=0.94
+scrollback-lines=50000
+preserve-directory='always'
+preserve-container='always'
+bold-is-bright=false
+
+[org/gnome/Ptyxis/Profiles/91a4b5e2978a4ea9bd332467d1234567]
+palette='Royal sky'
+label='Royal sky (Guake)'
+opacity=0.94
+scrollback-lines=50000
+preserve-directory='always'
+preserve-container='always'
+bold-is-bright=false
+
+[org/gnome/Ptyxis/Shortcuts]
+tab-overview='<ctrl><shift>o'
+undo-close-tab='<ctrl><shift><alt>t'
+search='<ctrl><shift>f'

@@ -103,25 +103,85 @@ else
 fi
 
 
-# enable color support of ls and also add handy aliases
-if [ -x /usr/bin/dircolors ]; then
-    test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
-    alias ls='ls --color=auto'
-    #alias dir='dir --color=auto'
-    #alias vdir='vdir --color=auto'
+# ------------------------------------------------------------------------------
+# 8. Семантическая интеграция с эмулятором терминала (Ptyxis / GNOME / VTE)
+# ------------------------------------------------------------------------------
+if [[ -n "$VTE_VERSION" || -n "$PTYXIS_VERSION" || "$TERM_PROGRAM" == "Ptyxis" ]]; then
+  # OSC 7: Синхронизация каталогов (открытие новых вкладок в том же пути)
+  __vte_osc7() {
+    local url_path=""
+    if [[ -x /usr/libexec/vte-urlencode-cwd ]]; then
+      url_path="$(/usr/libexec/vte-urlencode-cwd 2>/dev/null)"
+    else
+      url_path="${PWD}"
+    fi
+    printf '\e]7;file://%s%s\e\\' "${HOSTNAME:-localhost}" "${url_path}"
+  }
 
+  # OSC 133: Семантическая разметка (FinalTerm / Ptyxis маркеры и уведомления)
+  __ptyxis_osc133_preexec() {
+    printf '\e]133;C\a'
+  }
+  __ptyxis_osc133_precmd() {
+    local exit_status=$?
+    printf '\e]133;D;%s\a' "$exit_status"
+    printf '\e]133;A\a'
+  }
+
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd __vte_osc7
+  add-zsh-hook preexec __ptyxis_osc133_preexec
+  add-zsh-hook precmd __ptyxis_osc133_precmd
+fi
+
+# ------------------------------------------------------------------------------
+# 9. Современный CLI-инструментарий (zoxide, eza, bat, yazi)
+# ------------------------------------------------------------------------------
+# Zoxide (умный переход по каталогам `z`)
+if command -v zoxide &>/dev/null; then
+  eval "$(zoxide init zsh)"
+fi
+
+# Eza (современная замена ls с git-статусом и иконками)
+if command -v eza &>/dev/null; then
+  alias ls='eza --group-directories-first'
+  alias ll='eza -lh --group-directories-first --git'
+  alias la='eza -a --group-directories-first'
+  alias lla='eza -lah --group-directories-first --git'
+  alias lt='eza --tree --level=2'
+else
+  # enable color support of ls and also add handy aliases
+  if [ -x /usr/bin/dircolors ]; then
+      test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
+      alias ls='ls --color=auto'
+      alias ll='ls -alF'
+      alias la='ls -A'
+      alias l='ls -CF'
+  fi
+fi
+
+if [ -x /usr/bin/dircolors ]; then
     alias grep='grep --color=auto'
     alias fgrep='fgrep --color=auto'
     alias egrep='egrep --color=auto'
 fi
 
-# colored GCC warnings and errors
-#export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
+# Bat (быстрый просмотр файлов с подсветкой)
+if command -v bat &>/dev/null; then
+  alias b='bat'
+fi
 
-# some more ls aliases
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
+# Yazi (файловый менеджер + переход в каталог по выходу)
+if command -v yazi &>/dev/null; then
+  function yy() {
+    local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+    yazi "$@" --cwd-file="$tmp"
+    if cwd="$(command cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+      builtin cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
+  }
+fi
 
 # sleep commands
 alias disablesleep='sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target'
