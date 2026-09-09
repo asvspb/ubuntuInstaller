@@ -3,8 +3,8 @@
  * Matched to native GNOME Terminal in user desktop:
  * - Headerbar: #222222
  * - Tab bar & tabs: #2c2c2c
- * - Spacing: Compact tabs (margin: 0, small padding)
- * - Accent: Native style accent (@accent_bg_color) at bottom of active tab
+ * - Spacing: Compact tabs (margin: 0, padding: 3px 8px)
+ * - Accent: Royal blue palette accent (#62A0EA)
  * ============================================================================== */
 
 @define-color headerbar_bg #222222;
@@ -15,6 +15,9 @@
 @define-color tab_border rgba(0, 0, 0, 0.4);
 @define-color tab_fg #d0d0d0;
 @define-color tab_active_fg #ffffff;
+@define-color palette_accent #62A0EA;
+@define-color accent_bg_color #62A0EA;
+@define-color accent_color #62A0EA;
 
 /* ==============================================================================
  * Заголовок окна (Titlebar / Headerbar) — #222222
@@ -89,7 +92,7 @@ tabbar tab:hover {
 }
 
 /* ==============================================================================
- * Активная вкладка — акцентная линия внизу в стиле системы (@accent_bg_color)
+ * Активная вкладка — акцентная линия внизу в цвете выбранной палитры (#62A0EA)
  * ============================================================================== */
 window.ptyxis-window tabbar tab:checked,
 window.ptyxis-window tabbar tab:selected,
@@ -100,8 +103,9 @@ tabbar tab:selected {
     background-color: @tab_bg;
     color: @tab_active_fg;
     font-weight: bold;
-    border-bottom: 3px solid @accent_bg_color;
-    box-shadow: inset 0 -3px @accent_bg_color;
+    border-top: none;
+    border-bottom: 3px solid @palette_accent;
+    box-shadow: inset 0 -3px @palette_accent;
 }
 
 tabbar tab label,
@@ -110,8 +114,9 @@ tab label {
 }
 
 /* Индикатор вкладки AdwTabBar */
-tabbar tabbox > revealer > indicator {
-    background-color: @accent_bg_color;
+tabbar tabbox > revealer > indicator,
+tabbar tab indicator {
+    background-color: @palette_accent;
     min-height: 3px;
 }
 
