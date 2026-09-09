@@ -86,10 +86,15 @@ if [ -n "$ZSH_VERSION" ]; then
     zplug "zsh-users/zsh-history-substring-search"
     zplug "MichaelAquilina/zsh-you-should-use"
 
+    # Отключение вывода фоновых задач zplug ([PID] и [done])
+    unsetopt MONITOR NOTIFY 2>/dev/null || true
+
     if ! zplug check; then
       zplug install
     fi
     zplug load
+
+    setopt MONITOR NOTIFY 2>/dev/null || true
   fi
 fi
 
