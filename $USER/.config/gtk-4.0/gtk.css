@@ -1,8 +1,24 @@
 /* ==============================================================================
- * Ptyxis Terminal & GTK4 Styling: Black Titlebar & Dark Gray Tabs
+ * Ptyxis Terminal & GTK4 Styling: Ubuntu 22.04 LTS (Yaru-dark)
+ * Matches standard GNOME Terminal headerbar (#303030) and tabs with Ubuntu accent (#e95420)
  * ============================================================================== */
 
-/* Черный верх окна (Titlebar / Headerbar) для всех тем */
+:root {
+    --headerbar-bg-color: #303030;
+    --headerbar-fg-color: #ffffff;
+    --headerbar-border-color: rgba(255, 255, 255, 0.15);
+    --headerbar-backdrop-color: #2c2c2c;
+    --headerbar-shade-color: rgba(0, 0, 0, 0.36);
+    --window-bg-color: #2c2c2c;
+    --window-fg-color: #f7f7f7;
+    --accent-color: #e95420;
+    --accent-bg-color: #e95420;
+    --accent-fg-color: #ffffff;
+}
+
+/* ==============================================================================
+ * Верх окна (Titlebar / Headerbar) в стиле Ubuntu 22.04 Yaru-dark (#303030)
+ * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
 headerbar.flat,
@@ -10,11 +26,16 @@ headerbar,
 toolbarview > revealer.top-bar,
 toolbarview > revealer.top-bar > windowhandle,
 toolbarview > revealer.top-bar headerbar {
-    background-color: #000000 !important;
+    background-color: #303030 !important;
     background-image: none !important;
     color: #ffffff !important;
-    border-bottom: 1px solid #1a1a1a !important;
-    box-shadow: none !important;
+    border-bottom: 1px solid #1c1c1c !important;
+    box-shadow: inset 0 -1px rgba(0, 0, 0, 0.35) !important;
+}
+
+headerbar:backdrop {
+    background-color: #2c2c2c !important;
+    color: #a8a8a8 !important;
 }
 
 headerbar windowtitle,
@@ -25,57 +46,60 @@ headerbar .subtitle {
 
 headerbar windowcontrols button,
 headerbar button {
-    color: #d8d8d8 !important;
+    color: #dcdcdc !important;
 }
 
 headerbar button:hover {
-    background-color: #222222 !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
     color: #ffffff !important;
 }
 
 /* ==============================================================================
- * Панель вкладок (AdwTabBar) и сами вкладки — темно-серые (как в GNOME Terminal)
+ * Панель вкладок (AdwTabBar) и вкладки — как в стандартном GNOME Terminal
  * ============================================================================== */
 tabbar,
+tabbar .box,
 tabbar > revealer > box,
 tabbar box.inline-tab-bar,
 tabbox {
-    background-color: #1a1a1a !important;
+    background-color: #242424 !important;
     background-image: none !important;
-    border-bottom: 1px solid #0f0f0f !important;
+    border-bottom: 1px solid #181818 !important;
 }
 
-/* Неактивные вкладки (темно-серые) */
+/* Неактивные вкладки (темно-серые Yaru) */
 tabbar tab,
 tabbox tab,
 tab {
-    background-color: #282828 !important;
+    background-color: #2f2f2f !important;
     background-image: none !important;
-    color: #b0b0b0 !important;
-    border-right: 1px solid #1c1c1c !important;
-    border-radius: 6px 6px 0 0 !important;
+    color: #b8b8b8 !important;
+    border-right: 1px solid #1e1e1e !important;
+    border-radius: 4px 4px 0 0 !important;
     margin: 2px 2px 0 2px !important;
     padding: 5px 12px !important;
+    box-shadow: none !important;
 }
 
 tabbar tab:hover,
 tabbox tab:hover,
 tab:hover {
-    background-color: #333333 !important;
+    background-color: #363636 !important;
     color: #ffffff !important;
 }
 
-/* Активная вкладка (контрастный темно-серый) */
+/* Активная вкладка — контрастный серый с фирменной оранжевой полосой Ubuntu (#e95420) */
 tabbar tab:selected,
 tabbar tab:checked,
 tabbox tab:selected,
 tab:selected {
-    background-color: #3d3d3d !important;
+    background-color: #3c3c3c !important;
     background-image: none !important;
     color: #ffffff !important;
     font-weight: 600 !important;
     border-bottom: none !important;
-    border-top: 2px solid #5294e2 !important;
+    border-top: 2px solid #e95420 !important;
+    box-shadow: inset 0 -1px #3c3c3c !important;
 }
 
 tabbar tab label,
@@ -83,11 +107,16 @@ tab label {
     color: inherit !important;
 }
 
+/* Индикатор активной вкладки AdwTabBar */
+tabbar tabbox > revealer > indicator {
+    background-color: #e95420 !important;
+}
+
 /* Кнопка закрытия вкладки */
 tabbar tab button.close-button,
 tabbar tab button.close,
 tab button.close {
-    color: #999999 !important;
+    color: #a0a0a0 !important;
     border-radius: 99px !important;
     background-color: transparent !important;
 }
@@ -95,7 +124,7 @@ tab button.close {
 tabbar tab button.close-button:hover,
 tabbar tab button.close:hover,
 tab button.close:hover {
-    background-color: #505050 !important;
+    background-color: rgba(255, 255, 255, 0.15) !important;
     color: #ffffff !important;
 }
 
@@ -103,11 +132,11 @@ tab button.close:hover {
 tabbar > revealer > box > button,
 tabbar button.add-tab-button {
     background-color: transparent !important;
-    color: #cccccc !important;
+    color: #b8b8b8 !important;
 }
 
 tabbar > revealer > box > button:hover,
 tabbar button.add-tab-button:hover {
-    background-color: #2c2c2c !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
     color: #ffffff !important;
 }
