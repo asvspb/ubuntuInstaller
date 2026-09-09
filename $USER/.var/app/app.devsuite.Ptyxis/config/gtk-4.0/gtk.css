@@ -1,15 +1,15 @@
 /* ==============================================================================
- * Ptyxis Terminal & GTK4 Styling: Ubuntu 22.04 LTS (Yaru-dark)
- * Matches standard GNOME Terminal headerbar (#303030) and tabs with Ubuntu accent (#e95420)
+ * Ptyxis Terminal & GTK4 Styling
+ * Dark graphite headerbar (#202020) and medium-gray tabs (#303030 / #3c3c3c)
  * ============================================================================== */
 
 :root {
-    --headerbar-bg-color: #303030;
+    --headerbar-bg-color: #202020;
     --headerbar-fg-color: #ffffff;
-    --headerbar-border-color: rgba(255, 255, 255, 0.15);
-    --headerbar-backdrop-color: #2c2c2c;
-    --headerbar-shade-color: rgba(0, 0, 0, 0.36);
-    --window-bg-color: #2c2c2c;
+    --headerbar-border-color: rgba(255, 255, 255, 0.12);
+    --headerbar-backdrop-color: #1a1a1a;
+    --headerbar-shade-color: rgba(0, 0, 0, 0.45);
+    --window-bg-color: #242424;
     --window-fg-color: #f7f7f7;
     --accent-color: #e95420;
     --accent-bg-color: #e95420;
@@ -17,7 +17,7 @@
 }
 
 /* ==============================================================================
- * Верх окна (Titlebar / Headerbar) в стиле Ubuntu 22.04 Yaru-dark (#303030)
+ * Заголовок окна (Titlebar / Headerbar) — более темный (#202020)
  * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
@@ -26,16 +26,16 @@ headerbar,
 toolbarview > revealer.top-bar,
 toolbarview > revealer.top-bar > windowhandle,
 toolbarview > revealer.top-bar headerbar {
-    background-color: #303030 !important;
+    background-color: #202020 !important;
     background-image: none !important;
     color: #ffffff !important;
-    border-bottom: 1px solid #1c1c1c !important;
-    box-shadow: inset 0 -1px rgba(0, 0, 0, 0.35) !important;
+    border-bottom: 1px solid #141414 !important;
+    box-shadow: inset 0 -1px rgba(0, 0, 0, 0.4) !important;
 }
 
 headerbar:backdrop {
-    background-color: #2c2c2c !important;
-    color: #a8a8a8 !important;
+    background-color: #1a1a1a !important;
+    color: #999999 !important;
 }
 
 headerbar windowtitle,
@@ -50,31 +50,31 @@ headerbar button {
 }
 
 headerbar button:hover {
-    background-color: rgba(255, 255, 255, 0.1) !important;
+    background-color: rgba(255, 255, 255, 0.12) !important;
     color: #ffffff !important;
 }
 
 /* ==============================================================================
- * Панель вкладок (AdwTabBar) и вкладки — как в стандартном GNOME Terminal
+ * Панель вкладок (AdwTabBar) и сами вкладки — светло-серый цвет (#303030)
  * ============================================================================== */
 tabbar,
 tabbar .box,
 tabbar > revealer > box,
 tabbar box.inline-tab-bar,
 tabbox {
-    background-color: #242424 !important;
+    background-color: #262626 !important;
     background-image: none !important;
-    border-bottom: 1px solid #181818 !important;
+    border-bottom: 1px solid #1a1a1a !important;
 }
 
-/* Неактивные вкладки (темно-серые Yaru) */
+/* Неактивные вкладки (серый #303030) */
 tabbar tab,
 tabbox tab,
 tab {
-    background-color: #2f2f2f !important;
+    background-color: #303030 !important;
     background-image: none !important;
-    color: #b8b8b8 !important;
-    border-right: 1px solid #1e1e1e !important;
+    color: #c8c8c8 !important;
+    border-right: 1px solid #202020 !important;
     border-radius: 4px 4px 0 0 !important;
     margin: 2px 2px 0 2px !important;
     padding: 5px 12px !important;
@@ -84,11 +84,11 @@ tab {
 tabbar tab:hover,
 tabbox tab:hover,
 tab:hover {
-    background-color: #363636 !important;
+    background-color: #383838 !important;
     color: #ffffff !important;
 }
 
-/* Активная вкладка — контрастный серый с фирменной оранжевой полосой Ubuntu (#e95420) */
+/* Активная вкладка — чуть светлее (#3c3c3c) с фирменной оранжевой полосой Ubuntu */
 tabbar tab:selected,
 tabbar tab:checked,
 tabbox tab:selected,
@@ -124,7 +124,7 @@ tab button.close {
 tabbar tab button.close-button:hover,
 tabbar tab button.close:hover,
 tab button.close:hover {
-    background-color: rgba(255, 255, 255, 0.15) !important;
+    background-color: rgba(255, 255, 255, 0.18) !important;
     color: #ffffff !important;
 }
 
@@ -137,6 +137,6 @@ tabbar button.add-tab-button {
 
 tabbar > revealer > box > button:hover,
 tabbar button.add-tab-button:hover {
-    background-color: rgba(255, 255, 255, 0.1) !important;
+    background-color: rgba(255, 255, 255, 0.12) !important;
     color: #ffffff !important;
 }
