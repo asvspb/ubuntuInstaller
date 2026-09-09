@@ -1,102 +1,107 @@
-# ~/.bashrc: executed by bash(1) for non-login shells.
-# see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
-# for examples
+# ==============================================================================
+# Modernized .zshrc (Antidote + fzf-tab + High-Speed Native Zsh Architecture)
+# ==============================================================================
 
-# If not running interactively, don't do anything
-case $- in
-    *i*) ;;
-      *) return;;
-esac
+# Неинтерактивный режим — мгновенный выход
+[[ $- != *i* ]] && return
 
-# don't put duplicate lines or lines starting with space in the history.
-# See bash(1) for more options
-HISTCONTROL=ignoreboth
+# ------------------------------------------------------------------------------
+# 1. Быстрая нативная история
+# ------------------------------------------------------------------------------
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=50000
+SAVEHIST=50000
+setopt EXTENDED_HISTORY          # Запись таймстемпов выполнения
+setopt SHARE_HISTORY             # Синхронизация истории между всеми окнами/вкладками
+setopt HIST_EXPIRE_DUPS_FIRST    # Первыми вытеснять дубликаты при заполнении
+setopt HIST_IGNORE_DUPS          # Не дублировать подряд идущие одинаковые команды
+setopt HIST_IGNORE_SPACE         # Игнорировать команды с пробелом в начале (секреты)
+setopt HIST_VERIFY               # Предпросмотр команды из истории перед запуском
+setopt INC_APPEND_HISTORY        # Добавлять команду в файл сразу после выполнения
 
-# append to the history file, don't overwrite it
+# ------------------------------------------------------------------------------
+# 2. Навигация и удобство каталогов
+# ------------------------------------------------------------------------------
+setopt AUTO_CD                   # Переход в папку просто по имени (без cd)
+setopt AUTO_PUSHD                # Автостек директорий (cd -<TAB>)
+setopt PUSHD_IGNORE_DUPS         # Без повторов в стеке
+setopt PROMPT_SUBST              # Подстановка переменных в промпт
 
-# for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
-HISTSIZE=1000
-HISTFILESIZE=2000
+# ------------------------------------------------------------------------------
+# 3. Горячие клавиши (Home, End, Delete, стрелки)
+# ------------------------------------------------------------------------------
+bindkey -e                       # Режим emacs
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+bindkey '^[[1;5C' forward-word
+bindkey '^[[1;5D' backward-word
 
-# check the window size after each command and, if necessary,
-# update the values of LINES and COLUMNS.
-
-# If set, the pattern "**" used in a pathname expansion context will
-# match all files and zero or more directories and subdirectories.
-#shopt -s globstar
-
-# make less more friendly for non-text input files, see lesspipe(1)
-[ -x /usr/bin/lesspipe ] && eval "$(SHELL=/bin/sh lesspipe)"
-
-# set variable identifying the chroot you work in (used in the prompt below)
-if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
-    debian_chroot=$(cat /etc/debian_chroot)
+# ------------------------------------------------------------------------------
+# 4. Оптимизированная инициализация автодополнения (кэшируется, старт ~5мс)
+# ------------------------------------------------------------------------------
+autoload -Uz compinit
+if [[ -n ${ZDOTDIR:-$HOME}/.zcompdump(#qN.mh+24) ]]; then
+  compinit
+else
+  compinit -C
 fi
 
-# zsh interactive configuration
-if [ -n "$ZSH_VERSION" ]; then
-  emulate -L zsh
-  # History behavior similar to bash's histappend/ignoreboth
-  setopt APPEND_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE
-  HISTFILE="$HOME/.zsh_history"
-  HISTSIZE=10000
-  SAVEHIST=20000
-  # Prompt and completion
-  setopt PROMPT_SUBST
-  # autoload -Uz compinit && compinit # Initialized by zplug
-  # Prompt: green user@host, blue cwd
-  if [ -n "$debian_chroot" ]; then
-    PROMPT="($debian_chroot)%F{green}%n@%m%f:%F{blue}%~%f$ "
-  else
-    PROMPT="%F{green}%n@%m%f:%F{blue}%~%f$ "
-  fi
-  # Terminal title: user@host: dir
-  precmd() { print -Pn "\e]0;%n@%m: %~\a" }
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' # Регистронезависимый поиск
+zstyle ':completion:*' menu select                       # Управление стрелками в меню
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"   # Цвета файлов
 
-  # Powerlevel10k prompt settings (from previous .zshrc)
+# ------------------------------------------------------------------------------
+# 5. Менеджер плагинов Antidote (статическая компиляция плагинов)
+# ------------------------------------------------------------------------------
+ANTIDOTE_DIR="${ZDOTDIR:-$HOME}/.antidote"
+if [[ ! -d "$ANTIDOTE_DIR" ]]; then
+  echo "Клонирование Antidote (быстрый менеджер плагинов)..."
+  git clone --depth=1 https://github.com/mattmc3/antidote.git "$ANTIDOTE_DIR"
+fi
+
+source "$ANTIDOTE_DIR/antidote.zsh"
+
+ZPLUGINS_TXT="${ZDOTDIR:-$HOME}/.zsh_plugins.txt"
+ZPLUGINS_ZSH="${ZDOTDIR:-$HOME}/.zsh_plugins.zsh"
+
+# Перекомпиляция только при изменении .zsh_plugins.txt
+if [[ ! -f "$ZPLUGINS_ZSH" || "$ZPLUGINS_TXT" -nt "$ZPLUGINS_ZSH" ]]; then
+  antidote bundle < "$ZPLUGINS_TXT" > "$ZPLUGINS_ZSH"
+fi
+
+# Мгновенная загрузка всех плагинов одним source (без подпроцессов и задержек)
+source "$ZPLUGINS_ZSH"
+
+# ------------------------------------------------------------------------------
+# 6. Интерактивный UI с предпросмотром (fzf-tab)
+# ------------------------------------------------------------------------------
+# Превью для cd (через eza или ls)
+zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --color=always $realpath 2>/dev/null || ls -1 --color=always $realpath'
+# Превью содержимого файлов (через bat или head)
+zstyle ':fzf-tab:complete:*:*' fzf-preview 'bat --color=always --line-range :50 $realpath 2>/dev/null || head -n 50 $realpath'
+# Переключение групп клавишами , и .
+zstyle ':fzf-tab:*' switch-group ',' '.'
+# Цветовая гамма под Royal blue
+zstyle ':fzf-tab:*' fzf-flags --color=bg+:#002851,hl+:#99ffff,pointer:#ff9ca3,info:#cdab8f
+
+# Привязка history-substring-search к стрелкам вверх/вниз
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+
+# ------------------------------------------------------------------------------
+# 7. Тема / Промпт
+# ------------------------------------------------------------------------------
+if command -v starship &>/dev/null; then
+  eval "$(starship init zsh)"
+else
+  # Настройки Powerlevel10k
   POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(host user dir)
   POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status root_indicator vcs battery time)
   POWERLEVEL9K_PROMPT_ON_NEWLINE=true
   POWERLEVEL9K_KUBECONTEXT_SHOW_ON_COMMAND='kubectl|helm|kubens|kubectx|oc|istioctl|kogito'
-
-  # Zplug plugin manager and plugins (from previous .zshrc)
-  if [ ! -d "$HOME/.zplug" ]; then
-    command -v git >/dev/null 2>&1 && git clone https://github.com/b4b4r07/zplug "$HOME/.zplug" >/dev/null 2>&1 || true
-  fi
-  if [ -r "$HOME/.zplug/init.zsh" ]; then
-    source "$HOME/.zplug/init.zsh"
-    zplug romkatv/powerlevel10k, as:theme
-
-    zplug "robbyrussell/oh-my-zsh", as:plugin, use:"lib/*.zsh"
-    zplug "plugins/ubuntu",            from:oh-my-zsh
-    zplug "plugins/colored-man-pages", from:oh-my-zsh
-    zplug "plugins/colorize",          from:oh-my-zsh
-    zplug "lib/completion",            from:oh-my-zsh
-    zplug "lib/history",               from:oh-my-zsh
-    zplug "lib/key-bindings",          from:oh-my-zsh
-    zplug "lib/termsupport",           from:oh-my-zsh
-    zplug "lib/directories",           from:oh-my-zsh
-    zplug "plugins/git",               from:oh-my-zsh
-    zplug "plugins/history",           from:oh-my-zsh
-
-    zplug "zsh-users/zsh-autosuggestions"
-    # zplug "zsh-users/zsh-syntax-highlighting"
-    zplug "zdharma-continuum/fast-syntax-highlighting"
-    zplug "zsh-users/zsh-completions"
-    zplug "zsh-users/zsh-history-substring-search"
-    zplug "MichaelAquilina/zsh-you-should-use"
-
-    # Отключение вывода фоновых задач zplug ([PID] и [done])
-    unsetopt MONITOR NOTIFY 2>/dev/null || true
-
-    if ! zplug check; then
-      zplug install
-    fi
-    zplug load
-
-    setopt MONITOR NOTIFY 2>/dev/null || true
-  fi
 fi
+
 
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]; then

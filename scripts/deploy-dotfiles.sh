@@ -39,7 +39,7 @@ backup_and_link() {
 }
 
 info "1. Развертывание базовых shell-конфигураций (.bashrc, .zshrc, .zt-functions.sh, .gitconfig)"
-for file in .bashrc .zshrc .zt-functions.sh .gitconfig .p10k.zsh; do
+for file in .bashrc .zshrc .zsh_plugins.txt .zt-functions.sh .gitconfig .p10k.zsh; do
     if [[ -f "$USER_DIR/$file" ]]; then
         backup_and_link "$USER_DIR/$file" "$HOME/$file"
         success "Синхронизирован: ~/$file"

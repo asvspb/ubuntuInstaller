@@ -1,0 +1,23 @@
+# ==============================================================================
+# .zsh_plugins.txt — Список плагинов для Antidote
+# ==============================================================================
+
+# 1. Дополнительные правила автодополнения команд
+zsh-users/zsh-completions
+
+# 2. Интерактивное всплывающее меню Tab с предпросмотром (fzf-tab)
+Aloxaf/fzf-tab
+
+# 3. Легковесные утилиты из Oh-My-Zsh (точечные модули без всего фреймворка)
+ohmyzsh/ohmyzsh path:plugins/git
+ohmyzsh/ohmyzsh path:plugins/colored-man-pages
+ohmyzsh/ohmyzsh path:plugins/ubuntu
+
+# 4. Подсказки команд (autosuggestions) и быстрая подсветка синтаксиса
+zsh-users/zsh-autosuggestions
+zdharma-continuum/fast-syntax-highlighting
+zsh-users/zsh-history-substring-search
+MichaelAquilina/zsh-you-should-use
+
+# 5. Тема оформления (Powerlevel10k)
+romkatv/powerlevel10k

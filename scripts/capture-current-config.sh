@@ -45,7 +45,7 @@ if [[ -f "$REAL_HOME/.config/dconf/user" ]]; then
 fi
 
 info "2. Захват конфигураций Shell (Zsh, Bash, ZeroTier, Git)"
-for file in .bashrc .zshrc .zt-functions.sh .gitconfig .p10k.zsh; do
+for file in .bashrc .zshrc .zsh_plugins.txt .zt-functions.sh .gitconfig .p10k.zsh; do
     if [[ -f "$REAL_HOME/$file" ]]; then
         safe_cp "$REAL_HOME/$file" "$USER_DIR/$file"
         success "Скопирован: ~/$file"
