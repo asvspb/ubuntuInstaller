@@ -108,10 +108,43 @@ fi
 # colored GCC warnings and errors
 #export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
 
-# some more ls aliases
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
+# ------------------------------------------------------------------------------
+# Современный CLI-инструментарий (zoxide, eza, bat, yazi)
+# ------------------------------------------------------------------------------
+# Zoxide (умный переход по каталогам `z`)
+if command -v zoxide &>/dev/null; then
+  eval "$(zoxide init bash)"
+fi
+
+# Eza (современная замена ls с git-статусом и иконками)
+if command -v eza &>/dev/null; then
+  alias ls='eza --group-directories-first'
+  alias ll='eza -lh --group-directories-first --git'
+  alias la='eza -a --group-directories-first'
+  alias lla='eza -lah --group-directories-first --git'
+  alias lt='eza --tree --level=2'
+else
+  alias ll='ls -alF'
+  alias la='ls -A'
+  alias l='ls -CF'
+fi
+
+# Bat (быстрый просмотр файлов с подсветкой)
+if command -v bat &>/dev/null; then
+  alias b='bat'
+fi
+
+# Yazi (файловый менеджер + переход в каталог по выходу)
+if command -v yazi &>/dev/null; then
+  function yy() {
+    local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+    yazi "$@" --cwd-file="$tmp"
+    if cwd="$(command cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+      builtin cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
+  }
+fi
 
 # sleep commands
 alias disablesleep='sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target'

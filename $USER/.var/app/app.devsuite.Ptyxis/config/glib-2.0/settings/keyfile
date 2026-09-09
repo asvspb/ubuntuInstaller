@@ -21,6 +21,8 @@ scrollback-lines=50000
 preserve-directory='always'
 preserve-container='always'
 bold-is-bright=false
+use-custom-command=true
+custom-command='zsh'
 
 [org/gnome/Ptyxis/Profiles/91a4b5e2978a4ea9bd332467d1234567]
 palette='Royal sky'
@@ -30,6 +32,8 @@ scrollback-lines=50000
 preserve-directory='always'
 preserve-container='always'
 bold-is-bright=false
+use-custom-command=true
+custom-command='zsh'
 
 [org/gnome/Ptyxis/Shortcuts]
 tab-overview='<ctrl><shift>o'

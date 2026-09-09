@@ -51,7 +51,12 @@ info "7. Обновление репозиториев и установка с�
 sudo apt update -y
 sudo apt install -y git gh mc tmux zsh mosh curl wget ca-certificates \
     net-tools make apt-transport-https gpg gnupg software-properties-common \
-    dconf-editor gnome-tweaks ubuntu-restricted-extras
+    dconf-editor gnome-tweaks gnome-control-center ubuntu-restricted-extras
+
+if command -v zsh &>/dev/null; then
+    sudo chsh -s "$(which zsh)" "$TARGET_USER" 2>/dev/null || true
+    success "Оболочка Zsh установлена по умолчанию для $TARGET_USER"
+fi
 
 info "8. Установка Google Chrome"
 if ! command -v google-chrome &>/dev/null; then
