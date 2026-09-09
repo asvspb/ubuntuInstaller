@@ -16,7 +16,7 @@ new-tab-position='next'
 [org/gnome/Ptyxis/Profiles/610b6cb09c39dca11d34f34c6aa15761]
 palette='Royal blue'
 label='Royal blue (asv)'
-opacity=0.94
+opacity=0.97727272727272729
 scrollback-lines=50000
 preserve-directory='always'
 preserve-container='always'

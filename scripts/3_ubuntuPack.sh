@@ -84,17 +84,6 @@ if ! command -v yazi &>/dev/null; then
     fi
 fi
 
-# Установка JetBrainsMono Nerd Font (для отображения иконок в терминале, Yazi, eza, p10k)
-if ! fc-list : family | grep -q "JetBrainsMono Nerd Font"; then
-    info "Установка шрифта JetBrainsMono Nerd Font..."
-    mkdir -p /tmp/nerd-fonts
-    curl -sL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz -o /tmp/nerd-fonts/JetBrainsMono.tar.xz
-    tar -xJf /tmp/nerd-fonts/JetBrainsMono.tar.xz -C /tmp/nerd-fonts
-    sudo mkdir -p /usr/local/share/fonts/truetype/nerd-fonts
-    sudo cp /tmp/nerd-fonts/*.ttf /usr/local/share/fonts/truetype/nerd-fonts/ 2>/dev/null || true
-    sudo fc-cache -f /usr/local/share/fonts 2>/dev/null || true
-    rm -rf /tmp/nerd-fonts
-fi
 
 info "3. Настройка окружения Node.js (через NVM)"
 if [ ! -d "$HOME/.nvm" ]; then
