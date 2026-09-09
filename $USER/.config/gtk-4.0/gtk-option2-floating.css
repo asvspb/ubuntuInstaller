@@ -1,0 +1,135 @@
+/* ==============================================================================
+ * Ptyxis Terminal & GTK4 Styling — Вариант 2: «Современный минимализм» (Floating Segmented Tabs)
+ *
+ * Особенности:
+ * - Парящие сегментированные вкладки-островки (border-radius: 6px)
+ * - Темная фоновая подложка трека вкладок (#181818)
+ * - Приподнятая активная вкладка-карточка с мягкой тенью и акцентным индикатором
+ * - Плавные переходы Segmented Control
+ * ============================================================================== */
+
+@define-color headerbar_bg #1e1e1e;
+@define-color headerbar_fg #ffffff;
+@define-color tabbar_bg #181818;
+@define-color tab_bg transparent;
+@define-color tab_hover_bg rgba(255, 255, 255, 0.07);
+@define-color tab_active_bg #2c2c2c;
+@define-color tab_fg #a8a8a8;
+@define-color tab_active_fg #ffffff;
+@define-color palette_accent #62A0EA;
+@define-color accent_bg_color #62A0EA;
+@define-color accent_color #62A0EA;
+
+window.ptyxis-window headerbar,
+window headerbar,
+headerbar {
+    background-color: @headerbar_bg;
+    color: @headerbar_fg;
+    border-bottom: 1px solid #141414;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+window.ptyxis-window headerbar:backdrop,
+headerbar:backdrop {
+    background-color: #181818;
+    color: #888888;
+}
+
+/* Трек вкладок — темная утопленная подложка */
+window.ptyxis-window tabbar,
+window.ptyxis-window tabbar .box,
+tabbar,
+tabbar .box,
+tabbar tabbox {
+    background-color: @tabbar_bg;
+    padding: 3px 4px;
+    border-bottom: 1px solid #141414;
+    min-height: 32px;
+}
+
+/* Неактивные вкладки — парящие островки */
+window.ptyxis-window tabbar tab,
+window.ptyxis-window tabbar tabboxchild tab,
+window.ptyxis-window tabbar tabboxchild,
+tabbar tab,
+tab {
+    background-color: transparent;
+    color: @tab_fg;
+    border-radius: 6px;
+    margin: 1px 2px;
+    padding: 3px 10px;
+    border: none;
+    box-shadow: none;
+    transition: all 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+window.ptyxis-window tabbar tab:hover,
+tabbar tab:hover {
+    background-color: @tab_hover_bg;
+    color: #ffffff;
+}
+
+/* Активная вкладка — приподнятая карточка со световым контуром */
+window.ptyxis-window tabbar tab:checked,
+window.ptyxis-window tabbar tab:selected,
+window.ptyxis-window tabbar tabboxchild tab:checked,
+window.ptyxis-window tabbar tabboxchild tab:selected,
+tabbar tab:checked,
+tabbar tab:selected {
+    background-color: @tab_active_bg;
+    color: @tab_active_fg;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.1);
+}
+
+tabbar tabbox > revealer > indicator,
+tabbar tab indicator {
+    background-color: @palette_accent;
+    min-height: 2px;
+    border-radius: 2px;
+}
+
+tabbar tab button.tab-close-button,
+tabbar tab button.close-button,
+tabbar tab button.close,
+tab button.close {
+    color: #a0a0a0;
+    opacity: 0.4;
+    border-radius: 99px;
+    background-color: transparent;
+    padding: 2px;
+    margin: 0;
+    transition: all 160ms ease;
+}
+
+tabbar tab:hover button.tab-close-button,
+tabbar tab:hover button.close-button,
+tabbar tab:hover button.close {
+    opacity: 0.85;
+}
+
+tabbar tab button.tab-close-button:hover,
+tabbar tab button.close-button:hover,
+tabbar tab button.close:hover,
+tab button.close:hover {
+    opacity: 1.0;
+    background-color: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+}
+
+tabbar > revealer > box > button,
+tabbar button.add-tab-button {
+    background-color: transparent;
+    color: #b8b8b8;
+    border-radius: 6px;
+    padding: 2px 6px;
+    margin: 1px;
+}
+
+tabbar > revealer > box > button:hover,
+tabbar button.add-tab-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}

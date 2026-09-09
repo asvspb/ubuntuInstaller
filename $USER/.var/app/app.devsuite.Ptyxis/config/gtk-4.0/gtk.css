@@ -1,26 +1,28 @@
 /* ==============================================================================
- * Ptyxis Terminal & GTK4 Styling
- * Matched to native GNOME Terminal in user desktop:
- * - Headerbar: #222222
- * - Tab bar & tabs: #2c2c2c
- * - Spacing: Compact tabs (margin: 0, padding: 3px 8px)
- * - Accent: Royal blue palette accent (#62A0EA)
+ * Ptyxis Terminal & GTK4 Styling — Вариант 1: «Премиальный глянец» (Subtle Luxury)
+ *
+ * Особенности:
+ * - Сплошные компактные вкладки в стиле нативного GNOME Terminal
+ * - 1px стеклянная фаска (Edge Highlight) сверху заголовка и вкладок
+ * - Неоновое мягкое свечение (Ambient Glow) акцентной линии активной вкладки (#62A0EA)
+ * - Умное скрытие визуального шума: крестики закрытия приглушены до наведения
+ * - Плавные микро-анимации наведения (Fluid micro-interactions)
  * ============================================================================== */
 
 @define-color headerbar_bg #222222;
 @define-color headerbar_fg #ffffff;
 @define-color tabbar_bg #2c2c2c;
 @define-color tab_bg #2c2c2c;
-@define-color tab_hover_bg #353535;
-@define-color tab_border rgba(0, 0, 0, 0.4);
-@define-color tab_fg #d0d0d0;
+@define-color tab_hover_bg #363636;
+@define-color tab_border rgba(0, 0, 0, 0.45);
+@define-color tab_fg #b8b8b8;
 @define-color tab_active_fg #ffffff;
 @define-color palette_accent #62A0EA;
 @define-color accent_bg_color #62A0EA;
 @define-color accent_color #62A0EA;
 
 /* ==============================================================================
- * Заголовок окна (Titlebar / Headerbar) — #222222
+ * 1. Заголовок окна (Headerbar) — темный графит с микро-бликом фаски
  * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
@@ -28,13 +30,14 @@ headerbar {
     background-color: @headerbar_bg;
     color: @headerbar_fg;
     border-bottom: 1px solid @tab_border;
-    box-shadow: none;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.06);
 }
 
 window.ptyxis-window headerbar:backdrop,
 headerbar:backdrop {
     background-color: #1e1e1e;
     color: #888888;
+    box-shadow: none;
 }
 
 headerbar windowtitle,
@@ -46,6 +49,7 @@ headerbar .subtitle {
 headerbar windowcontrols button,
 headerbar button {
     color: #dcdcdc;
+    transition: background-color 150ms ease, color 150ms ease;
 }
 
 headerbar button:hover {
@@ -54,7 +58,7 @@ headerbar button:hover {
 }
 
 /* ==============================================================================
- * Панель вкладок (AdwTabBar) — компактный блок без лишних отступов (#2c2c2c)
+ * 2. Панель вкладок (AdwTabBar) — сплошной монолитный блок (#2c2c2c)
  * ============================================================================== */
 window.ptyxis-window tabbar,
 window.ptyxis-window tabbar .box,
@@ -68,7 +72,7 @@ tabbar tabbox {
 }
 
 /* ==============================================================================
- * Вкладки — уменьшенный паддинг, отсутствие внешних отступов (вкладки сближены)
+ * 3. Неактивные вкладки — компактные, с легким верхним бликом и плавным ховером
  * ============================================================================== */
 window.ptyxis-window tabbar tab,
 window.ptyxis-window tabbar tabboxchild tab,
@@ -82,17 +86,19 @@ tab {
     border-radius: 0;
     margin: 0;
     padding: 3px 8px;
-    box-shadow: none;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
+    transition: background-color 160ms ease, color 160ms ease;
 }
 
 window.ptyxis-window tabbar tab:hover,
 tabbar tab:hover {
     background-color: @tab_hover_bg;
     color: #ffffff;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 /* ==============================================================================
- * Активная вкладка — акцентная линия внизу в цвете выбранной палитры (#62A0EA)
+ * 4. Активная вкладка — неоновый акцент снизу с ореолом свечения (Ambient Glow)
  * ============================================================================== */
 window.ptyxis-window tabbar tab:checked,
 window.ptyxis-window tabbar tab:selected,
@@ -104,8 +110,8 @@ tabbar tab:selected {
     color: @tab_active_fg;
     font-weight: bold;
     border-top: none;
-    border-bottom: 3px solid @palette_accent;
-    box-shadow: inset 0 -3px @palette_accent;
+    border-bottom: 2px solid @palette_accent;
+    box-shadow: inset 0 -2px @palette_accent, 0 0 8px alpha(@palette_accent, 0.45);
 }
 
 tabbar tab label,
@@ -113,39 +119,63 @@ tab label {
     color: inherit;
 }
 
-/* Индикатор вкладки AdwTabBar */
+/* Индикатор вкладки */
 tabbar tabbox > revealer > indicator,
 tabbar tab indicator {
     background-color: @palette_accent;
-    min-height: 3px;
+    min-height: 2px;
 }
 
-/* Кнопка закрытия вкладки */
+/* ==============================================================================
+ * 5. Умная чистота (Declutter) — крестики закрытия приглушены до наведения
+ * ============================================================================== */
 tabbar tab button.tab-close-button,
 tabbar tab button.close-button,
 tabbar tab button.close,
 tab button.close {
     color: #a0a0a0;
+    opacity: 0.35;
     border-radius: 99px;
     background-color: transparent;
     padding: 2px;
     margin: 0;
+    transition: opacity 160ms ease, background-color 160ms ease, color 160ms ease;
 }
 
+/* При наведении курсора на вкладку крестик становится четким */
+tabbar tab:hover button.tab-close-button,
+tabbar tab:hover button.close-button,
+tabbar tab:hover button.close {
+    opacity: 0.85;
+}
+
+/* При наведении прямо на крестик — акцентная подсветка */
 tabbar tab button.tab-close-button:hover,
 tabbar tab button.close-button:hover,
 tabbar tab button.close:hover,
 tab button.close:hover {
+    opacity: 1.0;
     background-color: rgba(255, 255, 255, 0.18);
     color: #ffffff;
 }
 
-/* Кнопка новой вкладки */
+/* На активной вкладке крестик всегда виден */
+tabbar tab:checked button.tab-close-button,
+tabbar tab:selected button.tab-close-button,
+tabbar tab:checked button.close,
+tabbar tab:selected button.close {
+    opacity: 0.75;
+}
+
+/* ==============================================================================
+ * 6. Кнопка новой вкладки
+ * ============================================================================== */
 tabbar > revealer > box > button,
 tabbar button.add-tab-button {
     background-color: transparent;
     color: #b8b8b8;
     padding: 2px 4px;
+    transition: background-color 150ms ease, color 150ms ease;
 }
 
 tabbar > revealer > box > button:hover,
