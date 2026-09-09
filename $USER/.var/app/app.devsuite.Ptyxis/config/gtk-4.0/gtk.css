@@ -1,35 +1,36 @@
 /* ==============================================================================
  * Ptyxis Terminal & GTK4 Styling
- * Headerbar: Dark graphite (#1c1c1c)
- * Inactive tabs: Mid-tone gray (#333333) — midway between titlebar and active tab
- * Active tab: Light gray (#4a4a4a) with Ubuntu orange accent (#e95420)
+ * Matched to native GNOME Terminal in user desktop:
+ * - Headerbar: #222222
+ * - Tab bar & tabs: #2c2c2c
+ * - Spacing: Compact tabs (margin: 0, small padding)
+ * - Accent: Native style accent (@accent_bg_color) at bottom of active tab
  * ============================================================================== */
 
-@define-color headerbar_bg #1c1c1c;
+@define-color headerbar_bg #222222;
 @define-color headerbar_fg #ffffff;
-@define-color tabbar_strip_bg #141414;
-@define-color tab_inactive_bg #333333;
-@define-color tab_inactive_hover_bg #3e3e3e;
-@define-color tab_inactive_fg #b8b8b8;
-@define-color tab_active_bg #4a4a4a;
+@define-color tabbar_bg #2c2c2c;
+@define-color tab_bg #2c2c2c;
+@define-color tab_hover_bg #353535;
+@define-color tab_border rgba(0, 0, 0, 0.4);
+@define-color tab_fg #d0d0d0;
 @define-color tab_active_fg #ffffff;
-@define-color ubuntu_orange #e95420;
 
 /* ==============================================================================
- * Заголовок окна (Titlebar / Headerbar) — темный графит (#1c1c1c)
+ * Заголовок окна (Titlebar / Headerbar) — #222222
  * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
 headerbar {
     background-color: @headerbar_bg;
     color: @headerbar_fg;
-    border-bottom: 1px solid #141414;
-    box-shadow: inset 0 -1px rgba(0, 0, 0, 0.4);
+    border-bottom: 1px solid @tab_border;
+    box-shadow: none;
 }
 
 window.ptyxis-window headerbar:backdrop,
 headerbar:backdrop {
-    background-color: #161616;
+    background-color: #1e1e1e;
     color: #888888;
 }
 
@@ -50,43 +51,45 @@ headerbar button:hover {
 }
 
 /* ==============================================================================
- * Полоса под вкладками (AdwTabBar) — темная подложка (#141414)
+ * Панель вкладок (AdwTabBar) — компактный блок без лишних отступов (#2c2c2c)
  * ============================================================================== */
 window.ptyxis-window tabbar,
 window.ptyxis-window tabbar .box,
 tabbar,
 tabbar .box,
 tabbar tabbox {
-    background-color: @tabbar_strip_bg;
-    border-bottom: 1px solid #101010;
+    background-color: @tabbar_bg;
+    border-bottom: 1px solid @tab_border;
+    padding: 0;
+    min-height: 28px;
 }
 
 /* ==============================================================================
- * Неактивные вкладки — средний тон (#333333)
- * Ровно посередине между заголовком (#1c1c1c) и активной вкладкой (#4a4a4a)
+ * Вкладки — уменьшенный паддинг, отсутствие внешних отступов (вкладки сближены)
  * ============================================================================== */
-window.ptyxis-window tabbar tab:not(:checked):not(:selected),
-window.ptyxis-window tabbar tabboxchild tab:not(:checked):not(:selected),
-tabbar tab:not(:checked):not(:selected),
+window.ptyxis-window tabbar tab,
+window.ptyxis-window tabbar tabboxchild tab,
+window.ptyxis-window tabbar tabboxchild,
 tabbar tab,
+tabbar tabboxchild,
 tab {
-    background-color: @tab_inactive_bg;
-    color: @tab_inactive_fg;
-    border-right: 1px solid #202020;
-    border-radius: 4px 4px 0 0;
-    margin: 2px 2px 0 2px;
-    padding: 5px 12px;
+    background-color: @tab_bg;
+    color: @tab_fg;
+    border-right: 1px solid @tab_border;
+    border-radius: 0;
+    margin: 0;
+    padding: 3px 8px;
     box-shadow: none;
 }
 
-window.ptyxis-window tabbar tab:not(:checked):not(:selected):hover,
+window.ptyxis-window tabbar tab:hover,
 tabbar tab:hover {
-    background-color: @tab_inactive_hover_bg;
+    background-color: @tab_hover_bg;
     color: #ffffff;
 }
 
 /* ==============================================================================
- * Активная вкладка — контрастно светлая (#4a4a4a) с фирменной оранжевой полосой Ubuntu
+ * Активная вкладка — акцентная линия внизу в стиле системы (@accent_bg_color)
  * ============================================================================== */
 window.ptyxis-window tabbar tab:checked,
 window.ptyxis-window tabbar tab:selected,
@@ -94,12 +97,11 @@ window.ptyxis-window tabbar tabboxchild tab:checked,
 window.ptyxis-window tabbar tabboxchild tab:selected,
 tabbar tab:checked,
 tabbar tab:selected {
-    background-color: @tab_active_bg;
+    background-color: @tab_bg;
     color: @tab_active_fg;
     font-weight: bold;
-    border-bottom: none;
-    border-top: 2px solid @ubuntu_orange;
-    box-shadow: inset 0 -1px @tab_active_bg;
+    border-bottom: 3px solid @accent_bg_color;
+    box-shadow: inset 0 -3px @accent_bg_color;
 }
 
 tabbar tab label,
@@ -107,9 +109,10 @@ tab label {
     color: inherit;
 }
 
-/* Индикатор активной вкладки AdwTabBar */
+/* Индикатор вкладки AdwTabBar */
 tabbar tabbox > revealer > indicator {
-    background-color: @ubuntu_orange;
+    background-color: @accent_bg_color;
+    min-height: 3px;
 }
 
 /* Кнопка закрытия вкладки */
@@ -120,6 +123,8 @@ tab button.close {
     color: #a0a0a0;
     border-radius: 99px;
     background-color: transparent;
+    padding: 2px;
+    margin: 0;
 }
 
 tabbar tab button.tab-close-button:hover,
@@ -135,6 +140,7 @@ tabbar > revealer > box > button,
 tabbar button.add-tab-button {
     background-color: transparent;
     color: #b8b8b8;
+    padding: 2px 4px;
 }
 
 tabbar > revealer > box > button:hover,
