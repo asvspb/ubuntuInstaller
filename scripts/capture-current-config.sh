@@ -93,6 +93,24 @@ for app in copyq guake btop mc OpenRGB warp-terminal autostart mimeapps.list gtk
 done
 rm -f "$USER_DIR/.config/gtk-3.0/bookmarks" 2>/dev/null || true
 
+info "4.1. Захват конфигурации Ptyxis (Терминал Ubuntu 26 / GNOME 46+)"
+if [[ -d "$REAL_HOME/.var/app/app.devsuite.Ptyxis" ]]; then
+    mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings"
+    mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes"
+    mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/ptyxis/palettes"
+    safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings/keyfile" "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings/keyfile"
+    if [[ -d "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes" ]]; then
+        safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/"* "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/" 2>/dev/null || true
+        safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/"* "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/ptyxis/palettes/" 2>/dev/null || true
+    fi
+    mkdir -p "$USER_DIR/.local/share/org.gnome.Ptyxis/palettes" "$USER_DIR/.local/share/ptyxis/palettes"
+    if [[ -d "$REAL_HOME/.local/share/org.gnome.Ptyxis/palettes" ]]; then
+        safe_cp "$REAL_HOME/.local/share/org.gnome.Ptyxis/palettes/"* "$USER_DIR/.local/share/org.gnome.Ptyxis/palettes/" 2>/dev/null || true
+        safe_cp "$REAL_HOME/.local/share/org.gnome.Ptyxis/palettes/"* "$USER_DIR/.local/share/ptyxis/palettes/" 2>/dev/null || true
+    fi
+    success "Конфигурация и палитры Ptyxis успешно сохранены!"
+fi
+
 info "5. Захват пользовательских скриптов и ярлыков (~/.local/)"
 for script in clean-sys.sh code-updater.sh dns-switch.sh; do
     if [[ -f "$REAL_HOME/.local/bin/$script" ]]; then

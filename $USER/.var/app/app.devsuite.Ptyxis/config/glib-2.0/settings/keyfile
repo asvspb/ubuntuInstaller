@@ -1,0 +1,11 @@
+[org/gnome/Ptyxis]
+profile-uuids=['610b6cb09c39dca11d34f34c6aa15761']
+default-profile-uuid='610b6cb09c39dca11d34f34c6aa15761'
+window-size=(116, 32)
+use-system-font=false
+font-name='JetBrains Mono 14'
+interface-style='dark'
+
+[org/gnome/Ptyxis/Profiles/610b6cb09c39dca11d34f34c6aa15761]
+palette='Royal blue'
+label='asv'

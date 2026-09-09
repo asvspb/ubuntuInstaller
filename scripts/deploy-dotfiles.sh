@@ -77,6 +77,18 @@ if [[ -d "$USER_DIR/.config" ]]; then
     success "Конфигурации ~/.config успешно обновлены!"
 fi
 
+info "4.1. Развертывание конфигурации и палитр Ptyxis (Терминал Ubuntu 26)"
+if [[ -d "$USER_DIR/.var/app/app.devsuite.Ptyxis" ]]; then
+    mkdir -p "$HOME/.var/app/app.devsuite.Ptyxis"
+    cp -rf "$USER_DIR/.var/app/app.devsuite.Ptyxis/"* "$HOME/.var/app/app.devsuite.Ptyxis/" 2>/dev/null || true
+fi
+if [[ -d "$USER_DIR/.local/share/org.gnome.Ptyxis" ]]; then
+    mkdir -p "$HOME/.local/share/org.gnome.Ptyxis/palettes" "$HOME/.local/share/ptyxis/palettes"
+    cp -rf "$USER_DIR/.local/share/org.gnome.Ptyxis/palettes/"* "$HOME/.local/share/org.gnome.Ptyxis/palettes/" 2>/dev/null || true
+    cp -rf "$USER_DIR/.local/share/org.gnome.Ptyxis/palettes/"* "$HOME/.local/share/ptyxis/palettes/" 2>/dev/null || true
+    success "Конфигурация и палитры Ptyxis успешно развернуты!"
+fi
+
 info "5. Развертывание настроек десктопа GNOME (Док, тема, иконки, горячие клавиши)"
 if [[ -f "$USER_DIR/.config/dconf/gnome-desktop.dconf" ]] && command -v dconf &>/dev/null; then
     dconf load /org/gnome/ < "$USER_DIR/.config/dconf/gnome-desktop.dconf" 2>/dev/null || true

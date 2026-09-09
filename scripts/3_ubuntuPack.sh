@@ -86,6 +86,14 @@ if ! command -v warp-terminal &>/dev/null; then
     success "Warp Terminal установлен!"
 fi
 
+info "6.1. Установка Ptyxis Terminal (новый терминал Ubuntu 26 / GNOME)"
+if ! command -v flatpak &>/dev/null; then
+    sudo apt install -y flatpak
+fi
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+flatpak install -y flathub app.devsuite.Ptyxis 2>/dev/null || true
+success "Ptyxis Terminal установлен!"
+
 info "7. Установка OnlyOffice Desktop Editors"
 if ! command -v onlyoffice-desktopeditors &>/dev/null; then
     wget -q https://download.onlyoffice.com/install/desktop/editors/linux/onlyoffice-desktopeditors_amd64.deb -O /tmp/onlyoffice.deb
