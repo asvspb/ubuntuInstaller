@@ -10,5 +10,4 @@ text/vbscript=wine-extension-vbs.desktop;
 x-scheme-handler/antigravity=antigravity.desktop;
 x-scheme-handler/tg=telegram-desktop_telegram-desktop.desktop;
 x-scheme-handler/tonsite=telegram-desktop_telegram-desktop.desktop;
-x-scheme-handler/zcode=zcode.desktop;
 x-scheme-handler/zed=dev.zed.Zed.desktop;
