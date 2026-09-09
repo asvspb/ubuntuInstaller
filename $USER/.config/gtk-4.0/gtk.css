@@ -1,16 +1,18 @@
 /* ==============================================================================
  * Ptyxis Terminal & GTK4 Styling
- * Dark graphite headerbar (#202020), mid-tone inactive tabs (#2c2c2c),
- * and highlighted active tab (#3c3c3c) with Ubuntu accent (#e95420)
+ * Clear tone progression:
+ * - Headerbar: Dark graphite (#1c1c1c)
+ * - Inactive tabs: Mid-tone gray (#333333) — strictly between headerbar and active tab
+ * - Active tab: Light gray (#4a4a4a) with Ubuntu orange accent (#e95420)
  * ============================================================================== */
 
 :root {
-    --headerbar-bg-color: #202020;
+    --headerbar-bg-color: #1c1c1c;
     --headerbar-fg-color: #ffffff;
     --headerbar-border-color: rgba(255, 255, 255, 0.12);
-    --headerbar-backdrop-color: #1a1a1a;
-    --headerbar-shade-color: rgba(0, 0, 0, 0.45);
-    --window-bg-color: #242424;
+    --headerbar-backdrop-color: #161616;
+    --headerbar-shade-color: rgba(0, 0, 0, 0.5);
+    --window-bg-color: #1e1e1e;
     --window-fg-color: #f7f7f7;
     --accent-color: #e95420;
     --accent-bg-color: #e95420;
@@ -18,16 +20,15 @@
 }
 
 /* ==============================================================================
- * Заголовок окна (Titlebar / Headerbar) — темный графит (#202020)
+ * Заголовок окна (Titlebar / Headerbar) — темный графит (#1c1c1c)
  * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
 headerbar.flat,
 headerbar,
-toolbarview > revealer.top-bar,
-toolbarview > revealer.top-bar > windowhandle,
-toolbarview > revealer.top-bar headerbar {
-    background-color: #202020 !important;
+toolbarview > revealer.top-bar headerbar,
+toolbarview > revealer.top-bar > windowhandle > headerbar {
+    background-color: #1c1c1c !important;
     background-image: none !important;
     color: #ffffff !important;
     border-bottom: 1px solid #141414 !important;
@@ -35,8 +36,8 @@ toolbarview > revealer.top-bar headerbar {
 }
 
 headerbar:backdrop {
-    background-color: #1a1a1a !important;
-    color: #999999 !important;
+    background-color: #161616 !important;
+    color: #888888 !important;
 }
 
 headerbar windowtitle,
@@ -56,51 +57,62 @@ headerbar button:hover {
 }
 
 /* ==============================================================================
- * Панель вкладок (AdwTabBar)
+ * Панель вкладок (AdwTabBar) — темная полоса-подложка (#181818)
  * ============================================================================== */
 tabbar,
 tabbar .box,
 tabbar > revealer > box,
 tabbar box.inline-tab-bar,
 tabbox {
-    background-color: #232323 !important;
+    background-color: #181818 !important;
     background-image: none !important;
-    border-bottom: 1px solid #181818 !important;
+    border-bottom: 1px solid #101010 !important;
 }
 
-/* Неактивные вкладки — средний тон (#2c2c2c) между заголовком (#202020) и активной (#3c3c3c) */
+/* ==============================================================================
+ * Неактивные вкладки — четкий средний тон (#333333)
+ * Ровно посередине между заголовком (#1c1c1c) и активной вкладкой (#4a4a4a)
+ * ============================================================================== */
+tabbar tabboxchild,
+tabbar tabbox > tabboxchild,
 tabbar tab,
 tabbox tab,
 tab {
-    background-color: #2c2c2c !important;
+    background-color: #333333 !important;
     background-image: none !important;
     color: #b8b8b8 !important;
-    border-right: 1px solid #1e1e1e !important;
+    border-right: 1px solid #202020 !important;
     border-radius: 4px 4px 0 0 !important;
     margin: 2px 2px 0 2px !important;
     padding: 5px 12px !important;
     box-shadow: none !important;
 }
 
+tabbar tabboxchild:hover,
+tabbar tabbox > tabboxchild:hover,
 tabbar tab:hover,
 tabbox tab:hover,
 tab:hover {
-    background-color: #343434 !important;
+    background-color: #3c3c3c !important;
     color: #ffffff !important;
 }
 
-/* Активная вкладка — светлее (#3c3c3c) с фирменной оранжевой полосой Ubuntu (#e95420) */
+/* ==============================================================================
+ * Активная вкладка — контрастно светлая (#4a4a4a) с фирменной оранжевой полосой Ubuntu
+ * ============================================================================== */
+tabbar tabboxchild:selected,
+tabbar tabbox > tabboxchild:selected,
 tabbar tab:selected,
 tabbar tab:checked,
 tabbox tab:selected,
 tab:selected {
-    background-color: #3c3c3c !important;
+    background-color: #4a4a4a !important;
     background-image: none !important;
     color: #ffffff !important;
     font-weight: 600 !important;
     border-bottom: none !important;
     border-top: 2px solid #e95420 !important;
-    box-shadow: inset 0 -1px #3c3c3c !important;
+    box-shadow: inset 0 -1px #4a4a4a !important;
 }
 
 tabbar tab label,
