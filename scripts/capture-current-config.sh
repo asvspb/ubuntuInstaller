@@ -43,6 +43,10 @@ if [[ -f "$REAL_HOME/.config/dconf/user" ]]; then
     safe_cp "$REAL_HOME/.config/dconf/user" "$USER_DIR/.config/dconf/user"
     success "База dconf (user) успешно сохранена!"
 fi
+if command -v dconf &>/dev/null; then
+    HOME="$REAL_HOME" dconf dump /org/gnome/ > "$USER_DIR/.config/dconf/gnome-desktop.dconf" 2>/dev/null || true
+    success "Текстовый дамп dconf (gnome-desktop.dconf) сохранен!"
+fi
 
 info "2. Захват конфигураций Shell (Zsh, Bash, ZeroTier, Git)"
 for file in .bashrc .zshrc .zsh_plugins.txt .zt-functions.sh .gitconfig .p10k.zsh; do
