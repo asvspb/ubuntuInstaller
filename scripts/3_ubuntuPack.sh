@@ -90,8 +90,8 @@ info "6.1. Установка Ptyxis Terminal (новый терминал Ubunt
 if ! command -v flatpak &>/dev/null; then
     sudo apt install -y flatpak
 fi
-flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-flatpak install -y flathub app.devsuite.Ptyxis 2>/dev/null || true
+sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+sudo flatpak install -y flathub app.devsuite.Ptyxis 2>/dev/null || true
 success "Ptyxis Terminal установлен!"
 
 info "7. Установка OnlyOffice Desktop Editors"
