@@ -1,0 +1,113 @@
+/* ==============================================================================
+ * Ptyxis Terminal & GTK4 Styling: Black Titlebar & Dark Gray Tabs
+ * ============================================================================== */
+
+/* Черный верх окна (Titlebar / Headerbar) для всех тем */
+window.ptyxis-window headerbar,
+window headerbar,
+headerbar.flat,
+headerbar,
+toolbarview > revealer.top-bar,
+toolbarview > revealer.top-bar > windowhandle,
+toolbarview > revealer.top-bar headerbar {
+    background-color: #000000 !important;
+    background-image: none !important;
+    color: #ffffff !important;
+    border-bottom: 1px solid #1a1a1a !important;
+    box-shadow: none !important;
+}
+
+headerbar windowtitle,
+headerbar .title,
+headerbar .subtitle {
+    color: #ffffff !important;
+}
+
+headerbar windowcontrols button,
+headerbar button {
+    color: #d8d8d8 !important;
+}
+
+headerbar button:hover {
+    background-color: #222222 !important;
+    color: #ffffff !important;
+}
+
+/* ==============================================================================
+ * Панель вкладок (AdwTabBar) и сами вкладки — темно-серые (как в GNOME Terminal)
+ * ============================================================================== */
+tabbar,
+tabbar > revealer > box,
+tabbar box.inline-tab-bar,
+tabbox {
+    background-color: #1a1a1a !important;
+    background-image: none !important;
+    border-bottom: 1px solid #0f0f0f !important;
+}
+
+/* Неактивные вкладки (темно-серые) */
+tabbar tab,
+tabbox tab,
+tab {
+    background-color: #282828 !important;
+    background-image: none !important;
+    color: #b0b0b0 !important;
+    border-right: 1px solid #1c1c1c !important;
+    border-radius: 6px 6px 0 0 !important;
+    margin: 2px 2px 0 2px !important;
+    padding: 5px 12px !important;
+}
+
+tabbar tab:hover,
+tabbox tab:hover,
+tab:hover {
+    background-color: #333333 !important;
+    color: #ffffff !important;
+}
+
+/* Активная вкладка (контрастный темно-серый) */
+tabbar tab:selected,
+tabbar tab:checked,
+tabbox tab:selected,
+tab:selected {
+    background-color: #3d3d3d !important;
+    background-image: none !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    border-bottom: none !important;
+    border-top: 2px solid #5294e2 !important;
+}
+
+tabbar tab label,
+tab label {
+    color: inherit !important;
+}
+
+/* Кнопка закрытия вкладки */
+tabbar tab button.close-button,
+tabbar tab button.close,
+tab button.close {
+    color: #999999 !important;
+    border-radius: 99px !important;
+    background-color: transparent !important;
+}
+
+tabbar tab button.close-button:hover,
+tabbar tab button.close:hover,
+tab button.close:hover {
+    background-color: #505050 !important;
+    color: #ffffff !important;
+}
+
+/* Кнопка новой вкладки */
+tabbar > revealer > box > button,
+tabbar button.add-tab-button {
+    background-color: transparent !important;
+    color: #cccccc !important;
+}
+
+tabbar > revealer > box > button:hover,
+tabbar button.add-tab-button:hover {
+    background-color: #2c2c2c !important;
+    color: #ffffff !important;
+}

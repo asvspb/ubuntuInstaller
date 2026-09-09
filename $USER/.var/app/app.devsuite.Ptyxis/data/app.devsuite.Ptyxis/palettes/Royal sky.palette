@@ -4,6 +4,8 @@ Name=Royal sky
 [Dark]
 Background=#003E7D
 Foreground=#FFFFFF
+TitlebarBackground=#000000
+TitlebarForeground=#FFFFFF
 Cursor=#FFFFFF
 Color0=#000000
 Color1=#ED333B
@@ -25,6 +27,8 @@ Color15=#EEEEEC
 [Light]
 Background=#003E7D
 Foreground=#FFFFFF
+TitlebarBackground=#000000
+TitlebarForeground=#FFFFFF
 Cursor=#FFFFFF
 Color0=#000000
 Color1=#ED333B

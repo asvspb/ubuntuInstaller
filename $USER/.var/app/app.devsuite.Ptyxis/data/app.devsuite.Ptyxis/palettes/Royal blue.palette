@@ -4,6 +4,8 @@ Name=Royal blue
 [Dark]
 Background=#002851
 Foreground=#FFFEFE
+TitlebarBackground=#000000
+TitlebarForeground=#FFFFFF
 Cursor=#FFFEFE
 Color0=#2B2A2A
 Color1=#ED333B
@@ -25,6 +27,8 @@ Color15=#FFFFFF
 [Light]
 Background=#002851
 Foreground=#FFFEFE
+TitlebarBackground=#000000
+TitlebarForeground=#FFFFFF
 Cursor=#FFFEFE
 Color0=#2B2A2A
 Color1=#ED333B

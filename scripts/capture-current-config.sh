@@ -96,9 +96,13 @@ rm -f "$USER_DIR/.config/gtk-3.0/bookmarks" 2>/dev/null || true
 info "4.1. Захват конфигурации Ptyxis (Терминал Ubuntu 26 / GNOME 46+)"
 if [[ -d "$REAL_HOME/.var/app/app.devsuite.Ptyxis" ]]; then
     mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings"
+    mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/gtk-4.0"
     mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes"
     mkdir -p "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/ptyxis/palettes"
     safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings/keyfile" "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/glib-2.0/settings/keyfile"
+    if [[ -f "$REAL_HOME/.var/app/app.devsuite.Ptyxis/config/gtk-4.0/gtk.css" ]]; then
+        safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/config/gtk-4.0/gtk.css" "$USER_DIR/.var/app/app.devsuite.Ptyxis/config/gtk-4.0/gtk.css"
+    fi
     if [[ -d "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes" ]]; then
         safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/"* "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/" 2>/dev/null || true
         safe_cp "$REAL_HOME/.var/app/app.devsuite.Ptyxis/data/app.devsuite.Ptyxis/palettes/"* "$USER_DIR/.var/app/app.devsuite.Ptyxis/data/ptyxis/palettes/" 2>/dev/null || true
