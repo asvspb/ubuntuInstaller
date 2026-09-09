@@ -81,7 +81,7 @@ if command -v code &>/dev/null; then
 fi
 
 info "4. Захват конфигураций прикладных программ (~/.config/)"
-for app in copyq guake btop mc OpenRGB warp-terminal autostart mimeapps.list gtk-3.0 gtk-4.0 nekobox; do
+for app in copyq guake btop mc yazi OpenRGB warp-terminal autostart mimeapps.list gtk-3.0 gtk-4.0 nekobox; do
     if [[ -d "$REAL_HOME/.config/$app" ]]; then
         mkdir -p "$USER_DIR/.config/$app"
         safe_cp "$REAL_HOME/.config/$app" "$USER_DIR/.config/"
