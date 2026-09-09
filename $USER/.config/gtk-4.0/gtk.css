@@ -1,6 +1,7 @@
 /* ==============================================================================
  * Ptyxis Terminal & GTK4 Styling
- * Dark graphite headerbar (#202020) and medium-gray tabs (#303030 / #3c3c3c)
+ * Dark graphite headerbar (#202020), mid-tone inactive tabs (#2c2c2c),
+ * and highlighted active tab (#3c3c3c) with Ubuntu accent (#e95420)
  * ============================================================================== */
 
 :root {
@@ -17,7 +18,7 @@
 }
 
 /* ==============================================================================
- * Заголовок окна (Titlebar / Headerbar) — более темный (#202020)
+ * Заголовок окна (Titlebar / Headerbar) — темный графит (#202020)
  * ============================================================================== */
 window.ptyxis-window headerbar,
 window headerbar,
@@ -55,26 +56,26 @@ headerbar button:hover {
 }
 
 /* ==============================================================================
- * Панель вкладок (AdwTabBar) и сами вкладки — светло-серый цвет (#303030)
+ * Панель вкладок (AdwTabBar)
  * ============================================================================== */
 tabbar,
 tabbar .box,
 tabbar > revealer > box,
 tabbar box.inline-tab-bar,
 tabbox {
-    background-color: #262626 !important;
+    background-color: #232323 !important;
     background-image: none !important;
-    border-bottom: 1px solid #1a1a1a !important;
+    border-bottom: 1px solid #181818 !important;
 }
 
-/* Неактивные вкладки (серый #303030) */
+/* Неактивные вкладки — средний тон (#2c2c2c) между заголовком (#202020) и активной (#3c3c3c) */
 tabbar tab,
 tabbox tab,
 tab {
-    background-color: #303030 !important;
+    background-color: #2c2c2c !important;
     background-image: none !important;
-    color: #c8c8c8 !important;
-    border-right: 1px solid #202020 !important;
+    color: #b8b8b8 !important;
+    border-right: 1px solid #1e1e1e !important;
     border-radius: 4px 4px 0 0 !important;
     margin: 2px 2px 0 2px !important;
     padding: 5px 12px !important;
@@ -84,11 +85,11 @@ tab {
 tabbar tab:hover,
 tabbox tab:hover,
 tab:hover {
-    background-color: #383838 !important;
+    background-color: #343434 !important;
     color: #ffffff !important;
 }
 
-/* Активная вкладка — чуть светлее (#3c3c3c) с фирменной оранжевой полосой Ubuntu */
+/* Активная вкладка — светлее (#3c3c3c) с фирменной оранжевой полосой Ubuntu (#e95420) */
 tabbar tab:selected,
 tabbar tab:checked,
 tabbox tab:selected,
