@@ -135,6 +135,31 @@ gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null
 gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true
 success "Темная тема интерфейса установлена!"
 
+# ------------------------------------------------------------------------------
+# 8. Защита USB-периферии и мыши от засыпания (Wakeup & Autosuspend Denylist)
+# ------------------------------------------------------------------------------
+info "7. Настройка постоянного питания и пробуждения USB-мыши и хабов"
+sudo mkdir -p /etc/udev/rules.d
+cat << 'UDEV_EOF' | sudo tee /etc/udev/rules.d/99-usb-mouse-wakeup.rules >/dev/null
+# Предотвращение отключения питания и зависания мыши/хаба после сна монитора
+SUBSYSTEM=="usb", ATTR{idVendor}=="2148", ATTR{idProduct}=="7022", ATTR{power/control}="on", ATTR{power/wakeup}="enabled"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1c4f", ATTR{idProduct}=="0048", ATTR{power/control}="on", ATTR{power/wakeup}="enabled"
+# Включение разрешения пробуждения для всех USB-мышей
+ACTION=="add", SUBSYSTEM=="usb", ENV{ID_INPUT_MOUSE}=="1", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
+UDEV_EOF
+sudo udevadm control --reload-rules 2>/dev/null || true
+
+# Интеграция с TLP (если установлен)
+sudo mkdir -p /etc/tlp.d
+cat << 'TLP_EOF' | sudo tee /etc/tlp.d/50-usb-mouse.conf >/dev/null
+# Исключение USB-хаба и мыши из агрессивного autosuspend
+USB_DENYLIST="2148:7022 1c4f:0048"
+TLP_EOF
+if command -v tlp &>/dev/null; then
+    sudo tlp start >/dev/null 2>&1 || true
+fi
+success "Правила питания и пробуждения USB настроены!"
+
 echo
 success "======================================================================="
 success " Адаптивная оптимизация под данное оборудование успешно завершена!"

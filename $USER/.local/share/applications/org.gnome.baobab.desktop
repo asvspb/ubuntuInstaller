@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Baobab
+Name[ru]=Анализатор дисков (Baobab)
+Comment=Check folder sizes and available disk space
+Comment[ru]=Изучение размера папок и свободного места на дисках
+Keywords=storage;space;cleanup;baobab;диск;баобаб;память;очистка;
+Exec=/var/lib/flatpak/exports/bin/org.gnome.baobab @@u %U @@
+Icon=/var/lib/flatpak/exports/share/icons/hicolor/scalable/apps/org.gnome.baobab.svg
+Terminal=false
+Type=Application
+StartupNotify=true
+MimeType=inode/directory;
+Categories=GTK;GNOME;System;Filesystem;Utility;
+X-Flatpak=org.gnome.baobab
