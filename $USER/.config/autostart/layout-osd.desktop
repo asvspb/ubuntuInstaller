@@ -2,7 +2,7 @@
 Type=Application
 Name=Keyboard Layout OSD
 Comment=Displays on-screen indicator when keyboard layout changes
-Exec=/home/asv-spb/.local/bin/layout-osd.py
+Exec=/usr/bin/python3 /home/asv-spb/.local/bin/layout-osd.py
 Terminal=false
 StartupNotify=false
 X-GNOME-Autostart-enabled=true

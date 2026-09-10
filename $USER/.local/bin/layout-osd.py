@@ -79,8 +79,6 @@ class LayoutOSD(Gtk.Window):
         self.connect("draw", self.on_draw)
 
         self.hide_timer_id = None
-        self.last_group = -1
-
         self.init_x11()
 
     def on_realize(self, widget):
@@ -103,12 +101,22 @@ class LayoutOSD(Gtk.Window):
             print("[LayoutOSD] Failed to open X display", file=sys.stderr, flush=True)
             sys.exit(1)
 
+        self.x11.XConnectionNumber.restype = ctypes.c_int
+        self.x11.XConnectionNumber.argtypes = [ctypes.c_void_p]
+
+        self.x11.XPending.restype = ctypes.c_int
+        self.x11.XPending.argtypes = [ctypes.c_void_p]
+
+        self.x11.XNextEvent.restype = ctypes.c_int
+        self.x11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
         opcode = ctypes.c_int()
         self.event_base = ctypes.c_int()
         error_base = ctypes.c_int()
         major = ctypes.c_int(1)
         minor = ctypes.c_int(0)
 
+        self.x11.XkbQueryExtension.restype = ctypes.c_int
         self.x11.XkbQueryExtension.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_int),
@@ -122,6 +130,7 @@ class LayoutOSD(Gtk.Window):
 
         XkbUseCoreKbd = 0x0100
         XkbStateNotifyMask = 1 << 2
+        self.x11.XkbSelectEvents.restype = ctypes.c_int
         self.x11.XkbSelectEvents.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ulong, ctypes.c_ulong]
         self.x11.XkbSelectEvents(self.disp, XkbUseCoreKbd, XkbStateNotifyMask, XkbStateNotifyMask)
 
