@@ -139,10 +139,10 @@ if [[ -f "$REAL_HOME/.local/bin/telegram-clean.sh" ]]; then
     success "Захвачен лаунчер Telegram с TRIM"
 fi
 
-if [[ -f "$REAL_HOME/.local/bin/layout-osd.py" ]]; then
-    safe_cp "$REAL_HOME/.local/bin/layout-osd.py" "$USER_DIR/.local/bin/layout-osd.py"
-    chmod +x "$USER_DIR/.local/bin/layout-osd.py"
-    success "Захвачен OSD индикатор раскладки: ~/.local/bin/layout-osd.py"
+if [[ -d "$REAL_HOME/.local/share/gnome-shell/extensions" ]]; then
+    mkdir -p "$USER_DIR/.local/share/gnome-shell/extensions"
+    cp -rf "$REAL_HOME/.local/share/gnome-shell/extensions/"* "$USER_DIR/.local/share/gnome-shell/extensions/" 2>/dev/null || true
+    success "Захвачены расширения GNOME Shell"
 fi
 
 if [[ -d "$REAL_HOME/.local/share/applications" ]]; then

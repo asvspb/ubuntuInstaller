@@ -1,0 +1,6 @@
+{
+  "name": "Fast Layout OSD",
+  "description": "Reduces layout switcher OSD display timeout by 75% (to 375ms)",
+  "uuid": "fast-layout-osd@asv-spb",
+  "shell-version": ["42", "42.9"]
+}

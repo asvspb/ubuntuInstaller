@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Remap Home Key
-Comment=Switch layout on Home, original Home on Shift+Home
-Exec=xmodmap -e "keycode 110 = ISO_Next_Group Home ISO_Next_Group Home"
-Terminal=false
-StartupNotify=false
-X-GNOME-Autostart-enabled=true

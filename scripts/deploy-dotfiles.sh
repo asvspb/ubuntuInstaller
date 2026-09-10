@@ -63,17 +63,18 @@ if [[ -f "$USER_DIR/.local/bin/telegram-clean.sh" ]]; then
     success "Установлен лаунчер: ~/.local/bin/telegram-clean.sh"
 fi
 
-if [[ -f "$USER_DIR/.local/bin/layout-osd.py" ]]; then
-    backup_and_link "$USER_DIR/.local/bin/layout-osd.py" "$HOME/.local/bin/layout-osd.py"
-    chmod +x "$HOME/.local/bin/layout-osd.py"
-    success "Установлен OSD индикатор раскладки: ~/.local/bin/layout-osd.py"
-fi
-
 info "3. Развертывание .desktop ярлыков (~/.local/share/applications/)"
 mkdir -p "$HOME/.local/share/applications"
 if [[ -d "$USER_DIR/.local/share/applications" ]]; then
     cp -rf "$USER_DIR/.local/share/applications/"* "$HOME/.local/share/applications/" 2>/dev/null || true
     success "Ярлыки приложений обновлены!"
+fi
+
+info "3.1. Развертывание расширений GNOME Shell (~/.local/share/gnome-shell/extensions/)"
+mkdir -p "$HOME/.local/share/gnome-shell/extensions"
+if [[ -d "$USER_DIR/.local/share/gnome-shell/extensions" ]]; then
+    cp -rf "$USER_DIR/.local/share/gnome-shell/extensions/"* "$HOME/.local/share/gnome-shell/extensions/" 2>/dev/null || true
+    success "Расширения GNOME Shell синхронизированы!"
 fi
 
 info "4. Развертывание настроек программ (~/.config/)"
