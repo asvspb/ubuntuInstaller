@@ -51,7 +51,7 @@ info "7. Обновление репозиториев и установка с�
 sudo apt update -y
 sudo apt install -y git gh mc tmux zsh mosh curl wget ca-certificates \
     net-tools make apt-transport-https gpg gnupg software-properties-common \
-    dconf-editor gnome-tweaks gnome-control-center ubuntu-restricted-extras
+    dconf-editor gnome-tweaks gnome-control-center ubuntu-restricted-extras xcape
 
 if command -v zsh &>/dev/null; then
     sudo chsh -s "$(which zsh)" "$TARGET_USER" 2>/dev/null || true
@@ -73,6 +73,11 @@ if ! command -v telegram-desktop &>/dev/null; then
     sudo snap install telegram-desktop || true
     success "Telegram Desktop установлен!"
 fi
+
+info "10. Настройка раскладки клавиатуры (US/RU и переключение раскладки)"
+gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'ru')]" 2>/dev/null || true
+gsettings set org.gnome.desktop.input-sources xkb-options "['grp:toggle']" 2>/dev/null || true
+success "Раскладка клавиатуры US/RU настроена!"
 
 echo
 success "======================================================================="

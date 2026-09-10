@@ -46,7 +46,7 @@ sudo apt install -y build-essential gcc g++ cmake make default-jdk python3 pytho
     code antigravity acli \
     btop iftop htop ncdu ranger duf zoxide rclone fzf ripgrep fd-find jq \
     wireguard ufw timeshift synaptic dconf-editor openrgb \
-    vlc qbittorrent alacarte xclip copyq guake flameshot
+    vlc qbittorrent alacarte xclip copyq guake flameshot xcape
 
 # Установка современных fastfetch и eza
 sudo apt install -y fastfetch 2>/dev/null || sudo apt install -y neofetch 2>/dev/null || true
