@@ -1,8 +1,8 @@
 [Desktop Entry]
+Type=Application
 Name=Xcape Layout Switcher
 Comment=Switch keyboard layout on Left Ctrl tap
-Exec=/usr/bin/xcape -e 'Control_L=ISO_Next_Group'
+Exec=/usr/bin/xcape -e "Control_L=ISO_Next_Group"
 Terminal=false
-Type=Application
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
