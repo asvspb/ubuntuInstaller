@@ -578,17 +578,38 @@ cl2() {
 
 # --- End Antigravity Functions ---
 
-# --- Terminal Title Function ---
-# Automatically added to rename terminal tabs
-set-title() {
-    printf "\033]0;%s\007" "$1"
-    if [ -n "$BASH_VERSION" ]; then
-        export PS1="\[\e]0;$1\a\]\u@\h:\w\$ "
-    elif [ -n "$ZSH_VERSION" ]; then
-        export PROMPT="%{\e]0;$1\a%}%n@%m:%~%# "
-    fi
+# --- Terminal Title Management ---
+# Динамическое формирование заголовка вкладки:
+# По умолчанию: имя текущей папки.
+# При наличии названия проекта: "Имя проекта: папка"
+export TAB_PROJECT_TITLE=""
+
+__update_terminal_title() {
+  local dir_name
+  if [[ "$PWD" == "$HOME" ]]; then
+    dir_name="~"
+  elif [[ "$PWD" == "/" ]]; then
+    dir_name="/"
+  else
+    dir_name="${PWD##*/}"
+  fi
+
+  if [[ -n "$TAB_PROJECT_TITLE" ]]; then
+    printf '\e]0;%s: %s\a' "$TAB_PROJECT_TITLE" "$dir_name"
+  else
+    printf '\e]0;%s\a' "$dir_name"
+  fi
 }
-# -------------------------------
+
+set-title() {
+  export TAB_PROJECT_TITLE="$1"
+  __update_terminal_title
+}
+
+if [[ "$PROMPT_COMMAND" != *"__update_terminal_title"* ]]; then
+  PROMPT_COMMAND="__update_terminal_title${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+fi
+# ---------------------------------
 
 
 # kimi-code
