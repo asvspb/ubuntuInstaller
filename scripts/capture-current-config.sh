@@ -139,6 +139,12 @@ if [[ -f "$REAL_HOME/.local/bin/telegram-clean.sh" ]]; then
     success "Захвачен лаунчер Telegram с TRIM"
 fi
 
+if [[ -f "$REAL_HOME/.local/bin/layout-osd.py" ]]; then
+    safe_cp "$REAL_HOME/.local/bin/layout-osd.py" "$USER_DIR/.local/bin/layout-osd.py"
+    chmod +x "$USER_DIR/.local/bin/layout-osd.py"
+    success "Захвачен OSD индикатор раскладки: ~/.local/bin/layout-osd.py"
+fi
+
 if [[ -d "$REAL_HOME/.local/share/applications" ]]; then
     cp -rf "$REAL_HOME/.local/share/applications/"* "$USER_DIR/.local/share/applications/" 2>/dev/null || true
     success "Захвачены кастомные ярлыки .desktop"

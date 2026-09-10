@@ -63,6 +63,12 @@ if [[ -f "$USER_DIR/.local/bin/telegram-clean.sh" ]]; then
     success "Установлен лаунчер: ~/.local/bin/telegram-clean.sh"
 fi
 
+if [[ -f "$USER_DIR/.local/bin/layout-osd.py" ]]; then
+    backup_and_link "$USER_DIR/.local/bin/layout-osd.py" "$HOME/.local/bin/layout-osd.py"
+    chmod +x "$HOME/.local/bin/layout-osd.py"
+    success "Установлен OSD индикатор раскладки: ~/.local/bin/layout-osd.py"
+fi
+
 info "3. Развертывание .desktop ярлыков (~/.local/share/applications/)"
 mkdir -p "$HOME/.local/share/applications"
 if [[ -d "$USER_DIR/.local/share/applications" ]]; then
