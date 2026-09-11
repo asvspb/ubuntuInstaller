@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Xcape Layout Switcher
-Comment=Switch keyboard layout on Ctrl tap
-Exec=/usr/bin/xcape -e "Control_L=Home;Control_R=Home"
+Comment=Switch keyboard layout on Ctrl tap via F13
+Exec=/bin/sh -c "xmodmap -e 'keycode 248 = F13' && /usr/bin/xcape -e 'Control_L=F13;Control_R=F13'"
 Terminal=false
 StartupNotify=false
 X-GNOME-Autostart-enabled=true

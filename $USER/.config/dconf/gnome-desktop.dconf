@@ -258,7 +258,7 @@ allow-volume-above-100-percent=true
 
 [desktop/wm/keybindings]
 activate-window-menu=@as []
-switch-input-source=['<Alt>space', 'Home']
+switch-input-source=['<Alt>space', 'F13']
 switch-input-source-backward=['<Shift><Alt>space']
 
 [desktop/wm/preferences]
@@ -396,10 +396,11 @@ sleep-inactive-ac-type='nothing'
 
 [shell]
 app-picker-layout=[{'7ee32441-cac4-46b7-9dfb-349c8e20e7b4': <{'position': <0>}>, '0a013d0b-bbd7-4022-ba43-a41e477d3caf': <{'position': <1>}>, 'b7f46b8d-4746-45ef-9bba-b9d18530c9f9': <{'position': <2>}>, 'd1ae0c23-2682-4204-aaee-c5872070c5c1': <{'position': <3>}>, 'Utilities': <{'position': <4>}>}]
+command-history=['r']
 disable-user-extensions=false
 disabled-extensions=['ding@rastersoft.com', 'dash-to-dock@micxgx.gmail.com', 'places-menu@gnome-shell-extensions.gcampax.github.com', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'apps-menu@gnome-shell-extensions.gcampax.github.com', 'keyboard-backlight-menu@ophir.dev', 'openweather-extension@jenslody.de', 'ProxySwitcher@flannaghan.com', 'show-desktop-button@amivaleo', 'ShutdownTimer@deminder']
 enabled-extensions=['ubuntu-dock@ubuntu.com', 'ubuntu-appindicators@ubuntu.com', 'just-perfection-desktop@just-perfection', 'wireguard-indicator@atareao.es', 'weatheroclock@CleoMenezesJr.github.io', 'gnome-wireguard-extension@SJBERTRAND.github.com', 'drive-menu@gnome-shell-extensions.gcampax.github.com', 'fast-layout-osd@asv-spb']
-favorite-apps=['gnome-control-center.desktop', 'org.gnome.Nautilus.desktop', 'dev.warp.Warp.desktop', 'app.devsuite.Ptyxis.desktop', 'org.gnome.Terminal.desktop', 'code.desktop', 'zcode.desktop', 'google-chrome.desktop', 'chromium_chromium.desktop', 'obsidian_obsidian.desktop', 'org.gnome.Calculator.desktop', 'kpat_kpat.desktop', 'org.gnome.Rhythmbox3.desktop', 'stretchly_stretchly.desktop', 'discord.desktop', 'teleguard_desktop.desktop']
+favorite-apps=['gnome-control-center.desktop', 'org.gnome.Nautilus.desktop', 'app.devsuite.Ptyxis.desktop', 'code.desktop', 'zcode.desktop', 'google-chrome.desktop', 'chromium_chromium.desktop', 'obsidian_obsidian.desktop', 'org.gnome.Calculator.desktop', 'kpat_kpat.desktop', 'org.gnome.Rhythmbox3.desktop', 'stretchly_stretchly.desktop', 'discord.desktop', 'teleguard_desktop.desktop']
 had-bluetooth-devices-setup=true
 welcome-dialog-last-shown-version='42.9'
 
