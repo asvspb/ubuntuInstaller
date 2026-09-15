@@ -82,10 +82,10 @@ primary-color='#000000000000'
 secondary-color='#000000000000'
 
 [desktop/input-sources]
-mru-sources=[('xkb', 'ru'), ('xkb', 'us')]
+mru-sources=[('xkb', 'us'), ('xkb', 'ru')]
 per-window=false
 sources=[('xkb', 'us'), ('xkb', 'ru')]
-xkb-options=['grp:toggle']
+xkb-options=['grp:menu_toggle']
 
 [desktop/interface]
 color-scheme='prefer-dark'
@@ -400,7 +400,7 @@ command-history=['r']
 disable-user-extensions=false
 disabled-extensions=['ding@rastersoft.com', 'dash-to-dock@micxgx.gmail.com', 'places-menu@gnome-shell-extensions.gcampax.github.com', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'apps-menu@gnome-shell-extensions.gcampax.github.com', 'keyboard-backlight-menu@ophir.dev', 'openweather-extension@jenslody.de', 'ProxySwitcher@flannaghan.com', 'show-desktop-button@amivaleo', 'ShutdownTimer@deminder']
 enabled-extensions=['ubuntu-dock@ubuntu.com', 'ubuntu-appindicators@ubuntu.com', 'just-perfection-desktop@just-perfection', 'wireguard-indicator@atareao.es', 'weatheroclock@CleoMenezesJr.github.io', 'gnome-wireguard-extension@SJBERTRAND.github.com', 'drive-menu@gnome-shell-extensions.gcampax.github.com', 'fast-layout-osd@asv-spb']
-favorite-apps=['gnome-control-center.desktop', 'org.gnome.Nautilus.desktop', 'app.devsuite.Ptyxis.desktop', 'code.desktop', 'zcode.desktop', 'google-chrome.desktop', 'chromium_chromium.desktop', 'obsidian_obsidian.desktop', 'org.gnome.Calculator.desktop', 'kpat_kpat.desktop', 'org.gnome.Rhythmbox3.desktop', 'stretchly_stretchly.desktop', 'discord.desktop', 'teleguard_desktop.desktop']
+favorite-apps=['gnome-control-center.desktop', 'org.gnome.Nautilus.desktop', 'app.devsuite.Ptyxis.desktop', 'code.desktop', 'zcode.desktop', 'google-chrome.desktop', 'chromium_chromium.desktop', 'obsidian_obsidian.desktop', 'org.gnome.Calculator.desktop', 'kpat_kpat.desktop', 'org.gnome.Rhythmbox3.desktop', 'stretchly_stretchly.desktop']
 had-bluetooth-devices-setup=true
 welcome-dialog-last-shown-version='42.9'
 
