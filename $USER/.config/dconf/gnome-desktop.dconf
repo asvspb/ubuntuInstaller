@@ -82,10 +82,10 @@ primary-color='#000000000000'
 secondary-color='#000000000000'
 
 [desktop/input-sources]
-mru-sources=[('xkb', 'us'), ('xkb', 'ru')]
+mru-sources=[('xkb', 'ru'), ('xkb', 'us')]
 per-window=false
 sources=[('xkb', 'us'), ('xkb', 'ru')]
-xkb-options=['grp:menu_toggle']
+xkb-options=@as []
 
 [desktop/interface]
 color-scheme='prefer-dark'
@@ -104,7 +104,7 @@ text-scaling-factor=1.0800000000000001
 automount=false
 
 [desktop/notifications]
-application-children=['snap-store-ubuntu-software', 'org-gnome-nautilus', 'telegram-desktop-telegram-desktop', 'firefox-firefox', 'code', 'io-snapcraft-sessionagent', 'org-gnome-gedit', 'google-chrome', 'update-manager', 'org-gnome-rhythmbox3', 'snap-store-ubuntu-software-local-file', 'org-qbittorrent-qbittorrent', 'brave-browser', 'obsidian-obsidian', 'gnome-network-panel', 'org-gnome-fileroller', 'hiddify', 'xdg-desktop-portal-gnome', 'orion-desktop-orion-desktop', 'transmission-gtk', 'org-gnome-shell-extensions', 'vlc', 'discord-discord', 'org-gnome-eog', 'kpat-kpat', 'snapd-desktop-integration-snapd-desktop-integration', 'dev-warp-warp', 'gnome-power-panel', 'windsurf', 'onlyoffice-desktopeditors-onlyoffice-desktopeditors', 'org-rncbc-qsynth', 'antigravity', 'chromium-chromium', 'org-gnome-terminal', 'zcode', 'xdg-desktop-portal-gtk', 'discord']
+application-children=['snap-store-ubuntu-software', 'org-gnome-nautilus', 'telegram-desktop-telegram-desktop', 'firefox-firefox', 'code', 'io-snapcraft-sessionagent', 'org-gnome-gedit', 'google-chrome', 'update-manager', 'org-gnome-rhythmbox3', 'snap-store-ubuntu-software-local-file', 'org-qbittorrent-qbittorrent', 'brave-browser', 'obsidian-obsidian', 'gnome-network-panel', 'org-gnome-fileroller', 'hiddify', 'xdg-desktop-portal-gnome', 'orion-desktop-orion-desktop', 'transmission-gtk', 'org-gnome-shell-extensions', 'vlc', 'discord-discord', 'org-gnome-eog', 'kpat-kpat', 'snapd-desktop-integration-snapd-desktop-integration', 'dev-warp-warp', 'gnome-power-panel', 'windsurf', 'onlyoffice-desktopeditors-onlyoffice-desktopeditors', 'org-rncbc-qsynth', 'antigravity', 'chromium-chromium', 'org-gnome-terminal', 'zcode', 'xdg-desktop-portal-gtk', 'discord', 'org-flameshot-flameshot']
 show-banners=true
 show-in-lock-screen=false
 
@@ -155,6 +155,9 @@ application-id='obsidian_obsidian.desktop'
 
 [desktop/notifications/application/onlyoffice-desktopeditors-onlyoffice-desktopeditors]
 application-id='onlyoffice-desktopeditors_onlyoffice-desktopeditors.desktop'
+
+[desktop/notifications/application/org-flameshot-flameshot]
+application-id='org.flameshot.Flameshot.desktop'
 
 [desktop/notifications/application/org-gnome-eog]
 application-id='org.gnome.eog.desktop'

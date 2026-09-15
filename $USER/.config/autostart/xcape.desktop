@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Xcape Layout Switcher
-Comment=Switch keyboard layout: Left Ctrl tap without OSD, Right Alt with OSD
-Exec=/usr/bin/xcape -e "Control_L=ISO_Next_Group;Alt_R=XF86Launch9"
+Comment=Switch keyboard layout on Right Alt tap with OSD
+Exec=/usr/bin/xcape -e "Alt_R=XF86Launch9"
 Terminal=false
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
