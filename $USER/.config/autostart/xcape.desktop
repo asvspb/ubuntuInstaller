@@ -2,7 +2,7 @@
 Type=Application
 Name=Xcape Layout Switcher
 Comment=Switch keyboard layout: Left Ctrl tap without OSD, Right Alt with OSD
-Exec=/bin/sh -c "xmodmap -e 'keycode 108 = F13' && /usr/bin/xcape -e 'Control_L=ISO_Next_Group'"
+Exec=/usr/bin/xcape -e "Control_L=ISO_Next_Group;Alt_R=XF86Launch9"
 Terminal=false
 StartupNotify=false
 X-GNOME-Autostart-enabled=true

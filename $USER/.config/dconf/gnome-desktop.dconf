@@ -258,7 +258,7 @@ allow-volume-above-100-percent=true
 
 [desktop/wm/keybindings]
 activate-window-menu=@as []
-switch-input-source=['<Alt>space', 'F13']
+switch-input-source=['<Alt>space', 'XF86Launch9']
 switch-input-source-backward=['<Shift><Alt>space']
 
 [desktop/wm/preferences]
