@@ -834,5 +834,12 @@ purge_dir_contents "$CACHE_DIR/node-gyp" || true
 purge_dir_contents "$CACHE_DIR/yarn"     || true
 purge_dir_contents "$CACHE_DIR/vscode-ripgrep" || true
 
+# Аппаратный TRIM освобожденных блоков SSD (гарантия невозможности восстановления)
+if command -v fstrim >/dev/null 2>&1; then
+  log "Выполнение аппаратного TRIM SSD (/home, /)..."
+  sudo -n fstrim /home 2>/dev/null || true
+  sudo -n fstrim / 2>/dev/null || true
+fi
+
 log "Готово. Размер $CACHE_DIR = $(size_of "$CACHE_DIR")"
 

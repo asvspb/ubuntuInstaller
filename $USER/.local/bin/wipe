@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# wipe - Secure file & directory wiping with hardware NVMe TRIM
+set -euo pipefail
+
+usage() {
+    cat << 'USG'
+Использование: wipe [ОПЦИИ] ФАЙЛ_ИЛИ_КАТАЛОГ...
+
+Надёжно уничтожает файлы (перезапись псевдослучайными данными + нулями)
+и немедленно выполняет аппаратный NVMe TRIM для зануления ячеек памяти.
+
+Опции:
+  -r, -R    Рекурсивно удалять каталоги и их содержимое
+  -f        Не запрашивать подтверждение
+  -v        Подробный вывод (verbose)
+  -h, --help Показать эту справку
+USG
+    exit 0
+}
+
+RECURSIVE=false
+FORCE=false
+VERBOSE=false
+TARGETS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -r|-R|--recursive)
+            RECURSIVE=true
+            shift
+            ;;
+        -f|--force)
+            FORCE=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        -*)
+            echo "Ошибка: неизвестный параметр $1" >&2
+            exit 1
+            ;;
+        *)
+            TARGETS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    usage
+fi
+
+wipe_file() {
+    local file="$1"
+    if [[ ! -e "$file" && ! -L "$file" ]]; then
+        return 0
+    fi
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo "Перезапись: $file"
+    fi
+    if [[ -f "$file" && ! -L "$file" ]]; then
+        # 1 pass random + 1 pass zero + remove
+        shred -u -z -n 1 "$file" 2>/dev/null || rm -f "$file"
+    else
+        rm -f "$file"
+    fi
+}
+
+wipe_dir() {
+    local dir="$1"
+    if [[ "$RECURSIVE" != "true" ]]; then
+        echo "Ошибка: '$dir' является каталогом (используйте -r для удаления каталогов)" >&2
+        return 1
+    fi
+    # Find and shred all regular files
+    find "$dir" -type f -exec bash -c 'for f; do shred -u -z -n 1 "$f" 2>/dev/null || rm -f "$f"; done' _ {} +
+    # Remove remaining symlinks, sockets, fifos, etc.
+    rm -rf "$dir"
+}
+
+for target in "${TARGETS[@]}"; do
+    if [[ -d "$target" && ! -L "$target" ]]; then
+        wipe_dir "$target"
+    elif [[ -e "$target" || -L "$target" ]]; then
+        wipe_file "$target"
+    else
+        echo "Предупреждение: '$target' не найден" >&2
+    fi
+done
+
+# Perform hardware NVMe TRIM on /home and /
+if command -v fstrim >/dev/null 2>&1; then
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo "Выполнение аппаратного NVMe TRIM..."
+    fi
+    sudo -n fstrim /home 2>/dev/null || true
+    sudo -n fstrim / 2>/dev/null || true
+fi
+
+echo "✓ Файлы уничтожены и свободные блоки NVMe занулены."

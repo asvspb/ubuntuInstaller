@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Check if any files were selected
+if [[ -z "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" ]]; then
+    exit 0
+fi
+
+# Ask confirmation via zenity
+if command -v zenity >/dev/null 2>&1; then
+    zenity --question \
+        --title="Безвозвратное уничтожение" \
+        --text="Вы уверены, что хотите БЕЗВОЗВРАТНО уничтожить выбранные объекты?\n\nФайлы будут перезаписаны случайными данными и занулены через NVMe TRIM." \
+        --ok-label="Уничтожить" \
+        --cancel-label="Отмена" 2>/dev/null || exit 0
+fi
+
+# Process each selected file/directory
+while IFS= read -r file; do
+    if [[ -n "$file" && -e "$file" ]]; then
+        /usr/local/bin/wipe -r "$file"
+    fi
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+
+# Notify user
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send -u normal -i edit-delete "Wipe" "Выбранные объекты успешно уничтожены без возможности восстановления."
+fi

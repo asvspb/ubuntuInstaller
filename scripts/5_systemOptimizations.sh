@@ -81,9 +81,17 @@ success "Параметры sysctl применены (swappiness=${TARGET_SWAPP
 # 3. Обслуживание накопителей (fstrim только для SSD/NVMe)
 # ------------------------------------------------------------------------------
 if [[ $HAS_SSD -eq 1 ]]; then
-    info "2. Включение автоматического обслуживания SSD (fstrim.timer)"
+    info "2. Включение автоматического обслуживания SSD (fstrim.timer и опция discard)"
     sudo systemctl enable --now fstrim.timer 2>/dev/null || true
     success "Таймер fstrim.timer активирован для SSD/NVMe!"
+
+    # Добавление опции discard в /etc/fstab для ext4-разделов на SSD/NVMe (непрерывный аппаратный TRIM)
+    if grep -E "[[:space:]]ext4[[:space:]]" /etc/fstab | grep -v "discard" >/dev/null 2>&1; then
+        sudo sed -i 's|ext4 defaults 0|ext4 defaults,discard 0|g' /etc/fstab 2>/dev/null || true
+        sudo sed -i 's|ext4 errors=remount-ro 0|ext4 errors=remount-ro,discard 0|g' /etc/fstab 2>/dev/null || true
+        sudo mount -a 2>/dev/null || true
+        success "Опция непрерывного TRIM (discard) настроена в /etc/fstab для SSD!"
+    fi
 else
     info "2. Пропуск fstrim (накопитель HDD, TRIM не требуется)."
 fi

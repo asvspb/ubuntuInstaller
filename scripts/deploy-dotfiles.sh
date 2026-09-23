@@ -63,6 +63,13 @@ if [[ -f "$USER_DIR/.local/bin/telegram-clean.sh" ]]; then
     success "Установлен лаунчер: ~/.local/bin/telegram-clean.sh"
 fi
 
+if [[ -f "$USER_DIR/.local/bin/wipe" ]]; then
+    backup_and_link "$USER_DIR/.local/bin/wipe" "$HOME/.local/bin/wipe"
+    chmod +x "$HOME/.local/bin/wipe"
+    sudo cp -f "$HOME/.local/bin/wipe" /usr/local/bin/wipe 2>/dev/null || true
+    success "Установлена утилита безопасного удаления: ~/.local/bin/wipe и /usr/local/bin/wipe"
+fi
+
 info "3. Развертывание .desktop ярлыков (~/.local/share/applications/)"
 mkdir -p "$HOME/.local/share/applications"
 if [[ -d "$USER_DIR/.local/share/applications" ]]; then
@@ -75,6 +82,14 @@ mkdir -p "$HOME/.local/share/gnome-shell/extensions"
 if [[ -d "$USER_DIR/.local/share/gnome-shell/extensions" ]]; then
     cp -rf "$USER_DIR/.local/share/gnome-shell/extensions/"* "$HOME/.local/share/gnome-shell/extensions/" 2>/dev/null || true
     success "Расширения GNOME Shell синхронизированы!"
+fi
+
+info "3.2. Развертывание скриптов контекстного меню Nautilus (~/.local/share/nautilus/scripts/)"
+mkdir -p "$HOME/.local/share/nautilus/scripts"
+if [[ -d "$USER_DIR/.local/share/nautilus/scripts" ]]; then
+    cp -rf "$USER_DIR/.local/share/nautilus/scripts/"* "$HOME/.local/share/nautilus/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.local/share/nautilus/scripts/"* 2>/dev/null || true
+    success "Скрипты контекстного меню Nautilus синхронизированы!"
 fi
 
 info "4. Развертывание настроек программ (~/.config/)"

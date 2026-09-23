@@ -139,6 +139,23 @@ if [[ -f "$REAL_HOME/.local/bin/telegram-clean.sh" ]]; then
     success "Захвачен лаунчер Telegram с TRIM"
 fi
 
+if [[ -f "$REAL_HOME/.local/bin/wipe" ]]; then
+    safe_cp "$REAL_HOME/.local/bin/wipe" "$USER_DIR/.local/bin/wipe"
+    chmod +x "$USER_DIR/.local/bin/wipe"
+    success "Захвачена утилита безопасного удаления: wipe"
+elif [[ -f "/usr/local/bin/wipe" ]]; then
+    safe_cp "/usr/local/bin/wipe" "$USER_DIR/.local/bin/wipe"
+    chmod +x "$USER_DIR/.local/bin/wipe"
+    success "Захвачена утилита безопасного удаления из /usr/local/bin: wipe"
+fi
+
+if [[ -d "$REAL_HOME/.local/share/nautilus/scripts" ]]; then
+    mkdir -p "$USER_DIR/.local/share/nautilus/scripts"
+    cp -rf "$REAL_HOME/.local/share/nautilus/scripts/"* "$USER_DIR/.local/share/nautilus/scripts/" 2>/dev/null || true
+    chmod +x "$USER_DIR/.local/share/nautilus/scripts/"* 2>/dev/null || true
+    success "Захвачены скрипты контекстного меню Nautilus"
+fi
+
 if [[ -d "$REAL_HOME/.local/share/gnome-shell/extensions" ]]; then
     mkdir -p "$USER_DIR/.local/share/gnome-shell/extensions"
     cp -rf "$REAL_HOME/.local/share/gnome-shell/extensions/"* "$USER_DIR/.local/share/gnome-shell/extensions/" 2>/dev/null || true
