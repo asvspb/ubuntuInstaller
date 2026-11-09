@@ -179,6 +179,15 @@
 - Генерация standalone package.json и vite.config для UI проекта
 - Инструкция по восстановлению проекта (чанкование по 7 файлов)
 
+### `scripts/vpn-manager/`
+Клиентский менеджер VPN-профилей (`vpnm`, подробнее — [doc/vpn-manager.md](vpn-manager.md)):
+- Xray VLESS Reality / XHTTP и Hysteria2: импорт share-ссылок, генерация конфигов
+- Systemd user units (`vpnm-<name>.service`): up / down / switch, активный профиль в state.json
+- `vpn profile pull` — импорт ссылок с VDS-сервера по ssh (`vds gateway links`)
+- `vpn sysproxy on|off|status` — GNOME системный прокси → локальный SOCKS-порт
+- `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель
+- TUI-меню (`vpn` без аргументов) на questionary
+
 ## Графические приложения
 
 *   **google-chrome-stable**: Веб-браузер от Google.
@@ -230,7 +239,7 @@
 
 ### `$USER/clean-sys.sh`
 
-Глубокая безопасная очистка системы: кэши (`~/.cache`, Chrome, VS Code, puppeteer/playwright, huggingface, npm, mesa, thumbnails), корзина, журналы (`journalctl --vacuum`), отключённые snap-ревизии, apt-maintenance, tmp, Timeshift-снимки, опционально Docker prune и удаление ML-пакетов. Запуск: алиас `cls` (= `sudo ~/clean-sys.sh`). Поддерживает `DRY_RUN=1` и множество env-флагов для тонкой настройки.
+Глубокая безопасная очистка системы: кэши (`~/.cache`, Chrome, Snap Chromium, VS Code, puppeteer/playwright/chromium snapshots, huggingface, npm, pnpm store, mesa, thumbnails), корзина, журналы (`journalctl --vacuum` и очистка устаревших machine-id), отключённые snap-ревизии, apt-maintenance, tmp, Timeshift-снимки, безопасная очистка Docker (builder cache BuildKit, dangling images) и опционально удаление ML-пакетов. Запуск: алиас `cls` (= `sudo ~/clean-sys.sh`). Поддерживает `DRY_RUN=1` и множество env-флагов для тонкой настройки.
 
 ### `$USER/.local/bin/telegram-clean.sh`
 

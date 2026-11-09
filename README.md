@@ -30,7 +30,8 @@ ubuntuInstaller/
 │   ├── 6_zerotier-client.sh    # ZeroTier клиент и управление сетями
 │   ├── 7_v2raya-proxy.sh       # v2rayA веб-интерфейс прокси
 │   ├── 8_vds-server.sh         # Инициализация VDS через VDS Orchestrator
-│   └── 9_local-proxy-tunnel.sh # Локальный SOCKS5/Nginx туннель
+│   ├── 9_local-proxy-tunnel.sh # Локальный SOCKS5/Nginx туннель
+│   └── vpn-manager/            # 🔐 VPN-менеджер клиента (vpnm): Xray/Hysteria2, TUI (doc/vpn-manager.md)
 ├── $USER/                      # Пользовательские dotfiles и конфигурации
 │   ├── .bashrc / .zshrc        # Расширенная shell-конфигурация с алиасами
 │   ├── .zt-functions.sh        # Функции управления ZeroTier (ztup, ztd, ztswitch)
