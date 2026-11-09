@@ -112,7 +112,10 @@ vpn doctor
 ## Системный прокси: автосопровождение
 
 `vpn sysproxy on` включает GNOME SOCKS-прокси на порт активного профиля **и
-запоминает это в state.json** (`"sysproxy": true`). Пока флаг включён, системный
+запоминает это в state.json** (`"sysproxy": true`). И `on`, и `off` зачищают
+записи http/https/ftp (host+port) через `gsettings reset` — остаётся чистая
+socks-only manual-конфигурация, чужие http-прокси не подхватываются.
+Пока флаг включён, системный
 прокси сопровождается автоматически:
 
 - `vpn up <name>` и `vpn switch <name>` — прокси перепривязывается на SOCKS-порт

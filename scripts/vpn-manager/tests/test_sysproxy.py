@@ -32,6 +32,10 @@ def sets(rec, schema, key):
     return [c for c in rec.commands if c[:4] == ["gsettings", "set", schema, key]]
 
 
+def resets(rec, schema, key):
+    return [c for c in rec.commands if c[:4] == ["gsettings", "reset", schema, key]]
+
+
 def test_on_sets_mode_host_and_port():
     rec = recorder()
     sysproxy.on(2083, run=rec)
@@ -40,12 +44,64 @@ def test_on_sets_mode_host_and_port():
     assert sets(rec, sysproxy.SCHEMA_SOCKS, "port")[-1][4] == "2083"
 
 
-def test_off_sets_mode_none_only():
+def test_on_resets_http_https_ftp_before_setting_socks():
+    rec = recorder()
+    sysproxy.on(2083, run=rec)
+    for schema in ("org.gnome.system.proxy.http",
+                   "org.gnome.system.proxy.https",
+                   "org.gnome.system.proxy.ftp"):
+        assert len(resets(rec, schema, "host")) == 1, schema
+        assert len(resets(rec, schema, "port")) == 1, schema
+    # socks keys themselves are set, never reset
+    assert len(sets(rec, sysproxy.SCHEMA_SOCKS, "host")) == 1
+    assert len(sets(rec, sysproxy.SCHEMA_SOCKS, "port")) == 1
+
+
+def test_on_reset_failure_is_warn_not_fatal():
+    rec = recorder()
+    warned = []
+
+    def run(cmd):
+        rc, out, err = rec(cmd)
+        if cmd[1] == "reset":
+            return 1, "", "reset boom"
+        return rc, out, err
+
+    sysproxy.on(2083, run=run, warn=warned.append)
+    assert warned == [f"gsettings reset {s}.{k} skipped: reset boom"
+                      for s in ("org.gnome.system.proxy.http",
+                                "org.gnome.system.proxy.https",
+                                "org.gnome.system.proxy.ftp")
+                      for k in ("host", "port")]
+    # the socks-only configuration is still fully applied
+    assert sets(rec, sysproxy.SCHEMA, "mode")[-1][4] == "manual"
+    assert sets(rec, sysproxy.SCHEMA_SOCKS, "port")[-1][4] == "2083"
+
+
+def test_off_sets_mode_none_and_resets_http_https_ftp():
     rec = recorder()
     sysproxy.off(run=rec)
     assert sets(rec, sysproxy.SCHEMA, "mode")[-1][4] == "none"
+    for schema in ("org.gnome.system.proxy.http",
+                   "org.gnome.system.proxy.https",
+                   "org.gnome.system.proxy.ftp"):
+        assert len(resets(rec, schema, "host")) == 1, schema
+        assert len(resets(rec, schema, "port")) == 1, schema
+    # socks keys are never touched (existing invariant)
     assert sets(rec, sysproxy.SCHEMA_SOCKS, "host") == []
     assert sets(rec, sysproxy.SCHEMA_SOCKS, "port") == []
+
+
+def test_off_reset_failure_is_warn_not_fatal():
+    warned = []
+
+    def run(cmd):
+        if cmd[1] == "reset":
+            return 1, "", "reset boom"
+        return 0, "", ""
+
+    sysproxy.off(run=run, warn=warned.append)
+    assert len(warned) == 6
 
 
 def test_status_reads_three_values():
