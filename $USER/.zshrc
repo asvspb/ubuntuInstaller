@@ -448,6 +448,7 @@ _stop_isolated_dbus() {
 _check_vpn_active() {
     local zt_active=0
     local wg_active=0
+    local vpnm_active=0
 
     # Проверка ZeroTier (по статусу CLI или активным интерфейсам zt*)
     if sudo -n zerotier-cli status 2>/dev/null | grep -q "ONLINE" || ip -br link show 2>/dev/null | grep -qE "^zt.*(UP|UNKNOWN)"; then
@@ -459,10 +460,23 @@ _check_vpn_active() {
         wg_active=1
     fi
 
-    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ]; then
-        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m ZeroTier и WireGuard ДЕАКТИВИРОВАНЫ!" >&2
+    # Проверка vpn-manager (socks-туннель Reality/XHTTP/Hysteria2):
+    # юнит running + РЕАЛЬНЫЙ egress через socks-порт (юнит active ≠ туннель жив,
+    # транспорт может быть задавлен провайдером — как было с xhttp на 8443)
+    if systemctl --user list-units 'vpnm-*.service' --state=running --no-pager 2>/dev/null | grep -q vpnm; then
+        local port
+        for port in 2080 2083; do
+            if timeout 8 curl -s --socks5-hostname "127.0.0.1:$port" -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null | grep -q "200"; then
+                vpnm_active=1
+                break
+            fi
+        done
+    fi
+
+    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ] && [ "$vpnm_active" -eq 0 ]; then
+        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m VPN не активен (ZeroTier, WireGuard, vpn-manager)." >&2
         echo -e "Запуск Antigravity отменен для предотвращения утечки прямого IP." >&2
-        echo -e "Для запуска включите ZeroTier (команда: \033[1;32mztup\033[0m) или WireGuard." >&2
+        echo -e "Варианты: \033[1;32mztup\033[0m | WireGuard | \033[1;32mvpn probe\033[0m (socks-туннель к asv1)" >&2
         return 1
     fi
 
