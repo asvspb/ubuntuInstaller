@@ -104,16 +104,16 @@ def test_write_unit_file(env):
 
 # --- generated configs --------------------------------------------------------
 
-def test_write_config_xray_json(env):
-    path = runners.write_config("a", make_link(), 2080)
+def test_write_config_xray_json(env, socks_port):
+    path = runners.write_config("a", make_link(), socks_port)
     assert path == env["GENERATED_DIR"] / "a.json"
     text = path.read_text()
-    assert '"port": 2080' in text
+    assert f'"port": {socks_port}' in text
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_write_config_hysteria_yaml(env):
-    path = runners.write_config("hy", make_link("hysteria2"), 2083)
+def test_write_config_hysteria_yaml(env, socks_port):
+    path = runners.write_config("hy", make_link("hysteria2"), socks_port)
     assert path == env["GENERATED_DIR"] / "hy.yaml"
     assert "socks5:" in path.read_text()
 
@@ -161,14 +161,29 @@ def recording_run(calls):
     return run
 
 
-def seed_profiles(names):
+def free_port() -> int:
+    """Return a free TCP port (bind on 0, read the assigned one, close)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.fixture
+def socks_port() -> int:
+    """A free port for test profiles so tests never collide with a live client."""
+    return free_port()
+
+
+def seed_profiles(names, socks_ports=None):
+    ports = socks_ports or {}
     for name in names:
         profiles.add(make_link(name=name), raw_link=FIXTURE_VLESS,
-                     name=name)
+                     name=name, socks_port=ports.get(name))
 
 
-def test_up_generates_and_starts(env, monkeypatch):
-    seed_profiles(["a"])
+def test_up_generates_and_starts(env, monkeypatch, socks_port):
+    seed_profiles(["a"], {"a": socks_port})
     make_fake_bin(env)
     calls = []
     config_path = runners.up("a", run=recording_run(calls))
@@ -180,18 +195,18 @@ def test_up_generates_and_starts(env, monkeypatch):
     assert runners.get_active() == "a"
 
 
-def test_up_missing_binary_fails(env):
-    seed_profiles(["a"])
+def test_up_missing_binary_fails(env, socks_port):
+    seed_profiles(["a"], {"a": socks_port})
     with pytest.raises(runners.RunnerError, match="install-bins"):
         runners.up("a", run=recording_run([]))
 
 
-def test_up_port_conflict(env):
-    seed_profiles(["a"])
+def test_up_port_conflict(env, socks_port):
+    seed_profiles(["a"], {"a": socks_port})
     make_fake_bin(env)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("127.0.0.1", 2080))
+        sock.bind(("127.0.0.1", socks_port))
         sock.listen(1)
         with pytest.raises(runners.RunnerError, match="already in use"):
             runners.up("a", run=recording_run([]))
@@ -213,8 +228,8 @@ def test_down_without_active_fails(env):
         runners.down(run=recording_run([]))
 
 
-def test_switch_sequence_stops_old_then_starts_new(env):
-    seed_profiles(["a", "b"])
+def test_switch_sequence_stops_old_then_starts_new(env, socks_port):
+    seed_profiles(["a", "b"], {"a": socks_port, "b": free_port()})
     make_fake_bin(env)
     runners.set_active("a")
     calls = []
@@ -232,8 +247,8 @@ def test_switch_sequence_stops_old_then_starts_new(env):
     assert runners.get_active() == "b"
 
 
-def test_switch_same_name_restarts(env):
-    seed_profiles(["a"])
+def test_switch_same_name_restarts(env, socks_port):
+    seed_profiles(["a"], {"a": socks_port})
     make_fake_bin(env)
     runners.set_active("a")
     calls = []
@@ -244,8 +259,8 @@ def test_switch_same_name_restarts(env):
     assert runners.get_active() == "a"
 
 
-def test_systemctl_failure_propagates(env):
-    seed_profiles(["a"])
+def test_systemctl_failure_propagates(env, socks_port):
+    seed_profiles(["a"], {"a": socks_port})
     make_fake_bin(env)
 
     def failing_run(cmd):
@@ -274,17 +289,17 @@ def test_is_active_parses_output(env, monkeypatch):
     assert runners.is_active("a") is False
 
 
-def test_external_ip_none_on_failure():
+def test_external_ip_none_on_failure(socks_port):
     def timeout_run(cmd):
         raise TimeoutError("curl")
 
-    assert runners.external_ip(2080, run=timeout_run) is None
+    assert runners.external_ip(socks_port, run=timeout_run) is None
 
 
-def test_external_ip_success():
+def test_external_ip_success(socks_port):
     def ok_run(cmd):
         assert "--socks5-hostname" in cmd
-        assert "127.0.0.1:2080" in cmd
+        assert f"127.0.0.1:{socks_port}" in cmd
         return 0, "203.0.113.99\n", ""
 
-    assert runners.external_ip(2080, run=ok_run) == "203.0.113.99"
+    assert runners.external_ip(socks_port, run=ok_run) == "203.0.113.99"

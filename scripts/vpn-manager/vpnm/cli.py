@@ -299,6 +299,78 @@ def doctor() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command()
+def probe(switch_best: bool = typer.Option(
+        True, "--switch-best/--no-switch",
+        help="Switch to the fastest ok profile when done (default); "
+             "--no-switch restores the initially active profile")) -> None:
+    """Probe all profiles' latency and report/switch to the fastest."""
+    from . import probe as probe_mod
+    import time as time_mod
+    try:
+        outcome = probe_mod.run_probe(switch_best=switch_best,
+                                      sleep_fn=time_mod.sleep)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    _print_probe_table(outcome)
+    fastest = outcome["fastest"]
+    switched_to = outcome["switched_to"]
+    if not fastest:
+        _err("all profiles failed the probe; nothing to switch to")
+        raise typer.Exit(code=1)
+    if switched_to:
+        _ok(f"switched to fastest: {fastest} ({_latency_of(outcome)} ms)")
+    elif switch_best:
+        _warn(f"fastest is {fastest} but the switch failed; "
+              "the previously active profile was restored")
+
+
+def _latency_of(outcome: dict) -> object:
+    for row in outcome["rows"]:
+        if row.get("name") == outcome.get("fastest"):
+            return row.get("latency_ms")
+    return "?"
+
+
+def _print_probe_table(outcome: dict) -> None:
+    """Render the probe results as a rich table (plain text fallback)."""
+    try:
+        from rich.console import Console
+        from rich.table import Table
+    except ImportError:
+        for row in outcome["rows"]:
+            status = "ok" if row.get("ok") else "fail"
+            latency = row.get("latency_ms")
+            line = (f"{row.get('name')}\t{row.get('protocol')}\t"
+                    f"socks:{row.get('port')}\t{status}\t"
+                    f"{'' if latency is None else f'{latency} ms'}")
+            if row.get("error"):
+                line += f"\t{row.get('error')}"
+            typer.echo(line)
+        return
+    table = Table(title="vpn probe")
+    table.add_column("profile")
+    table.add_column("protocol")
+    table.add_column("socks port")
+    table.add_column("status")
+    table.add_column("latency (median of 3)")
+    table.add_column("error")
+    for row in outcome["rows"]:
+        status = "ok" if row.get("ok") else "fail"
+        latency = row.get("latency_ms")
+        table.add_row(
+            str(row.get("name")), str(row.get("protocol")),
+            f"127.0.0.1:{row.get('port')}", status,
+            "" if latency is None else f"{latency} ms",
+            str(row.get("error") or ""))
+    Console().print(table)
+    fastest = outcome.get("fastest")
+    if fastest:
+        typer.secho(f"fastest: {fastest} ({_latency_of(outcome)} ms)",
+                    fg=typer.colors.GREEN)
+
+
 def _tui() -> None:
     from . import tui
     if tui.questionary is None:

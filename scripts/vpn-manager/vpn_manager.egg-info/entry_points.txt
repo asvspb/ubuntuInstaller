@@ -1,0 +1,2 @@
+[console_scripts]
+vpn = vpnm.cli:app

@@ -247,6 +247,46 @@ def action_doctor() -> None:
                     else typer.colors.RED))
 
 
+def action_probe() -> None:
+    """Probe all profiles and offer to switch to the fastest."""
+    import time as time_mod
+
+    from .cli import _print_probe_table
+    from . import probe as probe_mod
+    try:
+        outcome = probe_mod.run_probe(switch_best=False,
+                                      sleep_fn=time_mod.sleep)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        return
+    _print_probe_table(outcome)
+    fastest = outcome.get("fastest")
+    if not fastest:
+        _err("all profiles failed the probe")
+        return
+    _echo(f"fastest: {fastest} ({_probe_latency_of(outcome)} ms)")
+    choice = questionary.select(
+        f"Switch to {fastest}?", choices=["yes", "no"]).ask()
+    if choice == "yes":
+        try:
+            runners.switch(str(fastest))
+        except (profiles.ProfileStoreError, runners.RunnerError,
+                LinkError) as exc:
+            _err(str(exc))
+        else:
+            _ok(f"switched to '{fastest}'")
+    else:
+        _echo("staying on the initially active profile "
+              f"({outcome.get('initial_active')})")
+
+
+def _probe_latency_of(outcome: dict) -> object:
+    for row in outcome.get("rows", []):
+        if row.get("name") == outcome.get("fastest"):
+            return row.get("latency_ms")
+    return "?"
+
+
 def action_exit() -> None:
     raise MenuExit()
 
@@ -260,6 +300,7 @@ MENU_ACTIONS: ActionMap = {
     "Disconnect": action_disconnect,
     "Switch": action_switch,
     "Status": action_status,
+    "Опрос протоколов / выбрать быстрейший": action_probe,
     "Profiles": None,  # submenu, handled in run_menu
     "System proxy": action_sysproxy,
     "Doctor": action_doctor,
