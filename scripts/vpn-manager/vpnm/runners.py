@@ -259,6 +259,7 @@ def switch(name: str, run: Optional[RunCmd] = None) -> Path:
 
 def external_ip(socks_port: int, run: Optional[RunCmd] = None) -> Optional[str]:
     """Fetch the external IP through the local SOCKS port; None on failure."""
+    run = run or run_cmd
     cmd = ["curl", "--socks5-hostname", f"127.0.0.1:{socks_port}",
            "--max-time", str(CURL_TIMEOUT), "-s", "https://api.ipify.org"]
     try:

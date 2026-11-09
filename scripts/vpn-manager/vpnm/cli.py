@@ -84,8 +84,8 @@ def profile_remove(name: str, force: bool = typer.Option(
     except profiles.ProfileStoreError as exc:
         _err(str(exc))
         raise typer.Exit(code=2)
-    if profiles.get_active() == name:
-        from . import runners
+    from . import runners
+    if runners.get_active() == name:
         try:
             runners.down()
         except runners.RunnerError as exc:
