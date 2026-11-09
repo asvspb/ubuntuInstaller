@@ -9,15 +9,44 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
 from . import profiles
 from .links import LinkError, parse_link
 
-app = typer.Typer(help="vpn-manager: manage client VPN profiles "
-                       "(Xray Reality/XHTTP, Hysteria2)")
+AUTOSTART_ACTIVE = "__active__"  # sentinel: --autostart without a value
+
+
+def _rewrite_bare_autostart(argv: list) -> list:
+    """Rewrite a valueless '--autostart' into '--autostart=<sentinel>'.
+
+    click/typer cannot express an option whose value is optional, so the
+    bare form ('vpn install --autostart') is normalized before parsing;
+    the sentinel means "use the currently active profile".
+    """
+    out = []
+    for i, tok in enumerate(argv):
+        if (tok == "--autostart"
+                and (i + 1 == len(argv) or str(argv[i + 1]).startswith("-"))):
+            out.append(f"--autostart={AUTOSTART_ACTIVE}")
+        else:
+            out.append(tok)
+    return out
+
+
+class VpnTyper(typer.Typer):
+    """Typer app that normalizes the valueless '--autostart' form on entry."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        import sys
+        sys.argv[1:] = _rewrite_bare_autostart(sys.argv[1:])
+        return super().__call__(*args, **kwargs)
+
+
+app = VpnTyper(help="vpn-manager: manage client VPN profiles "
+                    "(Xray Reality/XHTTP, Hysteria2)")
 profile_app = typer.Typer(help="Manage stored profiles")
 app.add_typer(profile_app, name="profile")
 
@@ -118,6 +147,30 @@ def profile_show(name: str) -> None:
 
 # --- lifecycle (WP-C) --------------------------------------------------------
 
+def _sync_sysproxy_after(name: str, action: str) -> None:
+    """Auto-apply GNOME sysproxy to the new profile when the flag is on."""
+    from . import runners, sysproxy
+    try:
+        port = runners._sync_sysproxy()
+    except sysproxy.SysproxyError as exc:
+        _warn(f"could not update the system proxy after {action}: {exc}")
+        return
+    if port is not None:
+        _ok(f"system proxy updated → 127.0.0.1:{port} (profile '{name}')")
+
+
+def _sync_sysproxy_off_after() -> None:
+    """Auto-disable GNOME sysproxy after 'down' when the flag is on."""
+    from . import runners, sysproxy
+    try:
+        turned_off = runners._sync_sysproxy_off()
+    except sysproxy.SysproxyError as exc:
+        _warn(f"could not turn the system proxy off: {exc}")
+        return
+    if turned_off:
+        _ok("system proxy off")
+
+
 @app.command()
 def up(name: str) -> None:
     """Generate configs and start the profile via a systemd user unit."""
@@ -128,6 +181,7 @@ def up(name: str) -> None:
         _err(str(exc))
         raise typer.Exit(code=2)
     _ok(f"started '{name}' (config: {config_path})")
+    _sync_sysproxy_after(name, "up")
 
 
 @app.command()
@@ -140,6 +194,7 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
         _err(str(exc))
         raise typer.Exit(code=2)
     _ok(f"stopped '{stopped}'")
+    _sync_sysproxy_off_after()
 
 
 @app.command()
@@ -152,6 +207,7 @@ def switch(name: str) -> None:
         _err(str(exc))
         raise typer.Exit(code=2)
     _ok(f"switched to '{name}' (config: {config_path})")
+    _sync_sysproxy_after(name, "switch")
 
 
 @app.command()
@@ -197,11 +253,14 @@ def install_bins() -> None:
 @app.command()
 def install(linger: bool = typer.Option(
         False, "--linger", help="Run 'loginctl enable-linger' so user units "
-        "survive logout")) -> None:
-    """Install binaries (same as install-bins) and optionally enable linger."""
+        "survive logout"),
+        autostart: Optional[str] = typer.Option(
+            None, "--autostart",
+            help="Enable the profile unit so it starts at login; with no "
+                 "value the currently active profile is used")) -> None:
+    """Install binaries (+ optional linger) and optionally enable autostart."""
     from . import runners
-    ctx = typer.get_current_context()
-    ctx.invoke(install_bins)
+    install_bins()
     if linger:
         proc = subprocess.run(["loginctl", "enable-linger"],
                               capture_output=True, text=True, check=False)
@@ -209,6 +268,76 @@ def install(linger: bool = typer.Option(
             _err(f"loginctl enable-linger failed: {proc.stderr.strip()}")
             raise typer.Exit(code=2)
         _ok("linger enabled for user units")
+    if autostart is not None:
+        if autostart == AUTOSTART_ACTIVE:
+            active = runners.get_active()
+            if not active:
+                _err("no active profile; pass a profile name: "
+                     "'vpn install --autostart <name>'")
+                raise typer.Exit(code=1)
+            autostart = active
+        _autostart_enable(autostart)
+
+
+def _autostart_enable(profile: str) -> None:
+    """Enable the vpnm-<profile> unit (autostart at login)."""
+    from . import runners
+    try:
+        profiles.get(profile)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    try:
+        runners.enable_autostart(profile)
+    except runners.RunnerError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    _ok(f"autostart enabled: {runners.unit_name(profile)}")
+
+
+@app.command()
+def autostart(action: str = typer.Argument(
+        ..., help="'on', 'off' or 'status'")) -> None:
+    """Toggle or inspect login autostart for vpnm profile units."""
+    from . import runners
+    action = action.strip().lower()
+    if action not in ("on", "off", "status"):
+        _err("expected 'on', 'off' or 'status'")
+        raise typer.Exit(code=2)
+    if action == "on":
+        active = runners.get_active()
+        if not active:
+            _err("no active profile; run 'vpn up <name>' first")
+            raise typer.Exit(code=1)
+        _autostart_enable(active)
+    elif action == "off":
+        active = runners.get_active()
+        targets = ([active] if active and runners.is_enabled(active)
+                   else runners.enabled_vpnm_units())
+        if not targets:
+            _warn("no enabled vpnm units; nothing to disable")
+            return
+        for name in targets:
+            try:
+                runners.disable_autostart(str(name))
+            except runners.RunnerError as exc:
+                _err(str(exc))
+                raise typer.Exit(code=2)
+            _ok(f"autostart disabled: {runners.unit_name(str(name))}")
+    else:
+        active = runners.get_active()
+        enabled = runners.enabled_vpnm_units()
+        if active:
+            state = ("enabled" if runners.is_enabled(active)
+                     else "disabled")
+            typer.echo(f"active profile '{active}': autostart {state}")
+        else:
+            typer.echo("no active profile")
+        if enabled:
+            typer.echo("enabled units: " + ", ".join(
+                runners.unit_name(str(n)) for n in enabled))
+        else:
+            typer.echo("no enabled vpnm units")
 
 
 # --- WP-D: pull / sysproxy / doctor / TUI --------------------------------------
@@ -269,10 +398,12 @@ def sysproxy_cmd(on_off: str = typer.Argument(
                 raise typer.Exit(code=1)
             record = profiles.get(active)
             sysproxy.on(int(record["socks_port"]))
+            runners.set_sysproxy(True)  # follow the active profile on up/switch
             _ok(f"system proxy on: socks 127.0.0.1:{record['socks_port']} "
                 f"(profile '{active}')")
         elif on_off == "off":
             sysproxy.off()
+            runners.set_sysproxy(False)  # no auto-follow until re-enabled
             _ok("system proxy off")
         else:
             mode, sock_host, sock_port = sysproxy.status()
@@ -321,6 +452,7 @@ def probe(switch_best: bool = typer.Option(
         raise typer.Exit(code=1)
     if switched_to:
         _ok(f"switched to fastest: {fastest} ({_latency_of(outcome)} ms)")
+        _sync_sysproxy_after(str(fastest), "probe")
     elif switch_best:
         _warn(f"fastest is {fastest} but the switch failed; "
               "the previously active profile was restored")

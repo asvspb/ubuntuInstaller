@@ -16,7 +16,7 @@ import os
 import socket
 import subprocess
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .links import PROTOCOL_HYSTERIA2, ProfileLink, parse_link
 from .xclient import generate
@@ -62,31 +62,53 @@ def _atomic_write(path: Path, text: str) -> None:
     os.chmod(path, 0o600)
 
 
-def load_state(path: Optional[Path] = None) -> Dict[str, Optional[str]]:
+def load_state(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load state.json; normalizes to {"active": name|None, "sysproxy": bool}.
+
+    Older files that only carry "active" migrate cleanly (sysproxy=False).
+    """
     path = path if path is not None else STATE_PATH
-    if not path.exists():
-        return {"active": None}
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"active": None}
-    if not isinstance(state, dict):
-        return {"active": None}
-    active = state.get("active")
-    return {"active": active if isinstance(active, str) else None}
+    if path.exists():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            state = None
+        if isinstance(state, dict):
+            active = state.get("active")
+            return {
+                "active": active if isinstance(active, str) else None,
+                "sysproxy": bool(state.get("sysproxy", False)),
+            }
+    return {"active": None, "sysproxy": False}
 
 
-def save_state(state: Dict[str, Optional[str]], path: Optional[Path] = None) -> None:
+def save_state(state: Dict[str, Any], path: Optional[Path] = None) -> None:
     _atomic_write(path if path is not None else STATE_PATH,
                   json.dumps(state, indent=2) + "\n")
 
 
 def get_active(path: Optional[Path] = None) -> Optional[str]:
-    return load_state(path)["active"]
+    active = load_state(path)["active"]
+    return active if isinstance(active, str) else None
 
 
 def set_active(name: Optional[str], path: Optional[Path] = None) -> None:
-    save_state({"active": name}, path)
+    state = load_state(path)
+    state["active"] = name
+    save_state(state, path)
+
+
+def get_sysproxy(path: Optional[Path] = None) -> bool:
+    """True when the GNOME system proxy should follow the active profile."""
+    sysproxy_flag = load_state(path)["sysproxy"]
+    return bool(sysproxy_flag)
+
+
+def set_sysproxy(on: bool, path: Optional[Path] = None) -> None:
+    """Store the sysproxy flag without touching the active profile."""
+    state = load_state(path)
+    state["sysproxy"] = bool(on)
+    save_state(state, path)
 
 
 # --- configs and units ------------------------------------------------------
@@ -184,6 +206,53 @@ def is_active(name: str, run: Optional[RunCmd] = None) -> bool:
     return rc == 0 and out.strip() == "active"
 
 
+def systemctl_enable(name: str, run: Optional[RunCmd] = None) -> Tuple[int, str, str]:
+    """Enable the unit so the profile starts on login (systemd user unit)."""
+    return (run or run_cmd)(["systemctl", "--user", "enable", unit_name(name)])
+
+
+def systemctl_disable(name: str, run: Optional[RunCmd] = None) -> Tuple[int, str, str]:
+    return (run or run_cmd)(["systemctl", "--user", "disable", unit_name(name)])
+
+
+def is_enabled(name: str, run: Optional[RunCmd] = None) -> bool:
+    """True when the unit reports 'enabled' via systemctl --user is-enabled."""
+    rc, out, _ = (run or run_cmd)(["systemctl", "--user", "is-enabled",
+                                   unit_name(name)])
+    return rc == 0 and out.strip() == "enabled"
+
+
+def enabled_vpnm_units(run: Optional[RunCmd] = None) -> List[str]:
+    """Names of vpnm-*.service units currently enabled (autostart at login)."""
+    rc, out, _err = (run or run_cmd)(["systemctl", "--user", "list-unit-files",
+                                      "vpnm-*.service", "--no-legend"])
+    if rc != 0:
+        return []
+    names: List[str] = []
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) >= 2 and cols[1] == "enabled":
+            unit = cols[0]
+            if unit.startswith("vpnm-") and unit.endswith(".service"):
+                names.append(unit[len("vpnm-"):-len(".service")])
+    return names
+
+
+def enable_autostart(name: str, run: Optional[RunCmd] = None) -> None:
+    """Enable the profile unit; raise RunnerError on systemctl failure."""
+    rc, _out, err = systemctl_enable(name, run)
+    if rc != 0:
+        raise RunnerError(f"systemctl --user enable {unit_name(name)} "
+                          f"failed: {err.strip()}")
+
+
+def disable_autostart(name: str, run: Optional[RunCmd] = None) -> None:
+    rc, _out, err = systemctl_disable(name, run)
+    if rc != 0:
+        raise RunnerError(f"systemctl --user disable {unit_name(name)} "
+                          f"failed: {err.strip()}")
+
+
 # --- port probe ---------------------------------------------------------------
 
 def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -255,6 +324,38 @@ def switch(name: str, run: Optional[RunCmd] = None) -> Path:
         # already running the same profile; restart cleanly
         down(name, run)
     return up(name, run)
+
+
+def _sync_sysproxy(run: Optional[RunCmd] = None) -> Optional[int]:
+    """Re-point the GNOME system proxy at the active profile's SOCKS port.
+
+    No-op unless the sysproxy flag is stored in state.json and a profile is
+    active. Returns the applied port, or None when nothing was done.
+    Raises SysproxyError (from the sysproxy module) when gsettings fails.
+    """
+    from . import sysproxy as sysproxy_mod  # lazy: sysproxy imports runners
+    if not get_sysproxy():
+        return None
+    active = get_active()
+    if not active:
+        return None
+    record = _require_profile(active)[0]
+    socks_port = int(str(record["socks_port"]))
+    sysproxy_mod.on(socks_port, run=run)
+    return socks_port
+
+
+def _sync_sysproxy_off(run: Optional[RunCmd] = None) -> bool:
+    """Turn the GNOME system proxy off when the sysproxy flag is stored.
+
+    Returns True when 'off' was applied; False when the flag is not set
+    (nothing to do). Raises SysproxyError when gsettings fails.
+    """
+    from . import sysproxy as sysproxy_mod  # lazy: sysproxy imports runners
+    if not get_sysproxy():
+        return False
+    sysproxy_mod.off(run=run)
+    return True
 
 
 def external_ip(socks_port: int, run: Optional[RunCmd] = None) -> Optional[str]:

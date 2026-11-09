@@ -42,6 +42,25 @@ def _warn(msg: str) -> None:
 
 # --- actions (shared with the CLI command layer) -------------------------------
 
+def _sync_sysproxy_after(name: str, action: str) -> None:
+    """Auto-apply GNOME sysproxy to the new profile when the flag is on."""
+    try:
+        port = runners._sync_sysproxy()
+    except sysproxy.SysproxyError as exc:
+        _warn(f"could not update the system proxy after {action}: {exc}")
+        return
+    if port is not None:
+        _ok(f"system proxy updated → 127.0.0.1:{port} (profile '{name}')")
+
+
+def _sync_sysproxy_off_after() -> None:
+    try:
+        if runners._sync_sysproxy_off():
+            _ok("system proxy off")
+    except sysproxy.SysproxyError as exc:
+        _warn(f"could not turn the system proxy off: {exc}")
+
+
 def action_connect() -> None:
     rows = profiles.list_profiles()
     if not rows:
@@ -56,6 +75,7 @@ def action_connect() -> None:
             _err(str(exc))
         else:
             _ok(f"started '{name}'")
+            _sync_sysproxy_after(str(name), "connect")
 
 
 def action_disconnect() -> None:
@@ -65,6 +85,7 @@ def action_disconnect() -> None:
         _err(str(exc))
     else:
         _ok(f"stopped '{stopped}'")
+        _sync_sysproxy_off_after()
 
 
 def action_switch() -> None:
@@ -82,6 +103,7 @@ def action_switch() -> None:
         _err(str(exc))
     else:
         _ok(f"switched to '{name}'")
+        _sync_sysproxy_after(str(name), "switch")
 
 
 def action_status() -> None:
@@ -207,6 +229,7 @@ def _run_sysproxy(on_off: str) -> None:
             return
         try:
             sysproxy.on(int(record["socks_port"]))
+            runners.set_sysproxy(True)
         except sysproxy.SysproxyError as exc:
             _err(str(exc))
         else:
@@ -215,6 +238,7 @@ def _run_sysproxy(on_off: str) -> None:
     elif on_off == "off":
         try:
             sysproxy.off()
+            runners.set_sysproxy(False)
         except sysproxy.SysproxyError as exc:
             _err(str(exc))
         else:
@@ -275,6 +299,7 @@ def action_probe() -> None:
             _err(str(exc))
         else:
             _ok(f"switched to '{fastest}'")
+            _sync_sysproxy_after(str(fastest), "probe")
     else:
         _echo("staying on the initially active profile "
               f"({outcome.get('initial_active')})")

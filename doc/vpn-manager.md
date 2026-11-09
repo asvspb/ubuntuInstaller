@@ -42,7 +42,7 @@ scripts/vpn-manager/
 | Путь | Содержимое |
 |------|-----------|
 | `~/.config/vpn-manager/profiles.json` | Профили (share-ссылки, 0600) |
-| `~/.config/vpn-manager/state.json` | Активный профиль |
+| `~/.config/vpn-manager/state.json` | Активный профиль + флаг sysproxy |
 | `~/.config/vpn-manager/settings.json` | Настройки (ssh-хост для pull) |
 | `~/.local/share/vpn-manager/generated/` | Сгенерированные конфиги (0600) |
 | `~/.config/systemd/user/vpnm-*.service` | Systemd user units |
@@ -66,8 +66,9 @@ vpn install --linger
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
 | `vpn status` | Активный профиль, состояние unit, внешний IP через SOCKS |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
+| `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS |
-| `vpn install [--linger]` | Установка бинарей (+ linger для user units) |
+| `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 
 `vpn` также доступен как `python3 -m vpnm`.
 
@@ -100,13 +101,51 @@ vpn profile import 'vless://...#my-server'
 # подтянуть все ссылки с сервера (и запомнить хост)
 vpn profile pull --host root@asv1
 
-# поднять профиль и включить системный прокси
+# поднять профиль и включить системный прокси (дальше сопровождается сам)
 vpn up my-server
 vpn sysproxy on
 
 # диагностика
 vpn doctor
 ```
+
+## Системный прокси: автосопровождение
+
+`vpn sysproxy on` включает GNOME SOCKS-прокси на порт активного профиля **и
+запоминает это в state.json** (`"sysproxy": true`). Пока флаг включён, системный
+прокси сопровождается автоматически:
+
+- `vpn up <name>` и `vpn switch <name>` — прокси перепривязывается на SOCKS-порт
+  нового активного профиля (`system proxy updated → 127.0.0.1:<port>`);
+- `vpn down` — прокси выключается (mode `none`), чтобы браузер не остался без
+  туннеля; флаг при этом **не сбрасывается** — следующий `up` снова включит
+  прокси;
+- `vpn probe` — после переключения на быстрейший профиль прокси тоже
+  перепривязывается;
+- `vpn sysproxy off` — выключает прокси и сбрасывает флаг (автосопровождение
+  отключено до следующего `sysproxy on`).
+
+То же поведение работает в TUI-меню (Подключить / Отключить / Переключить / Probe).
+
+## Автозапуск
+
+Профили запускаются как systemd user units (`vpnm-<name>.service`), поэтому
+автозапуск — это `systemctl --user enable`:
+
+```bash
+# включить автозапуск при установке (профиль по имени или текущий активный)
+vpn install --autostart mob
+vpn install --autostart          # без значения — текущий активный
+vpn install --linger --autostart # linger: юнит живёт и после logout
+
+# управление после установки
+vpn autostart on      # включить автозапуск активного профиля
+vpn autostart off     # выключить (активный профиль; без активного — все enabled vpnm-юниты)
+vpn autostart status  # состояние автозапуска + список enabled-юнитов
+```
+
+Юнит стартует при входе в систему (при `--linger` — и без активной сессии).
+Отключение автозапуска не останавливает запущенный клиент.
 
 ## Doctor: что проверяется
 

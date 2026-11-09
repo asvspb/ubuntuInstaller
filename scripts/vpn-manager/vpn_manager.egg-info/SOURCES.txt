@@ -1,4 +1,5 @@
 pyproject.toml
+tests/test_autostart.py
 tests/test_bins.py
 tests/test_cli_lifecycle.py
 tests/test_doctor.py
@@ -8,6 +9,7 @@ tests/test_profiles.py
 tests/test_pull.py
 tests/test_runners.py
 tests/test_sysproxy.py
+tests/test_sysproxy_flag.py
 tests/test_tui_wiring.py
 tests/test_xclient.py
 vpn_manager.egg-info/PKG-INFO
