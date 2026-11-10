@@ -448,28 +448,46 @@ _stop_isolated_dbus() {
 vpncli() {
     # CLI-прокси текущей вкладки терминала через socks vpn-manager.
     # Влияет ТОЛЬКО на эту вкладку (env-переменные). Использование:
-    #   vpncli on [порт]   — включить (дефолт 2080=xray, 2083=hysteria)
-    #   vpncli off         — выключить
-    #   vpncli status      — состояние + exit-IP
+    #   vpncli on [порт]  — включить; порт берётся из активного профиля vpn-manager
+    #                       (если не задан явно); 2080=xray, 2083=hysteria2
+    #   vpncli off        — выключить
+    #   vpncli status     — состояние + exit-IP
+    # При недоступном socks env откатывается (мёртвый прокси не остаётся в сессии).
     # ⚠️ Не включать в сессии, где важна стабильность прямого IP (TSPU-троттлинг asv1)
     local action="${1:-status}"
-    local port="${2:-2080}"
+    local port="$2"
+    local state_file="$HOME/.config/vpn-manager/state.json"
+    local profiles_file="$HOME/.config/vpn-manager/profiles.json"
+    # авто-порт: активный профиль vpn-manager
+    if [ -z "$port" ] && [ -f "$state_file" ]; then
+        local active
+        active=$(command jq -r '.active // empty' "$state_file" 2>/dev/null)
+        if [ -n "$active" ] && [ -f "$profiles_file" ]; then
+            port=$(command jq -r --arg n "$active" '.profiles[]? | select(.name == $n) | .socks_port // empty' "$profiles_file" 2>/dev/null)
+        fi
+    fi
+    port="${port:-2080}"
     local proxy="socks5h://127.0.0.1:$port"
-    local confirm
-    confirm=$(curl -s --max-time 10 https://ipinfo.io/json 2>/dev/null | jq -r '"  Exit IP: " + .ip + " (" + (.country // "?") + ")"' 2>/dev/null) || confirm="  Exit IP: не определён (нет связи)"
     case "$action" in
         on)
             export all_proxy="$proxy"
             export http_proxy="$proxy"
             export https_proxy="$proxy"
-            echo "CLI-прокси ON (socks5h 127.0.0.1:$port)"
-            echo "$confirm"
-            echo "$confirm" | grep -q "(RU)" && echo "  ⚠️ Трафик идёт НАПРЯМУЮ — socks $port недоступен. Подними профиль: vpn switch <name>"
+            echo "CLI-прокси ON ($proxy)"
+            local canary
+            canary=$(curl -s --max-time 8 --proxy "$proxy" https://ipinfo.io/json 2>/dev/null | command jq -r '.ip // empty' 2>/dev/null)
+            if [ -n "$canary" ]; then
+                echo "  ✅ Exit IP: $canary — трафик идёт через VPN"
+            else
+                unset all_proxy http_proxy https_proxy
+                echo "  ❌ socks $port недоступен — env ОТКАЧЕН." >&2
+                echo "     Подними профиль: vpn switch <name> (или проверь: vpn monitor)" >&2
+                return 1
+            fi
             ;;
         off)
             unset all_proxy http_proxy https_proxy
             echo "CLI-прокси OFF"
-            echo "$confirm"
             ;;
         status)
             if [ -n "$all_proxy" ]; then
@@ -477,14 +495,16 @@ vpncli() {
             else
                 echo "CLI-прокси: OFF"
             fi
-            echo "$confirm"
+            curl -s --max-time 10 https://ipinfo.io/json 2>/dev/null | command jq -r '"  Exit IP: " + .ip + " (" + (.country // "?") + ")"' 2>/dev/null || echo "  Exit IP: не определён"
             ;;
         *)
             echo "Использование: vpncli [on|off|status] [порт]"
-            echo "  порты: 2080 = xray (Reality/XHTTP), 2083 = hysteria2"
+            echo "  порт: авто из активного профиля vpn-manager; 2080=xray, 2083=hysteria2"
+            return 2
             ;;
     esac
 }
+
 
 _check_vpn_active() {
     local zt_active=0
