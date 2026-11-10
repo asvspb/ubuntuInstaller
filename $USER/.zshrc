@@ -445,6 +445,47 @@ _stop_isolated_dbus() {
     _ISOLATED_DBUS_PID=""
 }
 
+vpncli() {
+    # CLI-прокси текущей вкладки терминала через socks vpn-manager.
+    # Влияет ТОЛЬКО на эту вкладку (env-переменные). Использование:
+    #   vpncli on [порт]   — включить (дефолт 2080=xray, 2083=hysteria)
+    #   vpncli off         — выключить
+    #   vpncli status      — состояние + exit-IP
+    # ⚠️ Не включать в сессии, где важна стабильность прямого IP (TSPU-троттлинг asv1)
+    local action="${1:-status}"
+    local port="${2:-2080}"
+    local proxy="socks5h://127.0.0.1:$port"
+    local confirm
+    confirm=$(curl -s --max-time 10 https://ipinfo.io/json 2>/dev/null | jq -r '"  Exit IP: " + .ip + " (" + (.country // "?") + ")"' 2>/dev/null) || confirm="  Exit IP: не определён (нет связи)"
+    case "$action" in
+        on)
+            export all_proxy="$proxy"
+            export http_proxy="$proxy"
+            export https_proxy="$proxy"
+            echo "CLI-прокси ON (socks5h 127.0.0.1:$port)"
+            echo "$confirm"
+            echo "$confirm" | grep -q "(RU)" && echo "  ⚠️ Трафик идёт НАПРЯМУЮ — socks $port недоступен. Подними профиль: vpn switch <name>"
+            ;;
+        off)
+            unset all_proxy http_proxy https_proxy
+            echo "CLI-прокси OFF"
+            echo "$confirm"
+            ;;
+        status)
+            if [ -n "$all_proxy" ]; then
+                echo "CLI-прокси: ON ($all_proxy)"
+            else
+                echo "CLI-прокси: OFF"
+            fi
+            echo "$confirm"
+            ;;
+        *)
+            echo "Использование: vpncli [on|off|status] [порт]"
+            echo "  порты: 2080 = xray (Reality/XHTTP), 2083 = hysteria2"
+            ;;
+    esac
+}
+
 _check_vpn_active() {
     local zt_active=0
     local wg_active=0
