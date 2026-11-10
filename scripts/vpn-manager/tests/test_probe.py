@@ -275,6 +275,7 @@ def test_all_fail_cli_exit_code_one(env, monkeypatch):
     fake.wire(monkeypatch, probe)
     monkeypatch.setattr(probe.runners, "run_cmd",
                         lambda cmd: (28, "", ""))
+    monkeypatch.setattr(cli, "_print_channels_section", lambda: None)
     result = CliRunner().invoke(cli.app, ["probe"])
     assert result.exit_code == 1
 
@@ -347,6 +348,7 @@ def test_tui_probe_action_switches_on_yes(env, monkeypatch):
     fake = FakeRunners(active="mob", latencies={2083: (0, "0.900")})
     fake.wire(monkeypatch, probe)  # probe and tui share the runners module
     monkeypatch.setattr(tui, "questionary", FakeQuestionary(["yes"]))
+    monkeypatch.setattr(cli, "_print_channels_section", lambda: None)
     tui.action_probe()
     assert ("switch", "phone") in fake.calls
 
@@ -357,7 +359,133 @@ def test_tui_probe_action_no_restores(env, monkeypatch):
     fake = FakeRunners(active="mob", latencies={2083: (0, "0.900")})
     fake.wire(monkeypatch, probe)
     monkeypatch.setattr(tui, "questionary", FakeQuestionary(["no"]))
+    monkeypatch.setattr(cli, "_print_channels_section", lambda: None)
     tui.action_probe()
     assert ("switch", "phone") not in fake.calls
     # mob's unit never stopped: restore only fixes the tracking
     assert fake.units == {"mob"} and fake.active == "mob"
+
+# --- channels section + AWG tun latency ----------------------------------------
+
+
+def _stub_channels_section(monkeypatch, rows, latency):
+    from vpnm import channels
+    monkeypatch.setattr(channels, "check_all", lambda run=None: rows)
+    monkeypatch.setattr(channels, "awg_tunnel_latency",
+                        lambda run=None, samples=3: latency)
+
+
+def test_channels_section_renders_awg_ok_line(env, monkeypatch, capsys):
+    """probe prints the channels header + matrix + awg (tun) latency line."""
+    rows = [
+        {"channel": "vpnm", "status": "ok", "detail": "d1"},
+        {"channel": "zerotier", "status": "not_installed", "detail": "d2"},
+        {"channel": "amneziawg", "status": "ok", "detail": "awg0"},
+        {"channel": "zapret", "status": "warn", "detail": "d3"},
+    ]
+    _stub_channels_section(monkeypatch, rows, latency=42.0)
+    cli._print_channels_section()
+    out = capsys.readouterr().out
+    assert "── Каналы (vpn/zapret/zerotier/amneziawg) ──" in out
+    assert "amneziawg" in out
+    assert "awg (tun): 42.0 ms" in out
+
+
+def test_channels_section_awg_down_reports_not_raised(env, monkeypatch, capsys):
+    """When the amneziawg channel is not ok, the section says 'не поднят'."""
+    rows = [
+        {"channel": "vpnm", "status": "ok", "detail": "d1"},
+        {"channel": "zerotier", "status": "not_installed", "detail": "d2"},
+        {"channel": "amneziawg", "status": "not_installed", "detail": "d"},
+        {"channel": "zapret", "status": "fail", "detail": "d3"},
+    ]
+    _stub_channels_section(monkeypatch, rows, latency=None)
+    cli._print_channels_section()
+    out = capsys.readouterr().out
+    assert "awg (tun): не поднят" in out
+
+
+def test_resolve_youtube_ip_parses_doh_answer(monkeypatch):
+    import json as json_mod
+    from vpnm import channels
+    doh = json_mod.dumps({"Answer": [
+        {"name": "www.youtube.com", "type": 5, "data": "youtube.com."},
+        {"name": "youtube.com.", "type": 1, "data": "203.0.113.99"},
+    ]})
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return 0, doh, ""
+
+    assert channels.resolve_youtube_ip(fake_run) == "203.0.113.99"
+    cmd = calls[0]
+    assert cmd[0] == "curl" and "--noproxy" in cmd
+    assert "dns.google" in " ".join(cmd)
+
+
+def test_resolve_youtube_ip_none_on_failure(monkeypatch):
+    import json as json_mod
+    from vpnm import channels
+    assert channels.resolve_youtube_ip(lambda cmd: (28, "", "")) is None
+    assert channels.resolve_youtube_ip(lambda cmd: (0, "not-json", "")) is None
+    empty = json_mod.dumps({})
+    assert channels.resolve_youtube_ip(lambda cmd: (0, empty, "")) is None
+
+
+def test_awg_tunnel_latency_median_of_three(monkeypatch):
+    from vpnm import channels
+    monkeypatch.setattr(channels, "check_awg", lambda run=None: {
+        "channel": "amneziawg", "status": channels.STATUS_OK, "detail": ""})
+    monkeypatch.setattr(channels, "resolve_youtube_ip",
+                        lambda run=None: "203.0.113.99")
+    samples = iter([(0, "0.100", ""), (0, "0.500", ""), (0, "0.300", "")])
+
+    def fake_run(cmd):
+        assert "--resolve" in cmd
+        assert "www.youtube.com:443:203.0.113.99" in cmd
+        assert "--noproxy" in cmd
+        return next(samples)
+
+    assert channels.awg_tunnel_latency(run=fake_run) == 300.0
+
+
+def test_awg_tunnel_latency_iface_down_returns_none(monkeypatch):
+    from vpnm import channels
+    monkeypatch.setattr(channels, "check_awg", lambda run=None: {
+        "channel": "amneziawg", "status": channels.STATUS_NOT_INSTALLED,
+        "detail": ""})
+    assert channels.awg_tunnel_latency(run=lambda cmd: (0, "", "")) is None
+
+
+def test_awg_tunnel_latency_any_failed_sample_is_none(monkeypatch):
+    from vpnm import channels
+    monkeypatch.setattr(channels, "check_awg", lambda run=None: {
+        "channel": "amneziawg", "status": channels.STATUS_OK, "detail": ""})
+    monkeypatch.setattr(channels, "resolve_youtube_ip",
+                        lambda run=None: "203.0.113.99")
+    samples = iter([(0, "0.100", ""), (28, "", ""), (0, "0.300", "")])
+    assert channels.awg_tunnel_latency(
+        run=lambda cmd: next(samples)) is None
+
+
+def test_probe_cli_includes_channels_section(env, monkeypatch):
+    """vpn probe renders the channels matrix after the socks profile table."""
+    from typer.testing import CliRunner
+    from vpnm import channels
+    _add("phone", FIXTURE_LINK, 2080)
+    fake = FakeRunners(active="phone", latencies={2080: (0, "0.100")})
+    fake.wire(monkeypatch, probe)
+    monkeypatch.setattr(channels, "check_all", lambda run=None: [
+        {"channel": "vpnm", "status": "ok", "detail": "d"},
+        {"channel": "zerotier", "status": "not_installed", "detail": "d"},
+        {"channel": "amneziawg", "status": "not_installed", "detail": "d"},
+        {"channel": "zapret", "status": "ok", "detail": "d"},
+    ])
+    monkeypatch.setattr(channels, "awg_tunnel_latency",
+                        lambda run=None, samples=3: None)
+    result = CliRunner().invoke(cli.app, ["probe", "--no-switch"])
+    assert result.exit_code == 0
+    assert "── Каналы (vpn/zapret/zerotier/amneziawg) ──" in result.output
+    assert "awg (tun): не поднят" in result.output
+

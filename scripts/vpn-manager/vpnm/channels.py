@@ -5,12 +5,14 @@ Each channel check returns ``{channel, status, detail}`` with status
 
 - **vpnm**: the active profile + one egress probe (single curl measurement)
   through its SOCKS port (reuses ``probe.measure_latency``);
-- **ZeroTier**: service state, ``zerotier-cli status`` ONLINE, joined
-  networks, optional ping of a 10.x address.  ZeroTier is archived (owner
-  decision 2026-11-10): its absence is ``not_installed`` (warn-colour), not
-  a fail.  When zerotier-cli / the service exist but the daemon is down,
-  the status is ``warn`` ("installed but not running").  A missing
-  passwordless sudo is a ``warn`` too, never a fail;
+- **ZeroTier**: service state, ``zerotier-cli status`` ONLINE, active peers
+  (``listpeers``: count + min latency), joined networks with assigned IPs
+  (``listnetworks``), optional ping of an explicitly given peer address
+  (``--zt-ping``).  ZeroTier is archived (owner decision 2026-11-10): its
+  absence is ``not_installed`` (warn-colour), not a fail.  When
+  zerotier-cli / the service exist but the daemon is down, the status is
+  ``warn`` ("installed but not running").  A missing passwordless sudo is a
+  ``warn`` too, never a fail;
 - **AmneziaWG**: a placeholder slot — looks for binaries / ``*.conf``
   artifacts / an ``amz*|amn*|awg*|amnezia*|wg*`` interface; when nothing exists
   the status is
@@ -28,6 +30,8 @@ channel is fail/not_installed.
 
 from __future__ import annotations
 
+import ipaddress
+import json
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -114,29 +118,93 @@ def _zt_joined_networks(status_out: str) -> List[str]:
     return joined
 
 
-def _zt_ping_first_ip(run: RunCmd) -> str:
-    """Optional ping of a 10.x assigned address; '' when skipped/failed."""
-    rc, out, _err = run(["sudo", "-n", "zerotier-cli", "listnetworks"])
-    if rc != 0:
-        return ""
-    for line in out.splitlines():
+def _zt_network_rows(status_out: str) -> List[Dict[str, str]]:
+    """listnetworks rows as {nwid, name, dev, ips}; bad rows skipped."""
+    rows: List[Dict[str, str]] = []
+    for line in status_out.splitlines()[1:]:  # skip the header line
+        line = line.strip()
+        if not line or any(marker in line for marker in ZT_BAD_NETWORK_MARKERS):
+            continue
         cols = line.split()
+        # <nwid> <name> <mac> <status> <type> <dev> <ips>
         if len(cols) < 7:
             continue
-        assigned = cols[-1]
-        for ip in assigned.split(","):
-            ip = ip.strip()
-            if ip.startswith("10."):
-                addr = ip.split("/")[0]
-                ping_rc, _pout, _perr = run(
-                    ["ping", "-c", "1", "-W", "2", addr])
-                if ping_rc == 0:
-                    return f", ping {addr} ok"
-                return f", ping {addr} не отвечает"
-    return ""
+        rows.append({"nwid": cols[0], "name": cols[1], "dev": cols[5],
+                     "ips": cols[6]})
+    return rows
 
 
-def check_zerotier(run: Optional[RunCmd] = None) -> Channel:
+def _zt_networks_detail(status_out: str) -> str:
+    """Human detail for joined networks: 'network <name>: <ip>' per row.
+
+    Networks with an assigned IP on a zt* interface are the healthy case;
+    rows without an address degrade to their bare id.
+    """
+    rows = _zt_network_rows(status_out)
+    if not rows:
+        return "joined-сетей нет"
+    parts: List[str] = []
+    for row in rows:
+        ips = row["ips"] if row["ips"] != "-" else ""
+        dev = row["dev"] if row["dev"].startswith("zt") else ""
+        if ips and dev:
+            parts.append(f"network '{row['name']}': {ips.split(',')[0]}")
+        else:
+            parts.append(row["nwid"])
+    return "joined-сети: " + ", ".join(parts)
+
+
+def _zt_peers_detail(run: RunCmd) -> str:
+    """Active-peer probe via listpeers; '' when sudo is unavailable.
+
+    latency is the third column of each peer row; rows without a numeric
+    latency are skipped from the min-latency computation (but still counted).
+    """
+    rc, out, _err = run(["sudo", "-n", "zerotier-cli", "listpeers"])
+    if rc != 0:
+        return ""
+    count = 0
+    latencies: List[int] = []
+    for line in out.splitlines()[1:]:  # skip the "200 listpeers ..." header
+        line = line.strip()
+        if not line:
+            continue
+        cols = line.split()
+        if len(cols) < 3:
+            continue
+        count += 1
+        try:
+            latencies.append(int(cols[2]))
+        except ValueError:
+            continue
+    if count == 0:
+        return ""
+    if latencies:
+        return f", peers: {count}, min latency: {min(latencies)}ms"
+    return f", peers: {count}"
+
+
+def _ping_latency_ms(out: str) -> Optional[float]:
+    """Extract rtt from ping output ('time=12.3 ms'); None when absent."""
+    match = re.search(r"time[=<]\s*([\d.]+)\s*ms", out)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def _zt_peer_ping(run: RunCmd, peer_ip: str) -> str:
+    """Optional reachability probe of an explicit ZT peer address."""
+    rc, out, _err = run(["ping", "-c", "1", "-W", "2", peer_ip])
+    if rc != 0:
+        return f", ping {peer_ip} не отвечает"
+    latency = _ping_latency_ms(out)
+    if latency is not None:
+        return f", ping {peer_ip} ok ({latency} ms)"
+    return f", ping {peer_ip} ok"
+
+
+def check_zerotier(run: Optional[RunCmd] = None,
+                   peer_ip: Optional[str] = None) -> Channel:
     """ZeroTier channel: archived transport; absence is not a fail."""
     runner: RunCmd = run or run_cmd
     if not _zt_cli_available(runner):
@@ -163,11 +231,19 @@ def check_zerotier(run: Optional[RunCmd] = None) -> Channel:
     rc, nets_out, _err = runner(
         ["sudo", "-n", "zerotier-cli", "listnetworks"])
     joined = _zt_joined_networks(nets_out) if rc == 0 else []
+    detail = "ONLINE"
+    detail += _zt_peers_detail(runner)
     if not joined:
-        detail = "ONLINE, joined-сетей нет"
+        detail += ", joined-сетей нет"
     else:
-        detail = f"ONLINE, joined-сети: {', '.join(joined)}"
-        detail += _zt_ping_first_ip(runner)
+        detail += ", " + _zt_networks_detail(nets_out)
+    if peer_ip is not None:
+        try:
+            ipaddress.ip_address(peer_ip)
+        except ValueError:
+            detail += f", zt-ping: некорректный IP '{peer_ip}'"
+        else:
+            detail += _zt_peer_ping(runner, peer_ip)
     return _result("zerotier", STATUS_OK, detail)
 
 
@@ -258,6 +334,75 @@ def check_zapret(run: Optional[RunCmd] = None) -> Channel:
                    f"определён (systemctl: {state})")
 
 
+# --- AWG tun latency ----------------------------------------------------------------
+
+YT_HOST = "www.youtube.com"
+YT_PROBE_URL = "https://www.youtube.com/generate_204"
+AWG_PROBE_TIMEOUT = 8.0  # seconds per curl measurement through the tun iface
+DOH_URL = f"https://dns.google/resolve?name={YT_HOST}&type=A"
+
+
+def resolve_youtube_ip(run: Optional[RunCmd] = None) -> Optional[str]:
+    """Resolve www.youtube.com via DoH (dns.google); None on any failure.
+
+    The system resolver may be blocked/poisoned on a censored link, so the
+    probe resolves through DNS-over-HTTPS over the tunnel instead.
+    """
+    runner: RunCmd = run or run_cmd
+    try:
+        rc, out, _err = runner(
+            ["curl", "--noproxy", "*", "-s", "--max-time", "5", DOH_URL])
+    except Exception:  # defensive: latency reporting must never crash the run
+        return None
+    if rc != 0:
+        return None
+    try:
+        payload = json.loads(out)
+    except ValueError:
+        return None
+    for answer in payload.get("Answer", []):
+        if int(answer.get("type", 0)) == 1 and answer.get("data"):
+            return str(answer["data"])
+    return None
+
+
+def awg_tunnel_latency(
+        run: Optional[RunCmd] = None,
+        samples: int = 3) -> Optional[float]:
+    """Median latency (ms) of YouTube generate_204 through the AWG tun iface.
+
+    Traffic goes through the tunnel by AllowedIPs, so plain curl (no proxy)
+    with ``--resolve`` pinning the host to its real IP measures the tun path.
+    Returns None when the interface is not up, DoH resolution fails, or any
+    sample fails (strict, same rule as the socks probe).
+    """
+    runner: RunCmd = run or run_cmd
+    if check_awg(runner)["status"] != STATUS_OK:
+        return None
+    ip = resolve_youtube_ip(runner)
+    if not ip:
+        return None
+    cmd = [
+        "curl", "--noproxy", "*",
+        "--resolve", f"{YT_HOST}:443:{ip}",
+        "-o", "/dev/null", "-s", "-w", "%{time_total}",
+        "--max-time", str(AWG_PROBE_TIMEOUT), YT_PROBE_URL,
+    ]
+    values: List[float] = []
+    for _ in range(samples):
+        try:
+            rc, out, err = runner(cmd)
+        except Exception:  # defensive, same as probe.measure_latency
+            return None
+        value = probe.parse_time_total(out, err, rc)
+        if value is None:
+            return None
+        values.append(value)
+    if not values:
+        return None
+    return round(probe.median(values) * 1000.0, 1)
+
+
 # --- top level -------------------------------------------------------------------
 
 def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
@@ -265,9 +410,15 @@ def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
             check_awg(run=run), check_zapret(run=run)]
 
 
-def run_monitor(run: Optional[RunCmd] = None) -> Dict[str, object]:
+def run_monitor(run: Optional[RunCmd] = None,
+                peer_ip: Optional[str] = None) -> Dict[str, object]:
     """Run all channel checks; return channels + healthy counters."""
-    channels = check_all(run=run)
+    channels = [
+        check_vpnm(run=run),
+        check_zerotier(run=run, peer_ip=peer_ip),
+        check_awg(run=run),
+        check_zapret(run=run),
+    ]
     return {
         "channels": channels,
         "healthy": healthy_count(channels),

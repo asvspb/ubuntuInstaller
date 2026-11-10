@@ -453,10 +453,14 @@ def doctor() -> None:
 
 @app.command()
 def monitor(as_json: bool = typer.Option(
-        False, "--json", help="Machine-readable output (same matrix)")) -> None:
+        False, "--json", help="Machine-readable output (same matrix)"),
+        zt_ping: Optional[str] = typer.Option(
+            None, "--zt-ping",
+            help="Ping an explicit ZeroTier peer IP and include the result "
+                 "in the zerotier channel detail")) -> None:
     """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret)."""
     from . import channels as channels_mod
-    outcome = channels_mod.run_monitor()
+    outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:
         typer.echo(json.dumps(outcome, ensure_ascii=False, indent=2))
     else:
@@ -469,7 +473,8 @@ def monitor(as_json: bool = typer.Option(
     raise typer.Exit(code=channels_mod.exit_code(outcome))
 
 
-def _print_channels_table(outcome: dict) -> None:
+def _print_channels_table(outcome: dict,
+                          title: Optional[str] = "vpn channels") -> None:
     """Render the channel matrix (rich table, plain-text fallback)."""
     rows = list(outcome["channels"])
     try:
@@ -481,7 +486,7 @@ def _print_channels_table(outcome: dict) -> None:
         return
     status_colors = {"ok": "green", "warn": "yellow",
                      "not_installed": "yellow", "fail": "red"}
-    table = Table(title="vpn channels")
+    table = Table(title=title)
     table.add_column("channel")
     table.add_column("status")
     table.add_column("detail")
@@ -492,6 +497,34 @@ def _print_channels_table(outcome: dict) -> None:
             f"{row['status']}[/]",
             str(row["detail"]))
     Console().print(table)
+
+
+CHANNELS_SECTION_HEADER = "── Каналы (vpn/zapret/zerotier/amneziawg) ──"
+
+
+def _print_channels_section() -> None:
+    """Append the channel matrix (same as `vpn monitor`) to the probe report.
+
+    The AWG tun channel is outside the socks profile model: when its
+    interface is up we additionally measure the YouTube generate_204
+    latency through the tun iface (traffic follows AllowedIPs); otherwise
+    an informational "не поднят" line is shown. This section is
+    informational only — switch/fastest semantics stay socks-only.
+    """
+    from . import channels as channels_mod
+    typer.secho(CHANNELS_SECTION_HEADER, fg=typer.colors.CYAN)
+    rows = channels_mod.check_all()
+    _print_channels_table({"channels": rows}, title=None)
+    awg_row = next((r for r in rows if r["channel"] == "amneziawg"), None)
+    if awg_row is not None and awg_row["status"] == channels_mod.STATUS_OK:
+        latency = channels_mod.awg_tunnel_latency()
+        if latency is not None:
+            typer.secho(f"awg (tun): {latency} ms", fg=typer.colors.GREEN)
+        else:
+            typer.secho("awg (tun): интерфейс поднят, замер задержки "
+                        "не удался", fg=typer.colors.YELLOW)
+    else:
+        typer.secho("awg (tun): не поднят", fg=typer.colors.YELLOW)
 
 
 @app.command()
@@ -509,6 +542,7 @@ def probe(switch_best: bool = typer.Option(
         _err(str(exc))
         raise typer.Exit(code=2)
     _print_probe_table(outcome)
+    _print_channels_section()
     fastest = outcome["fastest"]
     switched_to = outcome["switched_to"]
     if not fastest:

@@ -126,15 +126,93 @@ def test_zt_online_no_networks(env):
     assert "joined-сетей нет" in result["detail"]
 
 
-def test_zt_online_joined_with_ping(env):
-    nets = "200 listnetworks <nwid> <name> <mac> <status> <type> <dev> <ips>\n" \
-           "111abcdef  mynet  -  OK  PRIVATE  mynet  10.147.20.5/24"
+ZT_NETS = ("200 listnetworks <nwid> <name> <mac> <status> <type> <dev> <ips>\n"
+           "111abcdef  mynet  -  OK  PRIVATE  zt111abc  10.147.20.5/24")
+
+
+def test_zt_online_joined_network_with_ip(env):
     result = channels.check_zerotier(run=make_run(
         **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
-           "sudo -n zerotier-cli listnetworks": (0, nets, "")}))
+           "sudo -n zerotier-cli listnetworks": (0, ZT_NETS, "")}))
     assert result["status"] == channels.STATUS_OK
-    assert "111abcdef" in result["detail"]
-    assert "ping 10.147.20.5 ok" in result["detail"]
+    assert "network 'mynet': 10.147.20.5/24" in result["detail"]
+
+
+def test_zt_peers_with_min_latency(env):
+    peers = ("200 listpeers <ztaddr> <ver> <lat> <role> <end> <t> <ver>\n"
+             "11112222  1.10.3  24  PLANET  -  -\n"
+             "33334444  1.10.3  7  LEAF  10.147.20.9/9993  -\n")
+    result = channels.check_zerotier(run=make_run(
+        **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+           "sudo -n zerotier-cli listpeers": (0, peers, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "peers: 2, min latency: 7ms" in result["detail"]
+
+
+def test_zt_peers_without_latency(env):
+    peers = ("200 listpeers <ztaddr> <ver> <lat> <role> <end> <t> <ver>\n"
+             "11112222  -  -  PLANET  -  -\n"
+             "33334444  1.10.3  -  LEAF  -  -\n")
+    result = channels.check_zerotier(run=make_run(
+        **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+           "sudo -n zerotier-cli listpeers": (0, peers, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "peers: 2" in result["detail"]
+    assert "min latency" not in result["detail"]
+
+
+def test_zt_peers_partial_latency_skips_non_numeric(env):
+    peers = ("200 listpeers <ztaddr> <ver> <lat> <role> <end> <t> <ver>\n"
+             "11112222  -  -  PLANET  -  -\n"
+             "33334444  1.10.3  55  LEAF  -  -\n")
+    result = channels.check_zerotier(run=make_run(
+        **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+           "sudo -n zerotier-cli listpeers": (0, peers, "")}))
+    assert "peers: 2, min latency: 55ms" in result["detail"]
+
+
+def test_zt_no_sudo_listpeers_keeps_ok(env):
+    """No sudo for listpeers: peers detail omitted, channel stays ok."""
+    result = channels.check_zerotier(run=make_run(
+        **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+           "sudo -n zerotier-cli listpeers": (1, "", "sudo: a password is required")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "peers" not in result["detail"]
+
+
+def test_zt_ping_option_ok(env):
+    def ping(cmd):
+        return 0, "64 bytes from 10.147.20.9: icmp_seq=1 ttl=64 time=3.42 ms", ""
+
+    result = channels.check_zerotier(
+        run=make_run(
+            **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+               "ping -c 1": ping}),
+        peer_ip="10.147.20.9")
+    assert result["status"] == channels.STATUS_OK
+    assert "ping 10.147.20.9 ok (3.42 ms)" in result["detail"]
+
+
+def test_zt_ping_option_fail_keeps_ok(env):
+    def ping(cmd):
+        return 1, "", ""
+
+    result = channels.check_zerotier(
+        run=make_run(
+            **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
+               "ping -c 1": ping}),
+        peer_ip="10.147.20.9")
+    assert result["status"] == channels.STATUS_OK
+    assert "ping 10.147.20.9 не отвечает" in result["detail"]
+
+
+def test_zt_ping_option_invalid_ip(env):
+    result = channels.check_zerotier(
+        run=make_run(
+            **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", "")}),
+        peer_ip="not-an-ip")
+    assert result["status"] == channels.STATUS_OK
+    assert "некорректный IP" in result["detail"]
 
 
 def test_zt_access_denied_network_excluded(env):
@@ -148,19 +226,15 @@ def test_zt_access_denied_network_excluded(env):
     assert "joined-сетей нет" in result["detail"]
 
 
-def test_zt_ping_fail_keeps_ok(env):
-    nets = "200 listnetworks <nwid> <name> <mac> <status> <type> <dev> <ips>\n" \
-           "111abcdef  mynet  -  OK  PRIVATE  mynet  10.147.20.5/24"
-
-    def ping(cmd):
-        return 1, "", ""
-
+def test_zt_network_without_zt_dev_or_ip_degrades_to_id(env):
+    nets = ("200 listnetworks <nwid> <name> <mac> <status> <type> <dev> <ips>\n"
+            "111abcdef  mynet  -  OK  PRIVATE  mynet  -")
     result = channels.check_zerotier(run=make_run(
         **{"sudo -n zerotier-cli status": (0, "200 info ONLINE ...", ""),
-           "sudo -n zerotier-cli listnetworks": (0, nets, ""),
-           "ping -c 1": ping}))
+           "sudo -n zerotier-cli listnetworks": (0, nets, "")}))
     assert result["status"] == channels.STATUS_OK
-    assert "не отвечает" in result["detail"]
+    assert "111abcdef" in result["detail"]
+    assert "network 'mynet'" not in result["detail"]
 
 
 # --- AmneziaWG slot ---------------------------------------------------------------
@@ -271,6 +345,14 @@ def test_cli_monitor_json_structure(env, monkeypatch):
 
 def test_cli_monitor_exit_1(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
+    from vpnm import zapret as zapret_mod  # noqa: E402
+    monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
+    # hermetic: this dev box has a live awg0-split iface
+    monkeypatch.setattr(
+        channels, "check_awg",
+        lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
     result = runner.invoke(app, ["monitor"])
     assert result.exit_code == 1
     assert "healthy channels: 0/4" in result.output
@@ -278,9 +360,41 @@ def test_cli_monitor_exit_1(env, monkeypatch):
 
 def test_cli_monitor_json_is_pure_json(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
+    from vpnm import zapret as zapret_mod  # noqa: E402
+    monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
+    # hermetic: this dev box has a live awg0-split iface
+    monkeypatch.setattr(
+        channels, "check_awg",
+        lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
     result = runner.invoke(app, ["monitor", "--json"])
     assert result.exit_code == 1
     data = json.loads(result.output)  # must not raise: summary stays inside
+
+
+def test_cli_monitor_zt_ping_flag(env, monkeypatch):
+    """--zt-ping reaches check_zerotier as peer_ip (invalid IP -> note)."""
+    add_profile("p1", 2080)
+    runners.set_active("p1")
+    monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: 0.1)
+    from vpnm import zapret as zapret_mod  # noqa: E402
+    monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
+    # hermetic: this dev box has a live awg0-split iface
+    monkeypatch.setattr(
+        channels, "check_awg",
+        lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
+    # machine-dependent ZT state must not matter: stub the shell layer
+    zt_stub = make_run(
+        **{"which zerotier-cli": (0, "/usr/bin/zerotier-cli", ""),
+           "is-active zerotier-one": (0, "active", ""),
+           "sudo -n zerotier-cli status": (0, "200 info ONLINE ...", "")})
+    monkeypatch.setattr(channels, "run_cmd", zt_stub)
+    result = runner.invoke(app, ["monitor", "--json", "--zt-ping", "not-an-ip"])
+    assert result.exit_code == 0
+    assert "некорректный IP" in result.output
 
 
 # --- TUI wiring --------------------------------------------------------------------

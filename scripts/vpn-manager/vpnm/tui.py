@@ -275,7 +275,7 @@ def action_probe() -> None:
     """Probe all profiles and offer to switch to the fastest."""
     import time as time_mod
 
-    from .cli import _print_probe_table
+    from .cli import _print_channels_section, _print_probe_table
     from . import probe as probe_mod
     try:
         outcome = probe_mod.run_probe(switch_best=False,
@@ -284,6 +284,7 @@ def action_probe() -> None:
         _err(str(exc))
         return
     _print_probe_table(outcome)
+    _print_channels_section()
     fastest = outcome.get("fastest")
     if not fastest:
         _err("all profiles failed the probe")
