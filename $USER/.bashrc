@@ -444,14 +444,14 @@ vpncli() {
             if [ -n "$canary" ]; then
                 echo "  ✅ Exit IP: $canary — трафик идёт через VPN"
             else
-                unset all_proxy http_proxy https_proxy
+                unset all_proxy http_proxy https_proxy ALL_PROXY HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
                 echo "  ❌ socks $port недоступен — env ОТКАЧЕН." >&2
                 echo "     Подними профиль: vpn switch <name> (или проверь: vpn monitor)" >&2
                 return 1
             fi
             ;;
         off)
-            unset all_proxy http_proxy https_proxy
+            unset all_proxy http_proxy https_proxy ALL_PROXY HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
             echo "CLI-прокси OFF"
             ;;
         status)
