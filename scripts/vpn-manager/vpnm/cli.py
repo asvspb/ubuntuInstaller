@@ -431,6 +431,49 @@ def doctor() -> None:
 
 
 @app.command()
+def monitor(as_json: bool = typer.Option(
+        False, "--json", help="Machine-readable output (same matrix)")) -> None:
+    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG)."""
+    from . import channels as channels_mod
+    outcome = channels_mod.run_monitor()
+    if as_json:
+        typer.echo(json.dumps(outcome, ensure_ascii=False, indent=2))
+    else:
+        _print_channels_table(outcome)
+        healthy = int(str(outcome["healthy"]))
+        total = int(str(outcome["total"]))
+        typer.secho(
+            f"healthy channels: {healthy}/{total}",
+            fg=typer.colors.GREEN if healthy else typer.colors.RED)
+    raise typer.Exit(code=channels_mod.exit_code(outcome))
+
+
+def _print_channels_table(outcome: dict) -> None:
+    """Render the channel matrix (rich table, plain-text fallback)."""
+    rows = list(outcome["channels"])
+    try:
+        from rich.console import Console
+        from rich.table import Table
+    except ImportError:
+        for row in rows:
+            typer.echo(f"{row['channel']}\t{row['status']}\t{row['detail']}")
+        return
+    status_colors = {"ok": "green", "warn": "yellow",
+                     "not_installed": "yellow", "fail": "red"}
+    table = Table(title="vpn channels")
+    table.add_column("channel")
+    table.add_column("status")
+    table.add_column("detail")
+    for row in rows:
+        table.add_row(
+            str(row["channel"]),
+            f"[{status_colors.get(str(row['status']), 'white')}]"
+            f"{row['status']}[/]",
+            str(row["detail"]))
+    Console().print(table)
+
+
+@app.command()
 def probe(switch_best: bool = typer.Option(
         True, "--switch-best/--no-switch",
         help="Switch to the fastest ok profile when done (default); "

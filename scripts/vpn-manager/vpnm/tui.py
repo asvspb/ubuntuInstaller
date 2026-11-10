@@ -312,6 +312,18 @@ def _probe_latency_of(outcome: dict) -> object:
     return "?"
 
 
+def action_channels() -> None:
+    """Show the VPN channel availability matrix."""
+    from .cli import _print_channels_table
+    from . import channels as channels_mod
+    outcome = channels_mod.run_monitor()
+    _print_channels_table(outcome)
+    healthy = int(str(outcome["healthy"]))
+    total = int(str(outcome["total"]))
+    typer.secho(f"healthy channels: {healthy}/{total}",
+                fg=typer.colors.GREEN if healthy else typer.colors.RED)
+
+
 def action_exit() -> None:
     raise MenuExit()
 
@@ -325,6 +337,7 @@ MENU_ACTIONS: ActionMap = {
     "Disconnect": action_disconnect,
     "Switch": action_switch,
     "Status": action_status,
+    "Мониторинг каналов": action_channels,
     "Опрос протоколов / выбрать быстрейший": action_probe,
     "Profiles": None,  # submenu, handled in run_menu
     "System proxy": action_sysproxy,
