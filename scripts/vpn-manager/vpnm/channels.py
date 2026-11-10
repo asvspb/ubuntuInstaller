@@ -22,7 +22,15 @@ Each channel check returns ``{channel, status, detail}`` with status
   Service active → direct canary ``curl https://www.youtube.com/generate_204``
   (NO socks proxy): 204 is ``ok`` ("direct DPI-bypass жив"), anything else
   (000/timeout) is ``fail`` — the strategy stopped working.  Installed but
-  not running → ``warn`` (like ZeroTier).
+  not running → ``warn`` (like ZeroTier);
+- **dns-doh** (channel 0.5): the local DoH resolver (cloudflared proxy-dns
+  on 127.0.0.1:5053, installed by ``scripts/13_dns-doh.sh``) that shields
+  the system resolver from ISP DNS hijacking.  Service missing →
+  ``not_installed`` (neutral).  Service active + ``dig @127.0.0.1 -p 5053
+  www.youtube.com +short`` returns addresses → ``ok`` ("DoH-резолвер жив");
+  active but the dig probe is empty → ``fail`` (upstream unreachable /
+  hijacked).  Installed but stopped → ``fail`` — without the resolver the
+  system DNS silently degrades to the hijacked plaintext path.
 
 Summary: exit code 0 when at least one channel is ``ok``, 1 when every
 channel is fail/not_installed.
@@ -334,6 +342,45 @@ def check_zapret(run: Optional[RunCmd] = None) -> Channel:
                    f"определён (systemctl: {state})")
 
 
+# --- dns-doh (channel 0.5) ----------------------------------------------------------
+
+DOH_SERVICE = "cloudflared-proxy-dns"
+DOH_PORT = "5053"
+DOH_DIG_CMD = ["dig", "@127.0.0.1", "-p", DOH_PORT, "www.youtube.com", "+short"]
+DOH_INSTALL_HINT = "bash scripts/13_dns-doh.sh"
+
+
+def _doh_answers(run: RunCmd) -> List[str]:
+    """Non-empty address lines from the local DoH dig probe."""
+    rc, out, _err = run(DOH_DIG_CMD)
+    if rc != 0:
+        return []
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def check_dnsdoh(run: Optional[RunCmd] = None) -> Channel:
+    """Channel 0.5: local cloudflared DoH resolver shields system DNS."""
+    runner: RunCmd = run or run_cmd
+    rc, state_out, _err = runner(["systemctl", "is-active", DOH_SERVICE])
+    state = state_out.strip()
+    if rc != 0 and state == "not-found":
+        return _result("dns-doh", STATUS_NOT_INSTALLED,
+                       f"сервис {DOH_SERVICE}.service не найден "
+                       f"({DOH_INSTALL_HINT})")
+    if rc != 0 or state != "active":
+        return _result("dns-doh", STATUS_FAIL,
+                       f"сервис {DOH_SERVICE}: {state or 'unknown'} — "
+                       f"системный DNS идёт мимо DoH; "
+                       f"sudo systemctl restart {DOH_SERVICE}")
+    if _doh_answers(runner):
+        return _result("dns-doh", STATUS_OK,
+                       "DoH-резолвер жив (локальный cloudflared)")
+    return _result("dns-doh", STATUS_FAIL,
+                   f"сервис активен, но dig @127.0.0.1 -p {DOH_PORT} пуст — "
+                   f"upstream недоступен/перехвачен; "
+                   f"journalctl -u {DOH_SERVICE} -n 50")
+
+
 # --- AWG tun latency ----------------------------------------------------------------
 
 YT_HOST = "www.youtube.com"
@@ -407,7 +454,8 @@ def awg_tunnel_latency(
 
 def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
     return [check_vpnm(run=run), check_zerotier(run=run),
-            check_awg(run=run), check_zapret(run=run)]
+            check_awg(run=run), check_zapret(run=run),
+            check_dnsdoh(run=run)]
 
 
 def run_monitor(run: Optional[RunCmd] = None,
@@ -418,6 +466,7 @@ def run_monitor(run: Optional[RunCmd] = None,
         check_zerotier(run=run, peer_ip=peer_ip),
         check_awg(run=run),
         check_zapret(run=run),
+        check_dnsdoh(run=run),
     ]
     return {
         "channels": channels,

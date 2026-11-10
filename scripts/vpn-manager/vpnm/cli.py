@@ -458,7 +458,7 @@ def monitor(as_json: bool = typer.Option(
             None, "--zt-ping",
             help="Ping an explicit ZeroTier peer IP and include the result "
                  "in the zerotier channel detail")) -> None:
-    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret)."""
+    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret, dns-doh)."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:

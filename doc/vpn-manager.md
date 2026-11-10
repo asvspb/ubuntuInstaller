@@ -69,7 +69,7 @@ vpn install --linger
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
-| `vpn monitor [--json]` | Матрица каналов: vpnm / ZeroTier / AmneziaWG / zapret (N/4) |
+| `vpn monitor [--json]` | Матрица каналов: vpnm / ZeroTier / AmneziaWG / zapret / dns-doh (N/5) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 
 `vpn` также доступен как `python3 -m vpnm`.
@@ -177,13 +177,18 @@ vpn autostart status  # состояние автозапуска + список
 |-------|---------------|---------|
 | `vpnm` | активный профиль + egress-probe через SOCKS | ok / fail / not_installed |
 | `zerotier` | сервис, `zerotier-cli status`, joined-сети | ok / warn / fail / not_installed (в архиве) |
-| `amneziawg` | артефакты (бинарь/конфиги/интерфейс) — слот | not_installed (транспорт в разработке) |
+| `amneziawg` | артефакты (бинарь/конфиги/интерфейс) — слот | not_installed / ok (iface up) / warn |
 | `zapret` | канал 0: сервис активен → **прямой** canary на youtube generate_204 | ok / warn / fail / not_installed |
+| `dns-doh` | канал 0.5: сервис `cloudflared-proxy-dns` активен + `dig @127.0.0.1 -p 5053 www.youtube.com +short` непуст | ok / fail / not_installed |
 
-В конце — `healthy channels: N/4` (exit 1, если ни один канал не ok).
+В конце — `healthy channels: N/5` (exit 1, если ни один канал не ok).
 Строка `zapret`: `not_installed` — нейтрально (канал 0 не ставили);
 `ok` — «direct DPI-bypass жив»; `fail` — сервис активен, но canary не прошла
 (стратегия сломалась — blockcheck заново); `warn` — установлен, но не запущен.
+Строка `dns-doh`: `not_installed` — нейтрально (локальный DoH не ставили);
+`ok` — «DoH-резолвер жив (локальный cloudflared)»; `fail` — сервис активен,
+но dig пуст (upstream недоступен/перехвачен), либо сервис установлен, но не
+запущен (системный DNS молча деградирует до plaintext-перехвата).
 
 ## Канал 0: zapret (DPI-desync без VPN)
 
@@ -235,6 +240,80 @@ vpn doctor          # строка zapret (не установлен → warn, �
 ```
 
 То же самое — пункт «Канал 0 (zapret)» в TUI-меню (`vpn`).
+
+## Канал DNS (DoH)
+
+Провайдер перехватывает plaintext-DNS: youtube/googlevideo отдают NXDOMAIN
+через любой обычный резолвер, и ни DPI-desync, ни VPN-профиль это не чинят
+(запрос резолвится ещё до туннеля). Локальный DoH-резолвер закрывает
+именно этот вектор.
+
+**Установка** (на этой машине, интерактивно попросит sudo):
+
+```bash
+bash scripts/13_dns-doh.sh
+```
+
+Скрипт: скачивает cloudflared **2025.11.1** (последняя версия с
+`proxy-dns`; в 2026.10+ подкоманду убрали) через зеркала
+ghproxy.net → gh-proxy.com → direct, верифицирует `--version`, ставит
+бинарь в `/usr/local/bin/cloudflared-proxy-dns-bin`, systemd-юнит
+`cloudflared-proxy-dns.service` (порт 5053, upstream
+`https://cloudflare-dns.com/dns-query`, `Restart=on-failure`) и override
+`/etc/systemd/resolved.conf.d/doh-local.conf` (`DNS=127.0.0.1:5053`),
+затем `daemon-reload`, `enable --now` и `restart systemd-resolved`.
+Идемпотентен.
+
+**Верификация:** `dig @127.0.0.1 -p 5053 www.youtube.com +short` — непустой
+вывод. Мониторинг: строка `dns-doh` в `vpn monitor`.
+
+**Откат:**
+
+```bash
+sudo rm /etc/systemd/resolved.conf.d/doh-local.conf
+sudo systemctl disable --now cloudflared-proxy-dns.service
+sudo systemctl restart systemd-resolved
+```
+
+## Канал 1: AWG-split через 14_awg-split.sh
+
+[AmneziaWG](https://github.com/amnezia-vpn) (AWG) — WireGuard с обфускацией
+(jc/jmin/jmax/s1/s2/h1-h4): пакет выглядит не как WG-handshake и не
+режется DPI. Канал 1 даёт split-туннель: через AWG идут только
+google/telegram-диапазоны, остальной трафик — напрямую (под desync zapret).
+
+**Установка** (интерактивно: SERVER_IP, SSH USER, имя конфига):
+
+```bash
+bash scripts/14_awg-split.sh
+```
+
+Скрипт: ставит `amneziawg-tools` из `ppa:amnezia/ppa` (клиенту dkms/модуль
+ядра не нужен — только `awg`/`awg-quick`), забирает конфиг с сервера
+`scp ${USER}@${SERVER_IP}:/opt/my-vds/gateway/clients/amneziawg/<CONF>.conf
+~/.awg/<CONF>.conf` (0600; если сервер ещё не развёрнут — печатает ссылку
+на `scripts/11_vds-deploy.sh`), ставит templated-юнит
+`vpn-awg-split@.service` (инстанс = имя конфига,
+`ExecStart=/usr/bin/awg-quick up /etc/amnezia/amneziawg/%i.conf`,
+`Type=oneshot`, `RemainAfterExit=yes`, `After=network-online.target`) и
+включает `vpn-awg-split@<CONF>`.
+
+**AllowedIPs:** серверный конфиг может быть full-tunnel
+(`AllowedIPs = 0.0.0.0/0`). Скрипт это замечает, печатает warning и
+предлагает заменить на split-список из `STRATEGY_IPS` (в шапке скрипта —
+редактируйте: диапазоны google + telegram). Замена через `sed` по
+`AllowedIPs` в конфиге — только с подтверждением.
+
+**Верификация:** `awg show` (handshake) + `ping -c1 -W2` первого IP из
+AllowedIPs. Мониторинг: строка `amneziawg` в `vpn monitor` (ok при
+поднятом интерфейсе `awg*`/`amz*`/`amn*`).
+
+**Управление:**
+
+```bash
+sudo systemctl start/stop vpn-awg-split@laptop
+awg show
+```
 
 ## Зависимости
 

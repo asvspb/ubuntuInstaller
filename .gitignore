@@ -53,3 +53,9 @@ vds/.kilo/
 *.env
 .env
 !.env.example
+
+# Python caches / build artifacts
+__pycache__/
+*.pyc
+build/
+*.egg-info/

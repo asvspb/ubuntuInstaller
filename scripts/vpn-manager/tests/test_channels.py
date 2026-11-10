@@ -308,6 +308,50 @@ def test_awg_iface_amnezia_and_awg_prefixes(env, monkeypatch):
     assert "amnezia0" in result["detail"]
 
 
+# --- dns-doh channel (0.5) ----------------------------------------------------------
+
+def test_doh_not_installed(env):
+    result = channels.check_dnsdoh(run=make_run(
+        **{"is-active cloudflared-proxy-dns": (4, "not-found", "")}))
+    assert result["channel"] == "dns-doh"
+    assert result["status"] == channels.STATUS_NOT_INSTALLED
+    assert "13_dns-doh.sh" in result["detail"]
+
+
+def test_doh_active_dig_ok(env):
+    def dig(cmd):
+        return 0, "142.250.150.4\n142.250.153.4\n", ""
+
+    result = channels.check_dnsdoh(run=make_run(
+        **{"is-active cloudflared-proxy-dns": (0, "active", ""),
+           "dig @127.0.0.1": dig}))
+    assert result["status"] == channels.STATUS_OK
+    assert "DoH-резолвер жив" in result["detail"]
+
+
+def test_doh_active_dig_empty_is_fail(env):
+    result = channels.check_dnsdoh(run=make_run(
+        **{"is-active cloudflared-proxy-dns": (0, "active", ""),
+           "dig @127.0.0.1": (0, "", "")}))
+    assert result["status"] == channels.STATUS_FAIL
+    assert "пуст" in result["detail"]
+
+
+def test_doh_stopped_is_fail(env):
+    result = channels.check_dnsdoh(run=make_run(
+        **{"is-active cloudflared-proxy-dns": (3, "inactive", "")}))
+    assert result["status"] == channels.STATUS_FAIL
+    assert "мимо DoH" in result["detail"]
+
+
+def test_doh_dig_exit_nonzero_is_fail(env):
+    """dig rc!=0 (binary missing/timeout) counts as empty answers."""
+    result = channels.check_dnsdoh(run=make_run(
+        **{"is-active cloudflared-proxy-dns": (0, "active", ""),
+           "dig @127.0.0.1": (1, "", "dig: not found")}))
+    assert result["status"] == channels.STATUS_FAIL
+
+
 # --- monitor aggregate / CLI ------------------------------------------------------
 
 def test_monitor_exit_0_when_one_ok(env, monkeypatch):
@@ -315,14 +359,20 @@ def test_monitor_exit_0_when_one_ok(env, monkeypatch):
     runners.set_active("p1")
     monkeypatch.setattr(channels.probe, "measure_latency",
                         lambda *a, **k: 0.1)
+    monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
+        "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
+        "detail": "mocked"})
     outcome = channels.run_monitor(run=make_run())
     assert channels.exit_code(outcome) == 0
     assert outcome["healthy"] == 1
-    assert outcome["total"] == 4
+    assert outcome["total"] == 5
 
 
 def test_monitor_exit_1_when_all_down(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
+    monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
+        "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
+        "detail": "mocked"})
     outcome = channels.run_monitor(
         run=make_run(**{"which zerotier-cli": (1, "", "")}))
     assert channels.exit_code(outcome) == 1
@@ -333,39 +383,52 @@ def test_cli_monitor_json_structure(env, monkeypatch):
     add_profile("p1", 2080)
     runners.set_active("p1")
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: 0.1)
+    monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
+        "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
+        "detail": "mocked"})
     result = runner.invoke(app, ["monitor", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert set(data) == {"channels", "healthy", "total"}
-    assert len(data["channels"]) == 4
+    assert len(data["channels"]) == 5
     for row in data["channels"]:
         assert set(row) == {"channel", "status", "detail"}
-    assert data["total"] == 4
+    assert data["total"] == 5
 
 
 def test_cli_monitor_exit_1(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
     from vpnm import zapret as zapret_mod  # noqa: E402
     monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
-    # hermetic: this dev box has a live awg0-split iface
+    # hermetic: this dev box has a live awg0-split iface and a live DoH unit
     monkeypatch.setattr(
         channels, "check_awg",
         lambda **kw: {"channel": "amneziawg",
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
+    monkeypatch.setattr(
+        channels, "check_dnsdoh",
+        lambda **kw: {"channel": "dns-doh",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
     result = runner.invoke(app, ["monitor"])
     assert result.exit_code == 1
-    assert "healthy channels: 0/4" in result.output
+    assert "healthy channels: 0/5" in result.output
 
 
 def test_cli_monitor_json_is_pure_json(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
     from vpnm import zapret as zapret_mod  # noqa: E402
     monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
-    # hermetic: this dev box has a live awg0-split iface
+    # hermetic: this dev box has a live awg0-split iface and a live DoH unit
     monkeypatch.setattr(
         channels, "check_awg",
         lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
+    monkeypatch.setattr(
+        channels, "check_dnsdoh",
+        lambda **kw: {"channel": "dns-doh",
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
     result = runner.invoke(app, ["monitor", "--json"])

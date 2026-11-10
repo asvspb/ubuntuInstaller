@@ -188,8 +188,28 @@
 - `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель, zapret
 - `vpn zapret on|off|status` — «канал 0»: zapret (nfqws DPI-desync) на прямых соединениях
   (youtube/discord без VPN, без смены IP); установка — `scripts/12_zapret.sh`
-- `vpn monitor` — матрица каналов (vpnm / ZeroTier / AmneziaWG / zapret, healthy N/4)
+- `vpn monitor` — матрица каналов (vpnm / ZeroTier / AmneziaWG / zapret / dns-doh, healthy N/5)
 - TUI-меню (`vpn` без аргументов) на questionary
+
+### `scripts/13_dns-doh.sh`
+Локальный DoH-резолвер (канал DNS 0.5): cloudflared 2025.11.1 с `proxy-dns`
+на 127.0.0.1:5053 (upstream Cloudflare DoH) + systemd-юнит
+`cloudflared-proxy-dns.service` + `/etc/systemd/resolved.conf.d/doh-local.conf`
+(системный DNS → 127.0.0.1:5053). Лечит DNS-перехват провайдера: youtube/
+googlevideo перестают отдавать NXDOMAIN через отравленный plaintext-DNS.
+Зеркала ghproxy.net → gh-proxy.com → direct, verify `--version`,
+идемпотентен, rollback-подсказка в финальном выводе. Мониторинг: строка
+`dns-doh` в `vpn monitor`.
+
+### `scripts/14_awg-split.sh`
+AWG-клиент + split-туннель (канал 1): `amneziawg-tools` из `ppa:amnezia/ppa`
+(только `awg`/`awg-quick`, без dkms), fetch конфига с сервера
+(`scp ...:/opt/my-vds/gateway/clients/amneziawg/<CONF>.conf ~/.awg/`, 0600),
+templated-юнит `vpn-awg-split@<CONF>.service` (awg-quick up/down, enabled).
+Полный туннель сервера (0.0.0.0/0) предупреждается и заменяется на
+split-список `STRATEGY_IPS` (google + telegram, редактируется в шапке) —
+с подтверждением. Верификация: `awg show` handshake + ping первого IP из
+AllowedIPs.
 
 ## Графические приложения
 

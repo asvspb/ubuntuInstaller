@@ -87,16 +87,19 @@ def test_check_zapret_binary_but_no_unit(nfqws_dir):
     assert "не определён" in result["detail"]
 
 
-def test_monitor_matrix_has_four_channels(nfqws_dir, tmp_path, monkeypatch):
+def test_monitor_matrix_has_five_channels(nfqws_dir, tmp_path, monkeypatch):
     from vpnm import profiles, runners
     monkeypatch.setattr(profiles, "STORE_PATH", tmp_path / "profiles.json")
     monkeypatch.setattr(runners, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: 0.1)
+    monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
+        "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
+        "detail": "mocked"})
     outcome = channels.run_monitor(run=make_run(
         **{"which zerotier-cli": (1, "", "")}))
     names = [c["channel"] for c in outcome["channels"]]
-    assert names == ["vpnm", "zerotier", "amneziawg", "zapret"]
-    assert outcome["total"] == 4
+    assert names == ["vpnm", "zerotier", "amneziawg", "zapret", "dns-doh"]
+    assert outcome["total"] == 5
 
 
 # --- doctor.check_zapret ------------------------------------------------------------
