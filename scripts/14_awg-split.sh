@@ -33,7 +33,7 @@ err()     { echo -e "${C_RED}[ERR]${C_RESET} $*" >&2; }
 # Split-AllowedIPs: диапазоны google (youtube) + telegram.
 STRATEGY_IPS=(
     "8.8.8.8/32" "8.8.4.4/32"                # google dns (резерв)
-    "142.250.0.0/15" "172.217.0.0/16"        # google / youtube frontend
+    "142.250.0.0/15" "172.217.0.0/16"        # google / youtube frontend (каноничный /15)
     "173.194.0.0/16" "74.125.0.0/16"         # google services / video
     "216.58.192.0/19" "64.233.160.0/19"      # google video edge
     "108.177.0.0/17" "34.64.0.0/10"          # google infra / GCP
