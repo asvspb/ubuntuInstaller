@@ -449,6 +449,7 @@ _check_vpn_active() {
     local zt_active=0
     local wg_active=0
     local vpnm_active=0
+    local awg_active=0
 
     # Проверка ZeroTier (по статусу CLI или активным интерфейсам zt*)
     if sudo -n zerotier-cli status 2>/dev/null | grep -q "ONLINE" || ip -br link show 2>/dev/null | grep -qE "^zt.*(UP|UNKNOWN)"; then
@@ -473,10 +474,18 @@ _check_vpn_active() {
         done
     fi
 
-    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ] && [ "$vpnm_active" -eq 0 ]; then
-        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m VPN не активен (ZeroTier, WireGuard, vpn-manager)." >&2
+    # Проверка AmneziaWG: интерфейс awg-туннеля up (awg0 от awg-quick,
+    # amnezia0/awg-подобные от AmneziaVPN-приложения) или нативный awg show.
+    # vpnm НЕ поднимает AWG (клиент разворачивает .conf сам), поэтому юнит
+    # vpnm-* протокол amneziawg здесь признаком не является.
+    if sudo -n awg show 2>/dev/null | grep -q "interface" || ip -br link show 2>/dev/null | grep -qE "^(awg|amnezia).*(UP|UNKNOWN)"; then
+        awg_active=1
+    fi
+
+    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ] && [ "$vpnm_active" -eq 0 ] && [ "$awg_active" -eq 0 ]; then
+        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m VPN не активен (ZeroTier, WireGuard, vpn-manager, AmneziaWG)." >&2
         echo -e "Запуск Antigravity отменен для предотвращения утечки прямого IP." >&2
-        echo -e "Варианты: \033[1;32mztup\033[0m | WireGuard | \033[1;32mvpn probe\033[0m (socks-туннель к asv1)" >&2
+        echo -e "Варианты: \033[1;32mztup\033[0m | WireGuard | \033[1;32mvpn probe\033[0m (socks-туннель к asv1) | AmneziaVPN (импортировать конфиг)" >&2
         return 1
     fi
 

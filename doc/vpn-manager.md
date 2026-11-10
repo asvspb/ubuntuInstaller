@@ -74,6 +74,10 @@ vpn install --linger
 
 `vpn` также доступен как `python3 -m vpnm`.
 
+Shell-guard `_check_vpn_active()` в `$USER/.zshrc` / `$USER/.bashrc` (блокирует запуск
+Antigravity без активного VPN) признаёт, помимо ZeroTier/WireGuard/vpnm, и AmneziaWG:
+интерфейс `awg*`/`amnezia*` в состоянии UP/UNKNOWN или вывод `awg show`.
+
 ## Интеграция с VDS-сервером (profile pull)
 
 На сервере (VDS Orchestrator) команда `vds gateway links` печатает share-ссылки
