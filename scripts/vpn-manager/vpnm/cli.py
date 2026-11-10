@@ -415,6 +415,27 @@ def sysproxy_cmd(on_off: str = typer.Argument(
         raise typer.Exit(code=1)
 
 
+@app.command("zapret")
+def zapret_cmd(action: str = typer.Argument(
+        ..., help="'on', 'off' or 'status'")) -> None:
+    """Channel 0: control or inspect the zapret (nfqws DPI-desync) service."""
+    from . import zapret as zapret_mod
+    action = action.strip().lower()
+    if action not in ("on", "off", "status"):
+        _err("expected 'on', 'off' or 'status'")
+        raise typer.Exit(code=2)
+    if action == "status":
+        for line in zapret_mod.status_lines():
+            typer.echo(line)
+        return
+    ok, message = zapret_mod.control(action)
+    if ok:
+        _ok(message)
+    else:
+        _err(message)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def doctor() -> None:
     """Diagnose environment: binaries, ports, v2rayA, ssh host, DNS."""
@@ -433,7 +454,7 @@ def doctor() -> None:
 @app.command()
 def monitor(as_json: bool = typer.Option(
         False, "--json", help="Machine-readable output (same matrix)")) -> None:
-    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG)."""
+    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret)."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor()
     if as_json:

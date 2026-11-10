@@ -13,7 +13,13 @@ Each channel check returns ``{channel, status, detail}`` with status
   passwordless sudo is a ``warn`` too, never a fail;
 - **AmneziaWG**: a placeholder slot — looks for binaries / ``*.conf``
   artifacts / an ``amz*|wg*`` interface; when nothing exists the status is
-  ``not_installed`` with "транспорт в разработке (SPEC-20261110)".
+  ``not_installed`` with "транспорт в разработке (SPEC-20261110)";
+- **zapret** (channel 0): DPI-desync on *direct* connections, no tunnel.
+  nfqws binary missing → ``not_installed`` (neutral, like the AWG slot).
+  Service active → direct canary ``curl https://www.youtube.com/generate_204``
+  (NO socks proxy): 204 is ``ok`` ("direct DPI-bypass жив"), anything else
+  (000/timeout) is ``fail`` — the strategy stopped working.  Installed but
+  not running → ``warn`` (like ZeroTier).
 
 Summary: exit code 0 when at least one channel is ``ok``, 1 when every
 channel is fail/not_installed.
@@ -221,11 +227,41 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
                    + "), интерфейс не поднят")
 
 
+# --- zapret (channel 0) ------------------------------------------------------------
+
+def check_zapret(run: Optional[RunCmd] = None) -> Channel:
+    """Channel 0: direct DPI-bypass via nfqws; canary without any SOCKS proxy."""
+    runner: RunCmd = run or run_cmd
+    from . import zapret as zapret_mod  # lazy: avoids module-level cycles
+    if zapret_mod.find_binary() is None:
+        return _result("zapret", STATUS_NOT_INSTALLED,
+                       f"nfqws не найден — канал 0 не установлен "
+                       f"({zapret_mod.UNIT_HINT})")
+    state = zapret_mod.service_state(runner)
+    if state == "active":
+        ok, code = zapret_mod.canary(runner)
+        if ok:
+            return _result("zapret", STATUS_OK,
+                           "direct DPI-bypass жив (youtube generate_204 "
+                           f"→ {code}, без socks)")
+        return _result("zapret", STATUS_FAIL,
+                       f"сервис активен, но canary не прошла "
+                       f"(http={code}) — стратегия не пропускает; "
+                       "blockcheck заново")
+    if state in ("inactive", "failed"):
+        return _result("zapret", STATUS_WARN,
+                       f"установлен, но не запущен (zapret: {state}); "
+                       f"vpn zapret on или {zapret_mod._manual_hint('start')}")
+    return _result("zapret", STATUS_WARN,
+                   f"nfqws есть, юнит {zapret_mod.SERVICE}.service не "
+                   f"определён (systemctl: {state})")
+
+
 # --- top level -------------------------------------------------------------------
 
 def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
     return [check_vpnm(run=run), check_zerotier(run=run),
-            check_awg(run=run)]
+            check_awg(run=run), check_zapret(run=run)]
 
 
 def run_monitor(run: Optional[RunCmd] = None) -> Dict[str, object]:

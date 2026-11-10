@@ -185,7 +185,10 @@
 - Systemd user units (`vpnm-<name>.service`): up / down / switch, активный профиль в state.json
 - `vpn profile pull` — импорт ссылок с VDS-сервера по ssh (`vds gateway links`)
 - `vpn sysproxy on|off|status` — GNOME системный прокси → локальный SOCKS-порт
-- `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель
+- `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель, zapret
+- `vpn zapret on|off|status` — «канал 0»: zapret (nfqws DPI-desync) на прямых соединениях
+  (youtube/discord без VPN, без смены IP); установка — `scripts/12_zapret.sh`
+- `vpn monitor` — матрица каналов (vpnm / ZeroTier / AmneziaWG / zapret, healthy N/4)
 - TUI-меню (`vpn` без аргументов) на questionary
 
 ## Графические приложения

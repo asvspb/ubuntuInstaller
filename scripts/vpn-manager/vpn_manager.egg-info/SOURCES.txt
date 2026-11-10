@@ -1,6 +1,7 @@
 pyproject.toml
 tests/test_autostart.py
 tests/test_bins.py
+tests/test_channels.py
 tests/test_cli_lifecycle.py
 tests/test_doctor.py
 tests/test_links.py
@@ -12,6 +13,7 @@ tests/test_sysproxy.py
 tests/test_sysproxy_flag.py
 tests/test_tui_wiring.py
 tests/test_xclient.py
+tests/test_zapret.py
 vpn_manager.egg-info/PKG-INFO
 vpn_manager.egg-info/SOURCES.txt
 vpn_manager.egg-info/dependency_links.txt
@@ -21,6 +23,7 @@ vpn_manager.egg-info/top_level.txt
 vpnm/__init__.py
 vpnm/__main__.py
 vpnm/bins.py
+vpnm/channels.py
 vpnm/cli.py
 vpnm/doctor.py
 vpnm/links.py
@@ -32,3 +35,4 @@ vpnm/settings.py
 vpnm/sysproxy.py
 vpnm/tui.py
 vpnm/xclient.py
+vpnm/zapret.py

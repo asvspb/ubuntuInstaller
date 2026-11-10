@@ -324,6 +324,22 @@ def action_channels() -> None:
                 fg=typer.colors.GREEN if healthy else typer.colors.RED)
 
 
+def action_zapret() -> None:
+    """Channel 0: zapret on/off/status from the menu (same CLI-layer logic)."""
+    from . import zapret as zapret_mod
+    choice = questionary.select(
+        "Канал 0 (zapret):",
+        choices=["status", "on", "off"]).ask()
+    if not choice:
+        return
+    if choice == "status":
+        for line in zapret_mod.status_lines():
+            _echo(line)
+        return
+    ok, message = zapret_mod.control(choice)
+    (_ok if ok else _err)(message)
+
+
 def action_exit() -> None:
     raise MenuExit()
 
@@ -338,6 +354,7 @@ MENU_ACTIONS: ActionMap = {
     "Switch": action_switch,
     "Status": action_status,
     "Мониторинг каналов": action_channels,
+    "Канал 0 (zapret)": action_zapret,
     "Опрос протоколов / выбрать быстрейший": action_probe,
     "Profiles": None,  # submenu, handled in run_menu
     "System proxy": action_sysproxy,

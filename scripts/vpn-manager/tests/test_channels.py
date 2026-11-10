@@ -1,4 +1,4 @@
-"""Tests for the channel monitor: vpnm / ZeroTier / AmneziaWG slot.
+"""Tests for the channel monitor: vpnm / ZeroTier / AmneziaWG / zapret.
 
 All subprocess interaction is mocked (run stubs + tmp-path store fixtures);
 no root, no network, no docker.
@@ -213,7 +213,7 @@ def test_monitor_exit_0_when_one_ok(env, monkeypatch):
     outcome = channels.run_monitor(run=make_run())
     assert channels.exit_code(outcome) == 0
     assert outcome["healthy"] == 1
-    assert outcome["total"] == 3
+    assert outcome["total"] == 4
 
 
 def test_monitor_exit_1_when_all_down(env, monkeypatch):
@@ -232,17 +232,17 @@ def test_cli_monitor_json_structure(env, monkeypatch):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert set(data) == {"channels", "healthy", "total"}
-    assert len(data["channels"]) == 3
+    assert len(data["channels"]) == 4
     for row in data["channels"]:
         assert set(row) == {"channel", "status", "detail"}
-    assert data["total"] == 3
+    assert data["total"] == 4
 
 
 def test_cli_monitor_exit_1(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
     result = runner.invoke(app, ["monitor"])
     assert result.exit_code == 1
-    assert "healthy channels: 0/3" in result.output
+    assert "healthy channels: 0/4" in result.output
 
 
 def test_cli_monitor_json_is_pure_json(env, monkeypatch):

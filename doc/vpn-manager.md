@@ -67,7 +67,9 @@ vpn install --linger
 | `vpn status` | Активный профиль, состояние unit, внешний IP через SOCKS |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
-| `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS |
+| `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
+| `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
+| `vpn monitor [--json]` | Матрица каналов: vpnm / ZeroTier / AmneziaWG / zapret (N/4) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 
 `vpn` также доступен как `python3 -m vpnm`.
@@ -162,6 +164,73 @@ vpn autostart status  # состояние автозапуска + список
 | `ssh` | Связность с сохранённым хостом (если задан) |
 | `dns` | Resolve + запрос через SOCKS активного профиля (только при наличии активного) |
 | `active` | Нет активного профиля — warn, DNS пропускается |
+
+## Мониторинг каналов (`vpn monitor`)
+
+Матрица доступности каналов (rich-таблица; `--json` — та же матрица):
+
+| Канал | Что проверяет | Статусы |
+|-------|---------------|---------|
+| `vpnm` | активный профиль + egress-probe через SOCKS | ok / fail / not_installed |
+| `zerotier` | сервис, `zerotier-cli status`, joined-сети | ok / warn / fail / not_installed (в архиве) |
+| `amneziawg` | артефакты (бинарь/конфиги/интерфейс) — слот | not_installed (транспорт в разработке) |
+| `zapret` | канал 0: сервис активен → **прямой** canary на youtube generate_204 | ok / warn / fail / not_installed |
+
+В конце — `healthy channels: N/4` (exit 1, если ни один канал не ok).
+Строка `zapret`: `not_installed` — нейтрально (канал 0 не ставили);
+`ok` — «direct DPI-bypass жив»; `fail` — сервис активен, но canary не прошла
+(стратегия сломалась — blockcheck заново); `warn` — установлен, но не запущен.
+
+## Канал 0: zapret (DPI-desync без VPN)
+
+[zapret](https://github.com/bol-van/zapret) (nfqws) не туннелирует трафик и
+не меняет IP: он модифицирует пакеты на лету (TCP-фрагментация, TTL-трюки и
+пр.), чтобы DPI провайдера не распознал соединения к youtube/discord. Это
+**комплемент** к vpn-manager, а не замена: VPN-профили (каналы vpnm) дают
+смену IP и полный туннель, zapret — только разворачивание DPI-блокировок на
+прямых соединениях.
+
+**Что даёт:**
+
+- youtube / discord / Rutube и всё из hostlist работает без VPN, с вашим IP;
+- не конфликтует с профилями: SOCKS-прокси vpnm идёт мимо nfqws-правил
+  (туннелированный трафик не нуждается в desync).
+
+**Ограничения:**
+
+- **не обходит IP-блоки** — если сервер забанен целиком по IP, desync не
+  поможет (это работа для VPN-каналов);
+- **стратегии ломаются**: DPI-паттерны провайдеров меняются — при `fail`
+  в monitor перезапустите `blockcheck.sh` и обновите `NFQWS_OPT_*` в
+  `/opt/zapret/config`;
+- требует root (iptables/nftables + raw-сокеты).
+
+**Установка** (на этой машине, интерактивно попросит sudo):
+
+```bash
+bash scripts/12_zapret.sh
+```
+
+Скрипт: клонирует bol-van/zapret (зеркала ghproxy.net → ghfast.top → direct),
+собирает nfqws в `/usr/local/bin`, ставит каркас `/opt/zapret` (config,
+ipset/), systemd-юнит `zapret.service` и суточный таймер обновления
+community-hostlist (antifilter, URL редактируется в шапке скрипта).
+Пытается скачать community-«ru-стратегию»; если недоступно — печатает
+инструкцию `blockcheck.sh` (интерактивный, долгий — автоматизировать не
+имеет смысла). Подобранные параметры впишите в `NFQWS_OPT_*` в
+`/opt/zapret/config` и `sudo systemctl restart zapret`.
+
+**Управление:**
+
+```bash
+vpn zapret status   # сервис + прямой canary (204 = жив)
+vpn zapret on       # systemctl start через sudo -n; нет прав → печатает команду
+vpn zapret off      # аналогично stop
+vpn monitor         # строка zapret в матрице каналов
+vpn doctor          # строка zapret (не установлен → warn, не fail)
+```
+
+То же самое — пункт «Канал 0 (zapret)» в TUI-меню (`vpn`).
 
 ## Зависимости
 

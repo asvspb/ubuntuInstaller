@@ -415,6 +415,27 @@ def sysproxy_cmd(on_off: str = typer.Argument(
         raise typer.Exit(code=1)
 
 
+@app.command("zapret")
+def zapret_cmd(action: str = typer.Argument(
+        ..., help="'on', 'off' or 'status'")) -> None:
+    """Channel 0: control or inspect the zapret (nfqws DPI-desync) service."""
+    from . import zapret as zapret_mod
+    action = action.strip().lower()
+    if action not in ("on", "off", "status"):
+        _err("expected 'on', 'off' or 'status'")
+        raise typer.Exit(code=2)
+    if action == "status":
+        for line in zapret_mod.status_lines():
+            typer.echo(line)
+        return
+    ok, message = zapret_mod.control(action)
+    if ok:
+        _ok(message)
+    else:
+        _err(message)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def doctor() -> None:
     """Diagnose environment: binaries, ports, v2rayA, ssh host, DNS."""
@@ -428,6 +449,49 @@ def doctor() -> None:
     typer.secho(f"verdict: {verdict}", fg=colors[verdict])
     if verdict == "fail":
         raise typer.Exit(code=1)
+
+
+@app.command()
+def monitor(as_json: bool = typer.Option(
+        False, "--json", help="Machine-readable output (same matrix)")) -> None:
+    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret)."""
+    from . import channels as channels_mod
+    outcome = channels_mod.run_monitor()
+    if as_json:
+        typer.echo(json.dumps(outcome, ensure_ascii=False, indent=2))
+    else:
+        _print_channels_table(outcome)
+        healthy = int(str(outcome["healthy"]))
+        total = int(str(outcome["total"]))
+        typer.secho(
+            f"healthy channels: {healthy}/{total}",
+            fg=typer.colors.GREEN if healthy else typer.colors.RED)
+    raise typer.Exit(code=channels_mod.exit_code(outcome))
+
+
+def _print_channels_table(outcome: dict) -> None:
+    """Render the channel matrix (rich table, plain-text fallback)."""
+    rows = list(outcome["channels"])
+    try:
+        from rich.console import Console
+        from rich.table import Table
+    except ImportError:
+        for row in rows:
+            typer.echo(f"{row['channel']}\t{row['status']}\t{row['detail']}")
+        return
+    status_colors = {"ok": "green", "warn": "yellow",
+                     "not_installed": "yellow", "fail": "red"}
+    table = Table(title="vpn channels")
+    table.add_column("channel")
+    table.add_column("status")
+    table.add_column("detail")
+    for row in rows:
+        table.add_row(
+            str(row["channel"]),
+            f"[{status_colors.get(str(row['status']), 'white')}]"
+            f"{row['status']}[/]",
+            str(row["detail"]))
+    Console().print(table)
 
 
 @app.command()

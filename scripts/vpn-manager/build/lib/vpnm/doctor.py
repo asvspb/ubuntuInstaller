@@ -6,7 +6,9 @@ Checks (each yields ok / warn / fail):
     OUR unit process;
 (c) conflict with v2rayA: port 1080 held by a foreign process -> warn;
 (d) ssh connectivity with the saved host (when set);
-(e) DNS through the active profile's tunnel (curl --socks5-hostname resolve).
+(e) DNS through the active profile's tunnel (curl --socks5-hostname resolve);
+(f) zapret (channel 0): absent → warn, active + direct canary 204 → ok,
+    active + canary fail → fail, installed but stopped → warn.
 
 The verdict is fail when any check failed, warn when only warnings remain.
 """
@@ -168,6 +170,30 @@ def check_dns(socks_port: Optional[int],
             f"http={out.strip() or 'none'}) — tunnel is down?")
 
 
+# --- zapret (channel 0) -----------------------------------------------------------
+
+def check_zapret(run: Optional[RunCmd] = None) -> Check:
+    """Channel 0 health: not installed → warn (neutral), running+canary → ok/fail."""
+    from . import zapret as zapret_mod
+    if zapret_mod.find_binary() is None:
+        return ("warn", "zapret",
+                f"канал 0 (DPI-desync) не установлен — {zapret_mod.UNIT_HINT}")
+    state = zapret_mod.service_state(run or run_cmd)
+    if state == "active":
+        ok, code = zapret_mod.canary(run or run_cmd)
+        if ok:
+            return ("ok", "zapret",
+                    f"direct canary ok (youtube generate_204 → {code})")
+        return ("fail", "zapret",
+                f"сервис активен, но direct canary не прошла (http={code}) "
+                "— стратегия не пропускает, запустите blockcheck заново")
+    if state in ("inactive", "failed"):
+        return ("warn", "zapret",
+                f"установлен, но не запущен (zapret: {state}) — "
+                f"{zapret_mod._manual_hint('start')}")
+    return ("warn", "zapret", f"юнит zapret.service не определён ({state})")
+
+
 # --- top level -------------------------------------------------------------------
 
 def run_doctor(host: Optional[str] = None,
@@ -177,6 +203,7 @@ def run_doctor(host: Optional[str] = None,
     checks.extend(check_bins(run=run))
     checks.extend(check_ports(run=run))
     checks.append(check_v2raya(run=run))
+    checks.append(check_zapret(run=run))
 
     active = runners.get_active()
     active_port: Optional[int] = None
