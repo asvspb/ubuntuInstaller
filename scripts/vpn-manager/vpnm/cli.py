@@ -49,6 +49,109 @@ app = VpnTyper(help="vpn-manager: manage client VPN profiles "
                     "(Xray Reality/XHTTP, Hysteria2)")
 profile_app = typer.Typer(help="Manage stored profiles")
 app.add_typer(profile_app, name="profile")
+amneziawg_app = typer.Typer(help="AmneziaWG channel: local tunnel and "
+                                 "server-side clients")
+app.add_typer(amneziawg_app, name="amneziawg")
+
+
+def _awg_resolve_host() -> str:
+    """Saved ssh host, else interactive question; saved back on success."""
+    from . import amneziawg as awg
+    from . import settings
+    host = settings.get_host()
+    if host:
+        _ok(f"using saved host '{host}'")
+        return host
+    # resolve_host prompts and persists the answer into settings.json
+    host = awg.resolve_host(typer.prompt)
+    _ok(f"saved host '{host}' to settings")
+    return host
+
+
+@amneziawg_app.command("status")
+def amneziawg_status() -> None:
+    """Two sections: LOCAL tunnel state and SERVER 'vds amneziawg status'."""
+    from . import amneziawg as awg
+    typer.secho("── ЛОКАЛЬНО ──", fg=typer.colors.CYAN)
+    for line in awg.local_status_lines():
+        typer.echo(line)
+    typer.secho("── СЕРВЕР ──", fg=typer.colors.CYAN)
+    try:
+        host = _awg_resolve_host()
+    except awg.AwgError as exc:
+        _warn(f"сервер недоступен: {exc}")
+        return
+    lines = awg.server_status_lines(host)
+    if lines is None:
+        _warn(f"сервер недоступен (ssh {host} 'vds amneziawg status' "
+              "failed)")
+        return
+    for line in lines:
+        typer.echo(line)
+
+
+@amneziawg_app.command("add-client")
+def amneziawg_add_client(name: str) -> None:
+    """Create a client on the server and scp its config to ~/.awg/NAME.conf."""
+    from . import amneziawg as awg
+    try:
+        host = _awg_resolve_host()
+        conf_path = awg.server_add_client(host, name)
+    except awg.AwgError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=1)
+    _ok(f"config saved: {conf_path} (0600)")
+    _ok("импортируйте файл в AmneziaVPN (AmneziaWG, из файла)")
+
+
+@amneziawg_app.command("remove-client")
+def amneziawg_remove_client(name: str, apply: bool = typer.Option(
+        False, "--apply", help="Actually remove on the server "
+        "(server-side gate; without it the server only previews)")) -> None:
+    """Remove a client on the server (destructive: needs --apply)."""
+    from . import amneziawg as awg
+    try:
+        host = _awg_resolve_host()
+    except awg.AwgError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=1)
+    if apply and not typer.confirm(
+            f"Remove client '{name}' on the server?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+    rc, out, err = awg.server_remove_client(host, name, apply)
+    if rc != 0:
+        _err(f"ssh {host} remove-client failed (exit {rc}): "
+             f"{(err or out).strip() or 'no error output'}")
+        raise typer.Exit(code=1)
+    for line in out.splitlines():
+        typer.echo(line)
+    _ok(f"server-side remove-client '{name}' done (apply={apply})")
+    if awg.local_instance() == name:
+        _warn(f"'{name}' — активный локальный инстанс; перезапустите "
+              "туннель, чтобы он перечитал конфиг: sudo systemctl "
+              f"restart {awg.AWG_UNIT_PREFIX}{name}")
+
+
+@amneziawg_app.command("tunnel")
+def amneziawg_tunnel(action: str = typer.Argument(
+        ..., help="'on', 'off' or 'status'")) -> None:
+    """Control the LOCAL systemd tunnel vpn-awg-split@laptop (sudo -n)."""
+    from . import amneziawg as awg
+    action = action.strip().lower()
+    if action not in ("on", "off", "status"):
+        _err("expected 'on', 'off' or 'status'")
+        raise typer.Exit(code=2)
+    if action == "status":
+        for line in awg.tunnel_status_lines():
+            typer.echo(line)
+        return
+    ok, message = awg.tunnel_control(action)
+    if ok:
+        _ok(message)
+    else:
+        _err(message)
+        raise typer.Exit(code=1)
 
 
 def _err(msg: str) -> None:
