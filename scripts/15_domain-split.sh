@@ -51,6 +51,7 @@ AWG_IFACE="${AWG_IFACE:-awg0-split}"
 AWG_CONF="${AWG_CONF:-$HOME/awg0-split.conf}"   # конфиг awg-quick (Table=off)
 DOH_PORT="5053"
 RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же файл, что у 13_dns-doh.sh
+PUBLIC_DNS_CONF="/etc/systemd/resolved.conf.d/public-dns.conf"  # глобальный DNS=1.1.1.1 8.8.8.8 — обходит dnsmasq, нейтрализуем
 # Юнит AWG: templated (14_awg-split.sh) или точечный — автодетект ниже.
 AWG_UNIT_PREF=(vpn-awg-split@laptop.service vpn-awg-split.service)
 
@@ -179,6 +180,11 @@ CONF
     fi
     systemctl restart dnsmasq.service 2>/dev/null || true
     systemctl restart systemd-resolved.service
+    # вернуть public-dns.conf (глобальный 1.1.1.1/8.8.8.8), если нейтрализовали
+    if [ -f "${PUBLIC_DNS_CONF}.disabled-by-domain-split" ]; then
+        mv "${PUBLIC_DNS_CONF}.disabled-by-domain-split" "$PUBLIC_DNS_CONF"
+        success "public-dns.conf восстановлен"
+    fi
     echo
     echo -e "${C_GREEN}=============================================================${C_RESET}"
     echo -e "${C_GREEN}[OK]${C_RESET} доменный split демонтирован."
@@ -469,6 +475,13 @@ Domains=~.
 CONF
     chmod 0644 "$RESOLVED_CONF"
     success "resolved-override записан (backup рядом: ${RESOLVED_CONF}.bak.*)"
+fi
+# public-dns.conf (DNS=1.1.1.1 8.8.8.8, Domains=~.) конкурирует с dnsmasq:
+# resolved шлёт часть запросов мимо dnsmasq → nftset не наполняется. Убираем
+# (backup рядом; --off возвращает).
+if [ -f "$PUBLIC_DNS_CONF" ] && ! [ -f "${PUBLIC_DNS_CONF}.disabled-by-domain-split" ]; then
+    mv "$PUBLIC_DNS_CONF" "${PUBLIC_DNS_CONF}.disabled-by-domain-split"
+    success "public-dns.conf нейтрализован (${PUBLIC_DNS_CONF}.disabled-by-domain-split)"
 fi
 
 # --- 8. Рестарт сервисов + верификация ------------------------------------------------------------

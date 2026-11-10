@@ -332,9 +332,15 @@ inet/awg_split/routes → mark 0x21000 → table 21000 → default dev awg0-spli
   cloudflared 2025.11.1 изнутри скрипта.
 - **dnsmasq** (`/etc/dnsmasq.d/awg-split.conf`): `server=127.0.0.1#5053`
   (все запросы — через DoH), `no-resolv`, `listen-address=127.0.0.1`,
-  `port=53`, `bind-interfaces`, и по `nftset=/<домен>/4:inet#awg_split#routes`
+  `port=53`, `bind-interfaces`, и по `nftset=/<домен>/4 inet#awg_split#routes`
   на каждый домен. Генерируется скриптом из файла списка — **не править
-  руками**.
+  руками**. Два найденных на живой машине факта: (1) семейство в `nftset`
+  отделяется **пробелом** (`4 inet#...`), не двоеточием — с `4:` dnsmasq
+  строит битую nft-команду и молча не наполняет set; (2) Ubuntu-jammy
+  сборка dnsmasq собрана **без HAVE_NFTSET** — скрипт пересобирает dnsmasq
+  из исходников с `COPTS="-DHAVE_NFTSET -DHAVE_DNSSEC"` (DNSSEC обязателен:
+  init-скрипт Ubuntu всегда передаёт trust-anchor) и заменяет
+  `/usr/sbin/dnsmasq` (дистро-копия в `dnsmasq.dist`).
 - **systemd-resolved** (`/etc/systemd/resolved.conf.d/doh-local.conf`
   меняется на `DNS=127.0.0.1`, `Domains=~.`): **все** домены системы
   резолвятся через dnsmasq→DoH — это лечит NXDOMAIN-перехват провайдера
