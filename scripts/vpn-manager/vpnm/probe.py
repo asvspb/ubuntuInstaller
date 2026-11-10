@@ -102,6 +102,26 @@ def _wait_port(socks_port: int,
     return runners.port_in_use(socks_port)
 
 
+def _stop_port_conflicts(socks_port: int, exclude: str,
+                         run: Optional[RunCmd]) -> None:
+    """Stop units of OTHER profiles holding the same socks port.
+
+    Profiles may share a local SOCKS port (e.g. phone and xhttp-web both on
+    2080). Measurements run strictly sequentially with at most one client
+    up, so before bringing a profile up, any other profile's running unit
+    on the same port is stopped — otherwise ``runners.up`` fails with
+    'port in use' and the profile is falsely marked as failed.
+    """
+    for record in profiles.list_profiles():
+        other = str(record["name"])
+        if other == exclude:
+            continue
+        if int(str(record["socks_port"])) != socks_port:
+            continue
+        if runners.is_active(other, run):
+            runners.down(other, run)
+
+
 def probe_profile(
         name: str,
         run: Optional[RunCmd] = None,
@@ -126,6 +146,7 @@ def probe_profile(
     )
     try:
         if not result["already_active"]:
+            _stop_port_conflicts(socks_port, name, run)
             runners.up(name, run)
             _wait_port(socks_port, sleep_fn=sleep_fn)
     except (profiles.ProfileStoreError, runners.RunnerError, LinkError) as exc:

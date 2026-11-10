@@ -279,6 +279,49 @@ def test_all_fail_cli_exit_code_one(env, monkeypatch):
     assert result.exit_code == 1
 
 
+# --- shared-port conflicts -------------------------------------------------------
+
+
+def test_shared_port_other_unit_stopped_between_profiles(env, monkeypatch):
+    """phone and xhttp share port 2080; phone is the active profile.
+
+    phone is measured in place (no restart), then before xhttp comes up
+    phone's unit must be stopped exactly once — otherwise xhttp's up()
+    would fail with 'port in use'.
+    """
+    _add("phone", FIXTURE_LINK, 2080)
+    _add("xhttp", FIXTURE_LINK, 2080)
+    fake = FakeRunners(active="phone", latencies={2080: (0, "0.100")})
+    fake.wire(monkeypatch, probe)
+    outcome = probe.run_probe(sleep_fn=lambda _s: None)
+    downs = [name for kind, name in fake.calls if kind == "down"]
+    ups = [name for kind, name in fake.calls if kind == "up"]
+    assert ups == ["xhttp"]
+    assert downs == ["phone", "xhttp"]
+    # exactly one down between phone's measurement and xhttp's up: phone's
+    # unit stopped, then xhttp brought up — no 'port in use' error
+    assert fake.calls.index(("down", "phone")) < fake.calls.index(("up", "xhttp"))
+    statuses = {r["name"]: (r["ok"], r["error"]) for r in outcome["rows"]}
+    assert statuses == {"phone": (True, ""), "xhttp": (True, "")}
+
+
+def test_fail_profile_leaves_no_unit_running(env, monkeypatch):
+    """A profile that fails its measurements is still stopped afterwards."""
+    _add("phone", FIXTURE_LINK, 2080)
+    _add("xhttp", FIXTURE_LINK, 2080)
+    fake = FakeRunners(active="phone",
+                       latencies={2080: (28, "")})  # every curl sample times out
+    fake.wire(monkeypatch, probe)
+    outcome = probe.run_probe(sleep_fn=lambda _s: None)
+    assert all(not r["ok"] for r in outcome["rows"])
+    # phone measured in place, then stopped before xhttp's turn; xhttp
+    # brought up for measuring, then stopped despite failing
+    downs = [name for kind, name in fake.calls if kind == "down"]
+    assert downs.count("phone") == 1
+    assert "xhttp" in downs
+    assert fake.units == set() or fake.units == {"phone"}  # no stray unit
+
+
 # --- TUI wiring -------------------------------------------------------------------
 
 
