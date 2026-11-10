@@ -211,6 +211,18 @@ split-список `STRATEGY_IPS` (google + telegram, редактируется
 с подтверждением. Верификация: `awg show` handshake + ping первого IP из
 AllowedIPs.
 
+### `scripts/15_domain-split.sh`
+Доменный split-туннель поверх AWG (канал 1+): через туннель идёт трафик
+только на домены из `/opt/awg-split/domains.txt` (YouTube/Telegram/
+Google-кластер по умолчанию, редактируется), остальное — напрямую.
+Механика: systemd-resolved → dnsmasq (127.0.0.1:53, `nftset=` кладёт
+резолвы доменов в nft set) → cloudflared DoH (:5053); nft mark 0x21000 →
+table 21000 → default dev awg0-split. Лечит NXDOMAIN-перехват глобально.
+Приводит `~/awg0-split.conf` к `Table=off` + `AllowedIPs=0.0.0.0/0, ::/0`
+(fwmark 0xca6c AWG-сокета исключается nft-правилом). Идемпотентен,
+`--off` — полный демонтаж, `--status` — состояние. Мониторинг: строка
+`amneziawg` в `vpn monitor` — `ok (domain-split)`.
+
 ## Графические приложения
 
 *   **google-chrome-stable**: Веб-браузер от Google.

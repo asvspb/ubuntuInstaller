@@ -290,6 +290,14 @@ def _awg_interfaces(run: RunCmd) -> List[str]:
     return ifaces
 
 
+DOMAIN_SPLIT_CONF = Path("/etc/dnsmasq.d/awg-split.conf")
+
+
+def _domain_split_active() -> bool:
+    """Доменный split (15_domain-split.sh) активен — есть dnsmasq-конфиг."""
+    return DOMAIN_SPLIT_CONF.exists()
+
+
 def check_awg(run: Optional[RunCmd] = None) -> Channel:
     """AmneziaWG slot: transport not implemented yet, artifacts only."""
     runner: RunCmd = run or run_cmd
@@ -300,8 +308,9 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
                        f"артефактов нет — {AWG_SPEC_NOTE}")
     ifaces = _awg_interfaces(runner)
     if ifaces:
+        split_note = " (domain-split)" if _domain_split_active() else ""
         return _result("amneziawg", STATUS_OK,
-                       f"интерфейс поднят: {', '.join(ifaces)}")
+                       f"интерфейс поднят: {', '.join(ifaces)}{split_note}")
     parts = []
     if bins_found:
         parts.append(f"бинарь: {', '.join(Path(b).name for b in bins_found)}")

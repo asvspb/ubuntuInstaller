@@ -315,6 +315,86 @@ sudo systemctl start/stop vpn-awg-split@laptop
 awg show
 ```
 
+## Канал 1+: доменный split через 15_domain-split.sh
+
+Над AWG-туннелем (канал 1) работает **доменный split**: через AWG идёт
+трафик только на домены из списка, всё остальное — напрямую. Механика —
+классический `dnsmasq + nft + fwmark` паттерн:
+
+```
+systemd-resolved → dnsmasq (127.0.0.1:53) → cloudflared DoH (127.0.0.1:5053)
+                                        ↘ домены из списка → nft set
+inet/awg_split/routes → mark 0x21000 → table 21000 → default dev awg0-split
+```
+
+- **DoH**: переиспользуется установленный `cloudflared-proxy-dns`
+  (порт 5053, см. канал DNS 0.5); при отсутствии — минимальная установка
+  cloudflared 2025.11.1 изнутри скрипта.
+- **dnsmasq** (`/etc/dnsmasq.d/awg-split.conf`): `server=127.0.0.1#5053`
+  (все запросы — через DoH), `no-resolv`, `listen-address=127.0.0.1`,
+  `port=53`, `bind-interfaces`, и по `nftset=/<домен>/4:inet#awg_split#routes`
+  на каждый домен. Генерируется скриптом из файла списка — **не править
+  руками**.
+- **systemd-resolved** (`/etc/systemd/resolved.conf.d/doh-local.conf`
+  меняется на `DNS=127.0.0.1`, `Domains=~.`): **все** домены системы
+  резолвятся через dnsmasq→DoH — это лечит NXDOMAIN-перехват провайдера
+  глобально, а не только для youtube.
+- **nft** (`table inet awg_split`): set `routes` (ipv4_addr, flags
+  interval, auto-merge), chain `out` (hook output, priority mangle):
+  `meta mark 0xca6c return` (не трогаем UDP-пакеты самого AWG — иначе
+  endpoint-трафик зациклится в туннель), затем
+  `ip daddr @routes mark set 0x21000`. Плюс `ip rule pref 21000 fwmark
+  0x21000 table 21000` и `table 21000 default dev awg0-split`.
+
+### Список доменов
+
+`/opt/awg-split/domains.txt` — один домен на строку, комментарии `#`.
+dnsmasq-суффикс-матчинг: запись `google.com` покрывает все поддомены.
+Дефолт при установке:
+
+- **YouTube**: `youtube.com`, `googlevideo.com`, `ytimg.com`, `ggpht.com`,
+  `youtubei.googleapis.com`
+- **Telegram**: `telegram.org`, `t.me`, `telesco.pe`, `cdn-telegram.org`,
+  `teleg.ru`
+- **Google-кластер** (поиск, Gemini, Meet, аккаунты, reCAPTCHA):
+  `google.com`, `googleapis.com`, `gstatic.com`, `googleusercontent.com`,
+  `gvt1.com`, `gvt2.com`, `recaptcha.net`
+- примеры заблокированных западных: `instagram.com`, `facebook.com`,
+  `x.com`, `openai.com` — **дополни своим списком**.
+
+После правки файла — перезапуск `sudo bash scripts/15_domain-split.sh`
+(перегенерит dnsmasq-конфиг; сам файл не перетирается, новые дефолты
+добавляются merge'ом).
+
+### Совместимость с awg-quick (тонкое место)
+
+Скрипт приводит конфиг `~/awg0-split.conf` к `Table = off` (awg-quick не
+создаёт своих маршрутов — маршрутизацией ведёт nft/fwmark) и
+`AllowedIPs = 0.0.0.0/0, ::/0` (cryptokey-routing принимает всё). При
+`Table = off` awg-quick по-прежнему ставит fwmark `0xca6c` на свой
+UDP-сокет и добавляет `ip rule` fwmark-исключение для endpoint —
+правило `meta mark 0xca6c return` в nft — вторая линия защиты от зацикливания.
+Оба факта проверены на живой машине; при несоответствии скрипт пишет warning.
+
+### Управление и демонтаж
+
+```bash
+sudo bash scripts/15_domain-split.sh           # установка / переустановка
+sudo bash scripts/15_domain-split.sh --status  # текущее состояние
+sudo bash scripts/15_domain-split.sh --off     # полный демонтаж
+```
+
+`--off` удаляет dnsmasq-конфиг, nft-таблицу, ip rule/route и возвращает
+resolved на cloudflared DoH напрямую (`DNS=127.0.0.1:5053`). AWG-конфиг
+возвращается к split-AllowedIPs вручную из `*.bak.*` при желании.
+
+**Верификация:** `dig @127.0.0.1 www.youtube.com +short` непустой,
+`sudo nft list set inet awg_split routes` содержит резолвнутые IP,
+`curl --noproxy '*' -o /dev/null -w '%{http_code}'
+https://www.youtube.com/generate_204` → 204, github → 200 (напрямую).
+Мониторинг: строка `amneziawg` в `vpn monitor` — `ok (domain-split)` при
+поднятом интерфейсе и установленном dnsmasq-конфиге.
+
 ## Зависимости
 
 `typer`, `questionary` (TUI), `curl` (probe DNS/external IP), `ssh`,

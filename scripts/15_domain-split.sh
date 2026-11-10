@@ -1,0 +1,511 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 15_domain-split.sh — доменный split-туннель поверх AWG (канал 1+)
+#
+# Механика (классический dnsmasq + nft + fwmark паттерн):
+#   система (systemd-resolved) → dnsmasq (127.0.0.1:53) → cloudflared DoH
+#   (127.0.0.1:5053 → Cloudflare). Лечит NXDOMAIN-перехват провайдера
+#   глобально, а не только для youtube.
+#   Домены из списка /opt/awg-split/domains.txt dnsmasq кладёт в nft set
+#   inet/awg_split/routes (nftset=...). nft помечает пакеты на эти адреса
+#   fwmark 0x21000, ip rule отправляет их в table 21000 с default dev
+#   awg0-split. Всё остальное — напрямую (канал 0 zapret работает как раньше).
+#
+# ТРЕБУЕТ ROOT: nft/ip rule/resolved.
+# Запуск:    bash scripts/15_domain-split.sh          (установка/переустановка)
+#            sudo bash scripts/15_domain-split.sh --off    (полный демонтаж)
+#            sudo bash scripts/15_domain-split.sh --status (текущее состояние)
+# Идемпотентен: повторный запуск перегенерирует конфиг и правила.
+#
+# Совместимость с awg-quick (тонкое место, см. doc/vpn-manager.md):
+#   ~/awg0-split.conf приводится к Table = off + AllowedIPs = 0.0.0.0/0, ::/0
+#   (cryptokey-routing принимает всё, маршрутизацию ведёт nft/fwmark).
+#   wg-quick/awg-quick при Table = off не создаёт своих маршрутов; fwmark
+#   0xca6c на своём UDP-сокете AWG ставит всегда — правило nft «meta mark
+#   0xca6c return» пропускает эти пакеты первыми, поэтому UDP-пакеты к
+#   endpoint не зацикливаются в туннель (двойная защита: endpoint не входит
+#   в доменный список и не попадает в set routes).
+# ==============================================================================
+set -e
+
+C_RESET="\033[0m"
+C_GREEN="\033[1;32m"
+C_BLUE="\033[1;34m"
+C_YELLOW="\033[1;33m"
+C_RED="\033[1;31m"
+
+info()    { echo -e "\n${C_BLUE}[INFO]${C_RESET} $*"; }
+success() { echo -e "${C_GREEN}[OK]${C_RESET} $*"; }
+warn()    { echo -e "${C_YELLOW}[WARN]${C_RESET} $*"; }
+err()     { echo -e "${C_RED}[ERR]${C_RESET} $*" >&2; }
+
+# --- Параметры (редактируйте под себя) -----------------------------------------
+DOMAINS_FILE="/opt/awg-split/domains.txt"
+DNSMASQ_CONF="/etc/dnsmasq.d/awg-split.conf"
+NFT_TABLE="awg_split"
+NFT_SET="routes"
+MARK_HEX="0x21000"
+RULE_PREF="21000"           # ip rule preference
+ROUTE_TABLE="21000"
+AWG_IFACE="${AWG_IFACE:-awg0-split}"
+AWG_CONF="${AWG_CONF:-$HOME/awg0-split.conf}"   # конфиг awg-quick (Table=off)
+DOH_PORT="5053"
+RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же файл, что у 13_dns-doh.sh
+# Юнит AWG: templated (14_awg-split.sh) или точечный — автодетект ниже.
+AWG_UNIT_PREF=(vpn-awg-split@laptop.service vpn-awg-split.service)
+
+# Дефолтный список доменов. Редактируйте в $DOMAINS_FILE после установки.
+DEFAULT_DOMAINS=(
+    youtube.com
+    googlevideo.com
+    ytimg.com
+    ggpht.com
+    youtubei.googleapis.com
+    telegram.org
+    t.me
+    telesco.pe
+    cdn-telegram.org
+    teleg.ru
+    # --- Google-кластер (поиск, Gemini, Meet, аккаунты, reCAPTCHA): ---
+    google.com
+    googleapis.com
+    gstatic.com
+    googleusercontent.com
+    ggpht.com
+    gvt1.com
+    gvt2.com
+    recaptcha.net
+    # --- дополни своим списком (примеры заблокированных западных): ---
+    instagram.com
+    facebook.com
+    x.com
+    openai.com
+)
+
+# Новые дефолты для idempotent-merge в существующий domains.txt
+# (то, что появилось после первой установки — добавляется, существующее не трогается)
+MERGE_EXTRA_DOMAINS=(
+    google.com
+    googleapis.com
+    gstatic.com
+    googleusercontent.com
+    gvt1.com
+    gvt2.com
+    recaptcha.net
+)
+
+# --- 0. Root -------------------------------------------------------------------
+if [ "$1" = "--status" ]; then
+    # status можно смотреть и без root (nft покажет только с root — сами запросим)
+    if [ "$(id -u)" -ne 0 ]; then exec sudo bash "$0" "$@"; fi
+elif [ "$(id -u)" -ne 0 ]; then
+    if ! sudo -n true 2>/dev/null; then
+        warn "нет passwordless sudo — сейчас будет запрошен пароль"
+    fi
+    exec sudo bash "$0" "$@"
+fi
+
+for tool in systemctl nft ip dig install awk; do
+    command -v "$tool" >/dev/null 2>&1 || { err "$tool не найден — доустановите и повторите"; exit 1; }
+done
+
+# AWG-конфиг живёт в home пользователя (sudo re-exec меняет HOME) — восстанавливаем
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    SUDO_USER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    [ -n "$SUDO_USER_HOME" ] && AWG_CONF="${AWG_CONF/$HOME/$SUDO_USER_HOME}"
+    AWG_CONF="${AWG_CONF/#\/root\//$SUDO_USER_HOME/}"
+fi
+info "AWG-конфиг: ${AWG_CONF}"
+
+# --- Автодетект AWG-юнита ---------------------------------------------------------
+AWG_UNIT=""
+for u in "${AWG_UNIT_PREF[@]}"; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${u%.service}"; then
+        AWG_UNIT="$u"; break
+    fi
+done
+
+awg_restart() {
+    # перезапуск AWG-туннеля после правки конфига; не фатально, если юнит не найден
+    if [ -n "$AWG_UNIT" ]; then
+        systemctl restart "$AWG_UNIT" && return 0
+    fi
+    # fallback: если интерфейс уже поднят, конфиг применится при следующем up
+    warn "AWG-юнит не найден/не перезапустился — конфиг ${AWG_CONF} примените вручную: awg-quick down/up"
+    return 0
+}
+
+# --- helpers ---------------------------------------------------------------------
+# домены из файла (без комментариев/пустых), по одному на строку
+read_domains() {
+    grep -vE '^\s*(#|$)' "$DOMAINS_FILE" | sed 's/[[:space:]]//g' | sort -u
+}
+
+# --- --status ---------------------------------------------------------------------
+if [ "$1" = "--status" ]; then
+    echo "=== доменный split: статус ==="
+    echo "домены в списке: $( [ -f "$DOMAINS_FILE" ] && read_domains | wc -l || echo 0 )  ($DOMAINS_FILE)"
+    echo "dnsmasq-конфиг:  $( [ -f "$DNSMASQ_CONF" ] && echo 'есть' || echo 'нет' )  ($DNSMASQ_CONF)"
+    echo "dnsmasq:         $(systemctl is-active dnsmasq.service 2>/dev/null || echo unknown)"
+    echo "cloudflared:     $(systemctl is-active cloudflared-proxy-dns.service 2>/dev/null || echo unknown)"
+    echo "resolved DNS:    $(grep -h '^DNS=' /etc/systemd/resolved.conf.d/*.conf 2>/dev/null | sort -u | tr '\n' ' ')"
+    echo "nft-таблица:     $(sudo nft list table "inet $NFT_TABLE" >/dev/null 2>&1 && echo 'есть' || echo 'нет')"
+    echo "ip rule:         $(ip rule show | grep -c "fwmark $MARK_HEX" || true) шт (fwmark $MARK_HEX)"
+    echo "route t$ROUTE_TABLE: $(ip route show table "$ROUTE_TABLE" 2>/dev/null || echo 'пусто')"
+    echo "интерфейс:       $(ip link show "$AWG_IFACE" >/dev/null 2>&1 && echo "$AWG_IFACE up" || echo "$AWG_IFACE нет")"
+    echo "AWG-юнит:        ${AWG_UNIT:-не найден}"
+    echo "проверка DNS:    $(dig "@127.0.0.1" www.youtube.com +short 2>/dev/null | head -1 || echo 'нет ответа')"
+    exit 0
+fi
+
+# --- --off: полный демонтаж ---------------------------------------------------------
+if [ "$1" = "--off" ]; then
+    info "демонтаж доменного split-туннеля"
+    rm -f "$DNSMASQ_CONF" && success "dnsmasq-конфиг удалён: $DNSMASQ_CONF"
+    nft delete table "inet $NFT_TABLE" 2>/dev/null && success "nft-таблица inet/${NFT_TABLE} удалена" || warn "nft-таблицы не было"
+    while ip rule show | grep -q "fwmark ${MARK_HEX}"; do
+        ip rule del fwmark "$MARK_HEX" table "$ROUTE_TABLE" 2>/dev/null || break
+    done
+    ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
+    success "ip rule/route table ${ROUTE_TABLE} удалены"
+    # resolved: вернуть системный DNS на локальный DoH напрямую (как у 13_dns-doh.sh)
+    if [ -f "$RESOLVED_CONF" ]; then
+        cat > "$RESOLVED_CONF" <<CONF
+[Resolve]
+DNS=127.0.0.1:${DOH_PORT}
+CONF
+        chmod 0644 "$RESOLVED_CONF"
+        success "resolved: DNS возвращён на cloudflared DoH напрямую (127.0.0.1:${DOH_PORT})"
+    fi
+    systemctl restart dnsmasq.service 2>/dev/null || true
+    systemctl restart systemd-resolved.service
+    echo
+    echo -e "${C_GREEN}=============================================================${C_RESET}"
+    echo -e "${C_GREEN}[OK]${C_RESET} доменный split демонтирован."
+    echo "Осталось вручную (по желанию):"
+    echo "  - вернуть AWG-конфиг ${AWG_CONF} к split-AllowedIPs (backup: ${AWG_CONF}.bak.*)"
+    echo "  - stop сервисов: sudo systemctl disable --now dnsmasq (если нужен только сплит)"
+    echo "  - список доменов сохранён: $DOMAINS_FILE"
+    echo -e "${C_GREEN}=============================================================${C_RESET}"
+    exit 0
+fi
+
+# --- 1. Зависимости -----------------------------------------------------------------
+info "1. Зависимости (dnsmasq, nftables)"
+MISSING=()
+# dnsmasq-base бывает установлен без юнита (зависимость) — нам нужен пакет dnsmasq
+if ! systemctl list-unit-files 2>/dev/null | grep -q '^dnsmasq.service'; then
+    MISSING+=(dnsmasq)
+fi
+command -v nft >/dev/null 2>&1 || MISSING+=(nftables)
+if [ "${#MISSING[@]}" -gt 0 ]; then
+    apt-get update -qq
+    apt-get install -y "${MISSING[@]}"
+fi
+systemctl enable --now dnsmasq.service >/dev/null 2>&1 || true
+
+# --- 1.5. Ubuntu-сборка dnsmasq без HAVE_NFTSET? → пересобираем из исходников -------
+# (jammy dnsmasq 2.91: 'no-nftset'; директива nftset нужна нам для routes-set)
+DNSMASQ_BIN="$(command -v dnsmasq)"
+DNSMASQ_DROPIN="/etc/systemd/system/dnsmasq.service.d/vds-nftset.conf"
+# поддержка nftset смотрим по реальному /usr/sbin/dnsmasq (его зовёт systemd-юнит);
+# DNSSEC тоже обязателен (Ubuntu init-скрипт передаёт trust-anchor)
+dnsmasq_ok() {
+    local copts
+    copts="$(/usr/sbin/dnsmasq --version 2>/dev/null | grep 'Compile time options')"
+    echo "$copts" | grep -q ' nftset' && echo "$copts" | grep -qv 'no-DNSSEC'
+}
+if ! dnsmasq_ok; then
+    info "  dnsmasq без HAVE_NFTSET — сборка из исходников (COPTS=-DHAVE_NFTSET)"
+    DNSMASQ_REPO="https://github.com/imp/dnsmasq"
+    DNSMASQ_SRC="/opt/awg-split/src/dnsmasq"
+    for tool in git make gcc; do
+        command -v "$tool" >/dev/null 2>&1 || { err "$tool не найден — нужен для сборки dnsmasq с nftset"; exit 1; }
+    done
+    # libnftables-dev нужен для nftset.c (HAVE_NFTSET); nettle/hogweed — для DNSSEC
+    # (Ubuntu init-скрипт всегда передаёт trust-anchor → без -DHAVE_DNSSEC не стартует)
+    MISSING_DEV=()
+    dpkg -s libnftables-dev >/dev/null 2>&1 || MISSING_DEV+=(libnftables-dev)
+    dpkg -s nettle-dev >/dev/null 2>&1 || MISSING_DEV+=(nettle-dev)
+    dpkg -s pkg-config >/dev/null 2>&1 || MISSING_DEV+=(pkg-config)
+    [ "${#MISSING_DEV[@]}" -eq 0 ] || apt-get install -y "${MISSING_DEV[@]}" >/dev/null
+    if [ -d "$DNSMASQ_SRC/.git" ]; then
+        (cd "$DNSMASQ_SRC" && timeout 120 git pull --ff-only >/dev/null 2>&1) || true
+    else
+        mkdir -p "$(dirname "$DNSMASQ_SRC")"
+        cloned=""
+        rm -rf "$DNSMASQ_SRC"
+        for mirror in "" "https://ghproxy.net/"; do
+            info "  пробую: ${mirror}${DNSMASQ_REPO}"
+            if timeout 120 git clone --depth 1 "${mirror}${DNSMASQ_REPO}" "$DNSMASQ_SRC"; then
+                cloned=1; break
+            fi
+            rm -rf "$DNSMASQ_SRC"
+        done
+        [ -n "$cloned" ] || { err "клонирование dnsmasq не удалось"; exit 1; }
+    fi
+    make -C "$DNSMASQ_SRC" clean >/dev/null 2>&1 || true
+    if make -C "$DNSMASQ_SRC" COPTS="-DHAVE_NFTSET -DHAVE_DNSSEC" 2>&1 | tail -2; then
+        [ -x "$DNSMASQ_SRC/src/dnsmasq" ] || { err "бинарь dnsmasq после сборки не найден"; exit 1; }
+        install -m 0755 "$DNSMASQ_SRC/src/dnsmasq" /usr/local/sbin/dnsmasq
+        DNSMASQ_LOCAL="/usr/local/sbin/dnsmasq"
+        "$DNSMASQ_LOCAL" --version | grep -q ' nftset' || { err "пересобранный dnsmasq всё ещё без nftset"; exit 1; }
+        "$DNSMASQ_LOCAL" --version | grep 'Compile time options' | grep -qv 'no-DNSSEC' || { err "пересобранный dnsmasq без DNSSEC"; exit 1; }
+        success "dnsmasq собран с nftset: $DNSMASQ_LOCAL"
+        # Debian-юнит идёт через /etc/init.d/dnsmasq, который зовёт /usr/sbin/dnsmasq —
+        # заменяем бинарь там (дистро-копия сохраняется в .dist один раз).
+        DNSMASQ_SBIN="/usr/sbin/dnsmasq"
+        copts_sbin="$("$DNSMASQ_SBIN" --version 2>/dev/null | grep 'Compile time options')"
+        if ! (echo "$copts_sbin" | grep -q ' nftset' && echo "$copts_sbin" | grep -qv 'no-DNSSEC'); then
+            [ -f "$DNSMASQ_SBIN.dist" ] || cp -a "$DNSMASQ_SBIN" "$DNSMASQ_SBIN.dist"
+            install -m 0755 "$DNSMASQ_LOCAL" "$DNSMASQ_SBIN"
+        fi
+        rm -f "$DNSMASQ_DROPIN"
+        systemctl daemon-reload
+        success "бинарь установлен: $DNSMASQ_SBIN (дистро-версия: $DNSMASQ_SBIN.dist)"
+    else
+        err "сборка dnsmasq не удалась — nftset-маршрутизация невозможна"
+        exit 1
+    fi
+else
+    success "dnsmasq с поддержкой nftset: $DNSMASQ_BIN"
+fi
+success "dnsmasq / nftables готовы"
+
+# --- 2. cloudflared DoH (переиспользуем, если уже установлен 13_dns-doh.sh) ----------
+info "2. DoH-резолвер (cloudflared-proxy-dns, 127.0.0.1:${DOH_PORT})"
+if systemctl is-active --quiet cloudflared-proxy-dns.service 2>/dev/null \
+   || [ -x /usr/local/bin/cloudflared-proxy-dns-bin ]; then
+    systemctl enable --now cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    success "cloudflared-proxy-dns уже установлен — переиспользую"
+else
+    info "  cloudflared не найден — минимальная установка (см. scripts/13_dns-doh.sh для деталей)"
+    CF_VERSION="2025.11.1"
+    CF_REPO="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}/cloudflared-linux-amd64"
+    GITHUB_MIRRORS=("https://ghproxy.net/" "https://gh-proxy.com/")
+    BIN_DST="/usr/local/bin/cloudflared-proxy-dns-bin"
+    TMP_BIN="$(mktemp)"
+    downloaded=""
+    for mirror in "${GITHUB_MIRRORS[@]}" ""; do
+        url="${mirror}${CF_REPO}"
+        info "  пробую: $url"
+        if curl -fsSL --retry 3 --retry-delay 2 --max-time 300 "$url" -o "$TMP_BIN" && [ -s "$TMP_BIN" ]; then
+            downloaded="$url"; break
+        fi
+    done
+    [ -n "$downloaded" ] || { err "скачивание cloudflared не удалось — запустите сначала scripts/13_dns-doh.sh"; rm -f "$TMP_BIN"; exit 1; }
+    chmod 0755 "$TMP_BIN"
+    install -m 0755 "$TMP_BIN" "$BIN_DST"
+    rm -f "$TMP_BIN"
+    UNIT_DST="/etc/systemd/system/cloudflared-proxy-dns.service"
+    cat > "$UNIT_DST" <<UNIT
+[Unit]
+Description=Cloudflare DoH local proxy — ${CF_VERSION}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=${BIN_DST} proxy-dns --port ${DOH_PORT} --upstream https://cloudflare-dns.com/dns-query
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    chmod 0644 "$UNIT_DST"
+    systemctl daemon-reload
+    systemctl enable --now cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    success "cloudflared-proxy-dns установлен и включён"
+fi
+
+# --- 3. Список доменов (не перетирать существующий!) -----------------------------------
+info "3. Список доменов: $DOMAINS_FILE"
+if [ -f "$DOMAINS_FILE" ]; then
+    # idempotent-merge: новые дефолтные домены добавляем, файл не перетираем
+    MERGED=0
+    for d in "${MERGE_EXTRA_DOMAINS[@]}"; do
+        if ! grep -qE "^\s*${d}\s*(#|$)" "$DOMAINS_FILE"; then
+            echo "# добавлено 15_domain-split.sh (merge дефолтов)" >> "$DOMAINS_FILE"
+            echo "$d" >> "$DOMAINS_FILE"
+            MERGED=$((MERGED + 1))
+        fi
+    done
+    if [ "$MERGED" -gt 0 ]; then
+        success "существующий файл дополнен merge (+${MERGED} доменов Google-кластера)"
+    else
+        success "уже существует — не трогаю (merge: всё уже на месте)"
+    fi
+else
+    mkdir -p "$(dirname "$DOMAINS_FILE")"
+    {
+        echo "# Доменный split (15_domain-split.sh): домены через AWG-туннель,"
+        echo "# остальные — напрямую. Один домен на строку, комментарии #."
+        echo "# После правки: sudo bash scripts/15_domain-split.sh (перегенерит dnsmasq-конфиг)"
+        echo "# --- дополни своим списком ниже ---"
+        for d in "${DEFAULT_DOMAINS[@]}"; do echo "$d"; done
+    } > "$DOMAINS_FILE"
+    chmod 0644 "$DOMAINS_FILE"
+    success "создан со списком по умолчанию (${#DEFAULT_DOMAINS[@]} доменов)"
+fi
+DOMAIN_COUNT="$(read_domains | wc -l)"
+[ "$DOMAIN_COUNT" -gt 0 ] || { err "в $DOMAINS_FILE нет ни одного домена"; exit 1; }
+success "активных доменов: $DOMAIN_COUNT"
+
+# --- 4. dnsmasq-конфиг -------------------------------------------------------------------
+info "4. dnsmasq-конфиг: $DNSMASQ_CONF"
+{
+    echo "# Сгенерировано scripts/15_domain-split.sh — НЕ редактировать вручную."
+    echo "# Правьте $DOMAINS_FILE и перезапускайте скрипт."
+    echo "listen-address=127.0.0.1"
+    echo "bind-interfaces"
+    echo "port=53"
+    echo "no-resolv"
+    echo "no-poll"
+    echo "server=127.0.0.1#${DOH_PORT}"
+    echo "cache-size=1000"
+    echo "# Домены из списка → nft set inet/${NFT_TABLE}/${NFT_SET}"
+    # ВАЖНО: семейство отделяется ПРОБЕЛОМ ('4 inet#...'), не двоеточием —
+    # dnsmasq в runtime сверяет setname[1]==' ' и с '4:' строит битую nft-команду
+    while IFS= read -r d; do
+        echo "nftset=/${d}/4 inet#${NFT_TABLE}#${NFT_SET}"
+    done < <(read_domains)
+} > "$DNSMASQ_CONF"
+chmod 0644 "$DNSMASQ_CONF"
+success "dnsmasq-конфиг записан (${DOMAIN_COUNT} nftset-строк)"
+
+# --- 5. nft-таблица inet/awg_split + ip rule/route -----------------------------------------
+info "5. nft/fwmark-маршрутизация (mark ${MARK_HEX} → table ${ROUTE_TABLE} dev ${AWG_IFACE})"
+if ! ip link show "$AWG_IFACE" >/dev/null 2>&1; then
+    err "интерфейс ${AWG_IFACE} не существует — сначала поднимите AWG: bash scripts/14_awg-split.sh"
+    exit 1
+fi
+
+# идемпотентно: recreate таблицы (nft ruleset для одной таблицы)
+nft delete table "inet $NFT_TABLE" 2>/dev/null || true
+nft -f - <<NFT
+table inet ${NFT_TABLE} {
+    set ${NFT_SET} {
+        type ipv4_addr
+        flags interval
+        auto-merge
+    }
+    chain out {
+        type route hook output priority mangle; policy accept;
+        # UDP-пакеты самого AWG (fwmark 0xca6c от awg-quick) — не трогаем,
+        # иначе endpoint-трафик зациклится в туннель
+        meta mark 0xca6c return
+        # пакеты на доменные IP → mark ${MARK_HEX}
+        ip daddr @${NFT_SET} meta mark set ${MARK_HEX}
+    }
+}
+NFT
+success "nft-таблица inet/${NFT_TABLE} создана (set ${NFT_SET}, chain out)"
+
+# ip rule + default в table 21000 (идемпотентно)
+if ! ip rule show | grep -q "^${RULE_PREF}:.*fwmark ${MARK_HEX}"; then
+    ip rule add pref "$RULE_PREF" fwmark "$MARK_HEX" table "$ROUTE_TABLE"
+fi
+if ! ip route show table "$ROUTE_TABLE" 2>/dev/null | grep -q "^default dev ${AWG_IFACE}"; then
+    ip route replace table "$ROUTE_TABLE" default dev "$AWG_IFACE"
+fi
+success "ip rule pref ${RULE_PREF} fwmark ${MARK_HEX} → table ${ROUTE_TABLE} (default dev ${AWG_IFACE})"
+
+# --- 6. AWG-конфиг: Table=off + AllowedIPs 0.0.0.0/0 ------------------------------------------
+info "6. AWG-конфиг ${AWG_CONF}: Table=off + AllowedIPs=0.0.0.0/0, ::/0 (cryptokey-routing)"
+if [ ! -f "$AWG_CONF" ]; then
+    err "конфиг ${AWG_CONF} не найден — сначала bash scripts/14_awg-split.sh"
+    exit 1
+fi
+CONF_DIRTY=0
+if ! grep -qE '^Table[[:space:]]*=[[:space:]]*off' "$AWG_CONF"; then
+    if grep -qE '^Table[[:space:]]*=' "$AWG_CONF"; then
+        sed -i 's|^Table[[:space:]]*=.*|Table = off|' "$AWG_CONF"
+    else
+        # вставить в секцию [Interface] (после Address, либо сразу после заголовка)
+        if grep -q '^Address' "$AWG_CONF"; then
+            sed -i '0,/^Address/s//Table = off\nAddress/' "$AWG_CONF"
+        else
+            sed -i '0,/^\[Interface\]/s//\[Interface\]\nTable = off/' "$AWG_CONF"
+        fi
+    fi
+    CONF_DIRTY=1
+    success "Table = off добавлен"
+else
+    success "Table = off уже стоит"
+fi
+if ! grep -E '^AllowedIPs' "$AWG_CONF" | grep -q "0.0.0.0/0"; then
+    cp -a "$AWG_CONF" "${AWG_CONF}.bak.$(date +%Y%m%d%H%M%S)"
+    sed -i 's|^AllowedIPs[[:space:]]*=.*|AllowedIPs = 0.0.0.0/0, ::/0|' "$AWG_CONF"
+    CONF_DIRTY=1
+    success "AllowedIPs заменён на 0.0.0.0/0, ::/0 (backup: ${AWG_CONF}.bak.*)"
+else
+    success "AllowedIPs уже 0.0.0.0/0"
+fi
+chmod 0600 "$AWG_CONF"
+if [ "$CONF_DIRTY" -eq 1 ]; then
+    awg_restart
+    sleep 2
+    # факт: awg-quick при Table=off ставит fwmark на сокет — проверяем
+    if ! ip rule show | grep -q "fwmark 0xca6c"; then
+        warn "awg-quick не добавил ip rule fwmark 0xca6c — fwmark-исключение endpoint держит только nft-правило"
+    else
+        success "awg-quick подтвердил fwmark 0xca6c (ip rule на месте)"
+    fi
+fi
+
+# --- 7. systemd-resolved: DNS → 127.0.0.1 (dnsmasq), Domains=~. ---------------------------------
+info "7. systemd-resolved: системный DNS → dnsmasq (127.0.0.1:53)"
+mkdir -p /etc/systemd/resolved.conf.d
+if grep -q '^DNS=127.0.0.1$' "$RESOLVED_CONF" 2>/dev/null \
+   && grep -q '^Domains=~\.$' "$RESOLVED_CONF" 2>/dev/null; then
+    success "resolved-override уже в целевом виде"
+else
+    cp -a "$RESOLVED_CONF" "${RESOLVED_CONF}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    cat > "$RESOLVED_CONF" <<CONF
+[Resolve]
+# DNS через локальный dnsmasq → cloudflared DoH (15_domain-split.sh)
+DNS=127.0.0.1
+Domains=~.
+CONF
+    chmod 0644 "$RESOLVED_CONF"
+    success "resolved-override записан (backup рядом: ${RESOLVED_CONF}.bak.*)"
+fi
+
+# --- 8. Рестарт сервисов + верификация ------------------------------------------------------------
+info "8. Рестарт dnsmasq + systemd-resolved, верификация"
+systemctl restart dnsmasq.service
+systemctl restart systemd-resolved.service
+sleep 2
+
+if ! systemctl is-active --quiet dnsmasq.service; then
+    err "dnsmasq не поднялся — журнал: journalctl -u dnsmasq -n 30"
+    exit 1
+fi
+RESOLVED_IP="$(dig "@127.0.0.1" www.youtube.com +short 2>/dev/null | grep -E '^[0-9]+\.' | head -1)"
+if [ -z "$RESOLVED_IP" ]; then
+    err "dnsmasq не резолвит www.youtube.com — проверьте cloudflared-proxy-dns (порт ${DOH_PORT})"
+    exit 1
+fi
+success "dig @127.0.0.1 www.youtube.com → ${RESOLVED_IP}"
+sleep 1
+if nft list set "inet ${NFT_TABLE} ${NFT_SET}" 2>/dev/null | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+    success "nft set inet/${NFT_TABLE}/${NFT_SET} наполнился:"
+    nft list set "inet ${NFT_TABLE} ${NFT_SET}" | grep -E '^\s+[0-9]+\.' | head -5 | sed 's/^/    /'
+else
+    warn "set ${NFT_SET} пока пуст — dnsmasq кладёт резолвы при первом запросе; повторите dig"
+fi
+
+echo
+echo -e "${C_GREEN}=============================================================${C_RESET}"
+echo -e "${C_GREEN}[OK]${C_RESET} доменный split-туннель установлен."
+echo "Механика: resolved → dnsmasq(127.0.0.1:53) → cloudflared DoH(:${DOH_PORT});"
+echo "          домены из ${DOMAINS_FILE} → nft set ${NFT_TABLE}/${NFT_SET} → mark ${MARK_HEX} → awg0-split"
+echo "Проверки:"
+echo "  dig @127.0.0.1 www.youtube.com +short"
+echo "  sudo nft list set inet ${NFT_TABLE} ${NFT_SET}"
+echo "  curl --noproxy '*' -o /dev/null -w '%{http_code}' https://www.youtube.com/generate_204"
+echo "Список доменов: $DOMAINS_FILE (правка → sudo bash scripts/15_domain-split.sh)"
+echo "Статус:  sudo bash scripts/15_domain-split.sh --status"
+echo "Мониторинг: vpn monitor (строка amneziawg: ok (domain-split))"
+echo "Демонтаж: sudo bash scripts/15_domain-split.sh --off"
+echo -e "${C_GREEN}=============================================================${C_RESET}"

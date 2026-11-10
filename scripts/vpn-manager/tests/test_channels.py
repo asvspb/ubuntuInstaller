@@ -470,3 +470,34 @@ def test_tui_menu_has_channels_action(env, monkeypatch):
     add_profile("p1", 2080)
     runners.set_active("p1")
     tui.action_channels()
+
+
+def test_awg_domain_split_note(env, monkeypatch):
+    """dnsmasq awg-split конфиг (15_domain-split.sh) помечает amneziawg как (domain-split)."""
+    bindir = env / "bindir5"
+    bindir.mkdir()
+    (bindir / "awg").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(channels, "AWG_BIN_DIRS", (bindir,))
+    monkeypatch.setattr(channels, "AWG_CONF_DIRS", (env / "noconf5",))
+    out = "1: awg0-split: <POINTOPOINT,UP> mtu\n"
+    fake_conf = env / "awg-split.conf"
+    fake_conf.write_text("# fixture dnsmasq conf\n")
+    monkeypatch.setattr(channels, "DOMAIN_SPLIT_CONF", fake_conf)
+    result = channels.check_awg(run=make_run(**{"ip -o link": (0, out, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "awg0-split" in result["detail"]
+    assert "(domain-split)" in result["detail"]
+
+
+def test_awg_no_domain_split_note(env, monkeypatch):
+    """Без dnsmasq awg-split конфига деталь без пометки (domain-split)."""
+    monkeypatch.setattr(channels, "DOMAIN_SPLIT_CONF", env / "absent.conf")
+    bindir = env / "bindir6"
+    bindir.mkdir()
+    (bindir / "awg").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(channels, "AWG_BIN_DIRS", (bindir,))
+    monkeypatch.setattr(channels, "AWG_CONF_DIRS", (env / "noconf5b",))
+    out = "1: awg0-split: <POINTOPOINT,UP> mtu\n"
+    result = channels.check_awg(run=make_run(**{"ip -o link": (0, out, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "(domain-split)" not in result["detail"]
