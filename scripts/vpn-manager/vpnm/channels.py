@@ -12,7 +12,8 @@ Each channel check returns ``{channel, status, detail}`` with status
   the status is ``warn`` ("installed but not running").  A missing
   passwordless sudo is a ``warn`` too, never a fail;
 - **AmneziaWG**: a placeholder slot — looks for binaries / ``*.conf``
-  artifacts / an ``amz*|wg*`` interface; when nothing exists the status is
+  artifacts / an ``amz*|amn*|awg*|amnezia*|wg*`` interface; when nothing exists
+  the status is
   ``not_installed`` with "транспорт в разработке (SPEC-20261110)";
 - **zapret** (channel 0): DPI-desync on *direct* connections, no tunnel.
   nfqws binary missing → ``not_installed`` (neutral, like the AWG slot).
@@ -200,7 +201,7 @@ def _awg_interfaces(run: RunCmd) -> List[str]:
         if not match:
             continue
         name = match.group(1).split("@")[0]
-        if re.match(r"^(amz|wg)", name) and "UP" in line:
+        if re.match(r"^(amz|amn|awg|amnezia|wg)", name) and "UP" in line:
             ifaces.append(name)
     return ifaces
 

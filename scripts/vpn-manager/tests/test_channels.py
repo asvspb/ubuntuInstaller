@@ -203,6 +203,37 @@ def test_awg_iface_up(env, monkeypatch):
     assert "amz0" in result["detail"]
 
 
+def test_awg_iface_amn0_up(env, monkeypatch):
+    """AmneziaVPN client creates interface amn0 (real-world verified)."""
+    bindir = env / "bindir3"
+    bindir.mkdir()
+    (bindir / "awg").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(channels, "AWG_BIN_DIRS", (bindir,))
+    monkeypatch.setattr(channels, "AWG_CONF_DIRS", (env / "noconf3",))
+    out = ("1: lo: <LOOPBACK,UP> mtu\n"
+           "2: amn0: <POINTOPOINT,UP,LOWER_UP> mtu\n")
+    result = channels.check_awg(
+        run=make_run(**{"ip -o link": (0, out, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "amn0" in result["detail"]
+
+
+def test_awg_iface_amnezia_and_awg_prefixes(env, monkeypatch):
+    """amnezia* and awg* interface names are also recognized."""
+    bindir = env / "bindir4"
+    bindir.mkdir()
+    (bindir / "awg").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(channels, "AWG_BIN_DIRS", (bindir,))
+    monkeypatch.setattr(channels, "AWG_CONF_DIRS", (env / "noconf4",))
+    out = ("1: awg0: <POINTOPOINT,UP> mtu\n"
+           "2: amnezia0: <POINTOPOINT,UP> mtu\n")
+    result = channels.check_awg(
+        run=make_run(**{"ip -o link": (0, out, "")}))
+    assert result["status"] == channels.STATUS_OK
+    assert "awg0" in result["detail"]
+    assert "amnezia0" in result["detail"]
+
+
 # --- monitor aggregate / CLI ------------------------------------------------------
 
 def test_monitor_exit_0_when_one_ok(env, monkeypatch):
