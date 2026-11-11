@@ -65,9 +65,14 @@ app = VpnTyper(
   vpn up <profile>           # запустить профиль (socks на 127.0.0.1:208x)
   vpn sysproxy on            # направить системный прокси браузера в socks
   vpn switch <profile>       # переключиться на другой профиль на лету
-  vpn amneziawg tunnel on    # AWG split-туннель: youtube/telegram через
-                             # asv1 на уровне маршрутов (остальное —
-                             # напрямую, провайдерский IP)
+  vpn amneziawg tunnel on    # AWG-туннель + доменный split: зоны из
+                             # /opt/awg-split/domains.txt (ходовые TLD
+                             # com/org/net/io/dev/ai + youtube/telegram/google)
+                             # через туннель, GLM-кластер и RU — напрямую.
+                             # Сам поднимает DNS-цепочку (dnsmasq+DoH с
+                             # fallback 77.88.8.8). --no-split — только туннель.
+                             # tunnel off демонтирует split ДО остановки
+                             # туннеля и возвращает DNS провайдеру
 
   # чистый DNS через DoH (опционально; скрывает резолвинг от провайдера):
   vpn doh on                 #resolved → dnsmasq → cloudflared → Cloudflare DoH
@@ -91,6 +96,23 @@ app = VpnTyper(
   vpn repair                 # снимок состояния в лог + вернуть трафик
                              # (починить DNS без правки resolved.conf)
   vpn probe --no-switch      # замерить задержки, ничего не переключать
+
+Канал выживания (CDN за Cloudflare, переживает блок IP asv1):
+
+  vpn up cdn-home            # socks 127.0.0.1:2081; sysproxy последует;
+                             # браузеру нужен перезапуск после смены порта
+  vpn monitor                # строка 'cdn': ok=через CF жив; warn=резерв
+                             # ('vpn up cdn-home'); ok в amneziawg показывает
+                             # схему split: N зон через туннель, GLM/RU напрямую
+
+Куда смотрит браузер (одной строкой):
+
+  gsettings get org.gnome.system.proxy mode && \
+    gsettings get org.gnome.system.proxy.socks host && \
+    gsettings get org.gnome.system.proxy.socks port
+  # none -> напрямую (RU+TLD-зоны через AWG-split); 2081 -> CDN;
+  # 2080 -> Reality/XHTTP; 2083 -> Hysteria2. Chrome применяет
+  # системный прокси ТОЛЬКО при старте — после смены перезапустить.
 
 Профили и сервер:
 
@@ -772,7 +794,11 @@ def monitor(as_json: bool = typer.Option(
             None, "--zt-ping",
             help="Ping an explicit ZeroTier peer IP and include the result "
                  "in the zerotier channel detail")) -> None:
-    """Матрица каналов: vpnm/zapret/zerotier/amneziawg/dns-doh; --json для скриптов."""
+    """Матрица каналов: vpnm / cdn / amneziawg / zapret / zerotier / dns-doh.
+
+    Строка amneziawg показывает схему AWG-split (N зон через туннель,
+    GLM/RU напрямую); строка cdn — канал выживания за Cloudflare
+    (ok=работает, warn=резерв 'vpn up cdn-home'). --json для скриптов."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:
