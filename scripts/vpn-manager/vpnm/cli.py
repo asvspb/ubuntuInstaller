@@ -87,6 +87,17 @@ app = VpnTyper(
   vpn doh off                # DNS мгновенно вернётся к провайдеру (DHCP),
                              # сервисы остановятся; статус: vpn doh status
 
+Предустановленные конфигурации (зеркала 'vpn reset'):
+
+  vpn scheme awg              # основная схема: AWG + доменный split
+                              # (= 'vpn start')
+  vpn scheme cdn              # канал выживания: cdn-home + системный прокси
+  vpn scheme proxy <profile>  # vpnm как ОБЩИЙ системный прокси по
+                              # заданному протоколу (весь браузер через него)
+  vpn scheme private <profile># vpnm как ЧАСТНЫЙ прокси: sysproxy не трогается,
+                              # печать socks-адреса для прокси-приложений
+                              # браузера (расширения/профили/vpncli)
+
 Диагностика:
 
   vpn monitor                # матрица каналов: vpnm / zapret / zerotier /
@@ -414,6 +425,99 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
         raise typer.Exit(code=2)
     _ok(f"stopped '{stopped}'")
     _sync_sysproxy_off_after()
+
+
+@app.command("scheme")
+def scheme_cmd(preset: str = typer.Argument(
+        ..., help="'awg' | 'cdn' | 'proxy <profile>' | 'private <profile>'"),
+        profile: Optional[str] = typer.Argument(
+            None, help="для 'proxy'/'private': имя профиля")) -> None:
+    """Предустановленные конфигурации (зеркала 'vpn reset').
+
+    vpn scheme awg               — основная схема: AWG-туннель + доменный
+                                   split (то же, что 'vpn start')
+    vpn scheme cdn               — канал выживания: up cdn-home + системный
+                                   прокси на его socks (браузер — весь через CF)
+    vpn scheme proxy <profile>   —vpnm как ОБЩИЙ системный прокси: поднять
+                                   профиль по заданному протоколу + sysproxy on
+    vpn scheme private <profile> — vpnm как ЧАСТНЫЙ прокси: поднять профиль,
+                                   системный прокси НЕ трогать; печать адреса
+                                   socks для прокси-приложений браузера
+                                   (расширения/профили/vpncli) — весь остальной
+                                   трафик остаётся в текущей схеме
+
+    Все пресеты идемпотентны; 'vpn reset' — общий выключатель.
+    """
+    from . import amneziawg as awg
+    from . import runners
+    from . import sysproxy
+    preset = preset.strip().lower()
+
+    if preset == "awg":
+        ok_t, msg_t = awg.tunnel_control("on")
+        (_ok if ok_t else _err)(f"AWG: {msg_t}")
+        if not ok_t:
+            _err("split не применяется без туннеля — повторите 'vpn scheme awg'")
+            raise typer.Exit(code=1)
+        ok_s, msg_s = awg.domain_split_apply("on")
+        (_ok if ok_s else _warn)(f"split: {msg_s}")
+        if not ok_s:
+            raise typer.Exit(code=1)
+        _ok("схема awg активна: TLD-зоны/youtube/telegram через AWG, "
+            "GLM/RU напрямую")
+        return
+
+    if preset == "cdn":
+        try:
+            runners.up("cdn-home")
+        except (profiles.ProfileStoreError, runners.RunnerError,
+                LinkError) as exc:
+            _err(f"cdn-home: {exc}")
+            raise typer.Exit(code=2)
+        _sync_sysproxy_after("cdn-home", "scheme")
+        _ok("схема cdn активна: браузер через Cloudflare "
+            "(socks 127.0.0.1:2081); exit — 'vpn reset'/'vpn down'")
+        return
+
+    if preset in ("proxy", "private"):
+        if not profile:
+            _err(f"expected 'vpn scheme {preset} <profile>' "
+                 "(см. 'vpn profile list')")
+            raise typer.Exit(code=2)
+        try:
+            config_path = runners.up(profile)
+        except (profiles.ProfileStoreError, runners.RunnerError,
+                LinkError) as exc:
+            _err(str(exc))
+            raise typer.Exit(code=2)
+        record = profiles.get(profile)
+        port = int(record["socks_port"])
+        if preset == "proxy":
+            sysproxy.on(port)
+            runners.set_sysproxy(True)
+            _ok(f"ОБЩИЙ системный прокси: socks 127.0.0.1:{port} "
+                f"(профиль '{profile}', весь браузерный трафик через него; "
+                "Chrome перезапустить)")
+        else:
+            _ok(f"ЧАСТНЫЙ прокси поднят: профиль '{profile}' "
+                f"слушает socks 127.0.0.1:{port}")
+            typer.echo("Системный прокси не тронут. Подключайте адрес "
+                       "127.0.0.1:%d точечно:" % port)
+            typer.echo("  • расширение-прокси в Chrome (SwitchyOmega и т.п.) "
+                       "→ socks5 127.0.0.1:%d" % port)
+            typer.echo("  • отдельный Chrome-профиль: google-chrome "
+                       "--profile-directory=X "
+                       "--proxy-server='socks5://127.0.0.1:%d'" % port)
+            typer.echo("  • вкладка терминала: vpncli on %d" % port)
+            typer.echo("  • curl/инструменты: --socks5-hostname "
+                       "127.0.0.1:%d" % port)
+            typer.echo("Остальной трафик остаётся в текущей схеме "
+                       "(AWG-split/direct). Выключение профиля: 'vpn down'.")
+        return
+
+    _err("unknown preset: expected 'awg' | 'cdn' | 'proxy <profile>' | "
+         "'private <profile>'")
+    raise typer.Exit(code=2)
 
 
 @app.command()

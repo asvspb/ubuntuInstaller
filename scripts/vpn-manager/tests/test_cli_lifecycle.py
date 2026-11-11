@@ -169,3 +169,71 @@ def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
     result = CliRunner().invoke(cli_app, ["start"])
     assert result.exit_code == 1
     assert calls == [("tun", "on")]  # split не пытаемся без iface
+
+
+def test_cli_scheme_awg_calls_tunnel_then_split(monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
+    result = CliRunner().invoke(cli_app, ["scheme", "awg"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("tun", "on"), ("split", "on")]
+
+
+def test_cli_scheme_private_no_sysproxy(monkeypatch):
+    """private: профиль поднят, gsettings НЕ тронут, напечатан socks-адрес."""
+    from vpnm import profiles as profiles_mod
+    from vpnm import runners as runners_mod
+    from vpnm import sysproxy as sysproxy_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    monkeypatch.setattr(runners_mod, "up", lambda name: "/tmp/x.json")
+    monkeypatch.setattr(profiles_mod, "get",
+                        lambda name: {"socks_port": 2080, "protocol": "x"})
+    touched = []
+    monkeypatch.setattr(sysproxy_mod, "on", lambda port: touched.append(port))
+    result = CliRunner().invoke(cli_app, ["scheme", "private", "phone"])
+    assert result.exit_code == 0, result.output
+    assert touched == []  # системный прокси не тронут
+    assert "127.0.0.1:2080" in result.output
+    assert "vpncli on 2080" in result.output
+
+
+def test_cli_scheme_proxy_sets_sysproxy(monkeypatch):
+    from vpnm import profiles as profiles_mod
+    from vpnm import runners as runners_mod
+    from vpnm import sysproxy as sysproxy_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    monkeypatch.setattr(runners_mod, "up", lambda name: "/tmp/x.json")
+    monkeypatch.setattr(profiles_mod, "get",
+                        lambda name: {"socks_port": 2083, "protocol": "x"})
+    touched = []
+    monkeypatch.setattr(sysproxy_mod, "on", lambda port: touched.append(port))
+    from vpnm import runners as r2
+    monkeypatch.setattr(r2, "set_sysproxy", lambda v: touched.append(v))
+    result = CliRunner().invoke(cli_app, ["scheme", "proxy", "mob"])
+    assert result.exit_code == 0, result.output
+    assert touched == [2083, True]
+
+
+def test_cli_scheme_cdn_and_unknown(monkeypatch):
+    from vpnm import runners as runners_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    ups = []
+    monkeypatch.setattr(runners_mod, "up", lambda name: ups.append(name) or "/c")
+    monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: "cdn-home")
+    monkeypatch.setattr(runners_mod, "set_sysproxy", lambda v: None)
+    from vpnm import sysproxy as sysproxy_mod
+    monkeypatch.setattr(sysproxy_mod, "on", lambda port: None)
+    r1 = CliRunner().invoke(cli_app, ["scheme", "cdn"])
+    assert r1.exit_code == 0, r1.output
+    assert ups == ["cdn-home"]
+    r2 = CliRunner().invoke(cli_app, ["scheme", "wat"])
+    assert r2.exit_code == 2
