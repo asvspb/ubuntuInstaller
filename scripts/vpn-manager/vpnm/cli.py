@@ -417,6 +417,52 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
 
 
 @app.command()
+def reset() -> None:
+    """Вернуть всё к состоянию «как после перезагрузки ОС» (чистый старт).
+
+    Останавливает активный socks-профиль (+sysproxy), демонтирует доменный
+    split и останавливает AWG-туннель, гасит DoH-цепочку — DNS возвращается
+    к провайдеру (DHCP). Boot-guard остаётся включённым (защита загрузки).
+    Идемпотентно: повторный запуск ничего не ломает.
+    """
+    from . import amneziawg as awg
+    from . import doh as doh_mod
+    from . import runners
+    failures: list = []
+
+    active = runners.get_active()
+    if active:
+        try:
+            runners.down(active)
+            _sync_sysproxy_off_after()
+            _ok(f"профиль '{active}' остановлен, системный прокси off")
+        except runners.RunnerError as exc:
+            failures.append(f"профиль: {exc}")
+    else:
+        typer.echo("vpnm: нет активного профиля")
+
+    ok_s, msg_s = awg.domain_split_apply("off")
+    (_ok if ok_s else _warn)(f"split: {msg_s}")
+    if not ok_s:
+        failures.append("split")
+    ok_t, msg_t = awg.tunnel_control("off")
+    (_ok if ok_t else _warn)(f"AWG: {msg_t}")
+    if not ok_t:
+        failures.append("AWG")
+    ok_d, msg_d = doh_mod.disable()
+    (_ok if ok_d else _warn)(f"DoH: {msg_d}")
+    if not ok_d:
+        failures.append("DoH")
+
+    if failures:
+        _warn("не всё снялось: " + ", ".join(failures)
+              + " — повторите 'vpn reset' или выполните напечатанные подсказки")
+        raise typer.Exit(code=1)
+    _ok("система в состоянии чистого старта: DNS у провайдера, "
+        "туннелей и прокси нет")
+
+
+@app.command()
 def switch(name: str) -> None:
     """Переключиться на другой профиль: vpn switch <profile>."""
     from . import runners

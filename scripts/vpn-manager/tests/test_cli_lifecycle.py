@@ -97,3 +97,43 @@ def test_status_probe_uses_socks_hostname_with_max_time(env, monkeypatch):
     assert cmd[cmd.index("--max-time") + 1] == str(runners.CURL_TIMEOUT)
     assert "external IP:    203.0.113.99" in result.output
     assert "timed out or failed" not in result.output
+
+
+def test_cli_reset_idempotent_full_cycle(monkeypatch):
+    """vpn reset: гасит профиль+split+туннель+DoH, повтор — без ошибок."""
+    from vpnm import amneziawg as awg
+    from vpnm import runners as runners_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+    monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: None)
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
+    from vpnm import doh as doh_mod
+    monkeypatch.setattr(doh_mod, "disable", lambda run=None: (True, "off"))
+    result = CliRunner().invoke(cli_app, ["reset"])
+    assert result.exit_code == 0, result.output
+    assert ("split", "off") in calls and ("tun", "off") in calls
+    assert "чистого старта" in result.output
+    # повтор (уже чисто) — тоже ok
+    result2 = CliRunner().invoke(cli_app, ["reset"])
+    assert result2.exit_code == 0, result2.output
+
+
+def test_cli_reset_reports_partial_failure(monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm import runners as runners_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: None)
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda a, run=None: (False, "mock fail"))
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda a, run=None: (True, "ok"))
+    from vpnm import doh as doh_mod
+    monkeypatch.setattr(doh_mod, "disable", lambda run=None: (True, "off"))
+    result = CliRunner().invoke(cli_app, ["reset"])
+    assert result.exit_code == 1
+    assert "split" in result.output
