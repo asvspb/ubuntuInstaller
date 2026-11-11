@@ -13,6 +13,7 @@ from urllib.parse import unquote, parse_qs
 
 PROTOCOL_XRAY_REALITY = "xray-reality"
 PROTOCOL_XRAY_XHTTP = "xray-xhttp"
+PROTOCOL_XRAY_WS = "xray-cdn-ws"
 PROTOCOL_HYSTERIA2 = "hysteria2"
 
 
@@ -89,17 +90,23 @@ def _parse_vless(link: str) -> ProfileLink:
         proto = PROTOCOL_XRAY_REALITY
     elif security == "tls":
         network = params.get("network", params.get("type", ""))
-        if network != "xhttp":
+        if network == "xhttp":
+            _require(params, "path", "vless xhttp link")
+            proto = PROTOCOL_XRAY_XHTTP
+        elif network == "ws":
+            # CDN-transport (ADR-006): vless+ws+tls за Cloudflare; path/host
+            # обязательны (server рендерит path /cdnws, Host = cdn-домен)
+            _require(params, "path", "vless ws link")
+            proto = PROTOCOL_XRAY_WS
+        else:
             raise LinkError(
                 f"vless tls link: unsupported network '{network}' "
-                "(only 'xhttp' is supported)"
+                "(supported: 'xhttp', 'ws')"
             )
-        _require(params, "path", "vless xhttp link")
-        proto = PROTOCOL_XRAY_XHTTP
     else:
         raise LinkError(
             f"vless link: unsupported security '{security}' "
-            "(supported: reality, tls+network=xhttp)"
+            "(supported: reality, tls+network=xhttp|ws)"
         )
 
     return ProfileLink(protocol=proto, host=host, port=int(port_s),

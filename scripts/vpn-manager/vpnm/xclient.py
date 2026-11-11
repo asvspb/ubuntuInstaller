@@ -16,6 +16,7 @@ from .links import (
     PROTOCOL_HYSTERIA2,
     PROTOCOL_XRAY_REALITY,
     PROTOCOL_XRAY_XHTTP,
+    PROTOCOL_XRAY_WS,
     ProfileLink,
 )
 
@@ -43,6 +44,21 @@ def xray_config(link: ProfileLink, socks_port: int) -> str:
                 "publicKey": link.params.get("pbk", ""),
                 "shortId": link.params.get("sid", ""),
                 "spiderX": link.params.get("spath", ""),
+            },
+        }
+    elif link.protocol == PROTOCOL_XRAY_WS:
+        sni = link.params.get("sni", link.host)
+        stream = {
+            "network": "ws",
+            "security": "tls",
+            "tlsSettings": {
+                "serverName": sni,
+                "fingerprint": link.params.get("fp", "chrome"),
+                "allowInsecure": False,
+            },
+            "wsSettings": {
+                "path": link.params.get("path", "/"),
+                "headers": {"Host": link.params.get("host", sni)},
             },
         }
     elif link.protocol == PROTOCOL_XRAY_XHTTP:
@@ -106,7 +122,8 @@ def hysteria2_config(link: ProfileLink, socks_port: int,
 
 def generate(link: ProfileLink, socks_port: int) -> str:
     """Dispatch to the right generator by protocol."""
-    if link.protocol in (PROTOCOL_XRAY_REALITY, PROTOCOL_XRAY_XHTTP):
+    if link.protocol in (PROTOCOL_XRAY_REALITY, PROTOCOL_XRAY_XHTTP,
+                         PROTOCOL_XRAY_WS):
         return xray_config(link, socks_port)
     if link.protocol == PROTOCOL_HYSTERIA2:
         return hysteria2_config(link, socks_port)

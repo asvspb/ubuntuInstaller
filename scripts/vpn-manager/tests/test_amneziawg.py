@@ -342,3 +342,97 @@ def test_cli_help_lists_subcommands(env):
     assert result.exit_code == 0, result.output
     for cmd in ("status", "add-client", "remove-client", "tunnel"):
         assert cmd in result.output
+
+
+# --- domain split wiring (tunnel on/off + 15_domain-split.sh) ----------------------
+
+def test_domain_split_script_env(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    script = tmp_path / "15_domain-split.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(script))
+    assert awg.domain_split_script() == script
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(tmp_path / "nope.sh"))
+    assert awg.domain_split_script() is None
+
+
+def test_domain_split_apply_on_and_off(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    script = tmp_path / "15_domain-split.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(script))
+    record = []
+    def run(cmd):
+        record.append(cmd)
+        return 0, "", ""
+    ok, msg = awg.domain_split_apply("on", run=run)
+    assert ok and "применён" in msg
+    ok, msg = awg.domain_split_apply("off", run=run)
+    assert ok and "демонтирован" in msg
+    assert record[0] == ["sudo", "-n", "bash", str(script)]
+    assert record[1] == ["sudo", "-n", "bash", str(script), "--off"]
+
+
+def test_domain_split_apply_missing_script(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(tmp_path / "nope.sh"))
+    ok, msg = awg.domain_split_apply("on", run=lambda c: (0, "", ""))
+    assert not ok and "не найден" in msg
+
+
+def test_domain_split_apply_fail_gives_manual_hint(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    script = tmp_path / "15_domain-split.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(script))
+    def run(cmd):
+        return 1, "", "mock fail"
+    ok, msg = awg.domain_split_apply("off", run=run)
+    assert not ok and "вручную" in msg and "--off" in msg
+
+
+def test_cli_tunnel_on_applies_split(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    script = tmp_path / "15_domain-split.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(script))
+    calls = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda action, run=None: calls.append(("tunnel", action)) or (True, "ok"))
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda action, run=None: calls.append(("split", action)) or (True, "split ok"))
+    result = CliRunner().invoke(cli_app, ["amneziawg", "tunnel", "on"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("tunnel", "on"), ("split", "on")]
+
+
+def test_cli_tunnel_off_removes_split_before_stop(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    script = tmp_path / "15_domain-split.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(script))
+    calls = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda action, run=None: calls.append(("tunnel", action)) or (True, "ok"))
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda action, run=None: calls.append(("split", action)) or (True, "split ok"))
+    result = CliRunner().invoke(cli_app, ["amneziawg", "tunnel", "off"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("split", "off"), ("tunnel", "off")]
+
+
+def test_cli_tunnel_no_split_skips_script(monkeypatch, tmp_path):
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    monkeypatch.setenv(awg.DOMAIN_SPLIT_ENV, str(tmp_path / "nope.sh"))
+    calls = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda action, run=None: calls.append(action) or (True, "ok"))
+    result = CliRunner().invoke(cli_app, ["amneziawg", "tunnel", "on", "--no-split"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["on"]

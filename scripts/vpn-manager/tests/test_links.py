@@ -102,7 +102,51 @@ class TestErrors:
             parse_link(link)
 
     def test_unknown_transport_on_tls(self):
+        # ws с 2026-11-11 поддержан (CDN/ADR-006); неизвестный = grpc
         link = (f"vless://{UUID_FIXTURE}@203.0.113.10:443"
-                "?security=tls&network=ws&path=/x")
+                "?security=tls&network=grpc&path=/x")
         with pytest.raises(LinkError, match="unsupported network"):
             parse_link(link)
+
+
+# --- vless+ws (CDN transport, ADR-006) ---------------------------------------------
+
+WS_LINK = ("vless://11111111-2222-3333-4444-555555555555@asvpersonal.ru:2053"
+           "?encryption=none&security=tls&sni=asvpersonal.ru&type=ws"
+           "&host=asvpersonal.ru&path=%2Fcdnws#cdn-home")
+
+
+def test_parse_vless_ws():
+    from vpnm.links import parse_link, PROTOCOL_XRAY_WS
+    link = parse_link(WS_LINK)
+    assert link.protocol == PROTOCOL_XRAY_WS
+    assert link.host == "asvpersonal.ru" and link.port == 2053
+    assert link.params["path"] == "/cdnws"
+    assert link.params["host"] == "asvpersonal.ru"
+
+
+def test_parse_vless_ws_missing_path_raises():
+    from vpnm.links import parse_link, LinkError
+    import pytest
+    bad = WS_LINK.replace("&path=%2Fcdnws", "")
+    with pytest.raises(LinkError):
+        parse_link(bad)
+
+
+def test_xray_config_ws_stream():
+    import json
+    from vpnm.links import parse_link
+    from vpnm.xclient import generate
+    cfg = json.loads(generate(parse_link(WS_LINK), 2081))
+    ss = cfg["outbounds"][0]["streamSettings"]
+    assert ss["network"] == "ws"
+    assert ss["security"] == "tls"
+    assert ss["wsSettings"]["path"] == "/cdnws"
+    assert ss["wsSettings"]["headers"]["Host"] == "asvpersonal.ru"
+    assert cfg["inbounds"][0]["port"] == 2081
+
+
+def test_ws_default_port_2081():
+    from vpnm.links import parse_link, PROTOCOL_XRAY_WS
+    from vpnm.profiles import DEFAULT_SOCKS_PORT
+    assert DEFAULT_SOCKS_PORT[PROTOCOL_XRAY_WS] == 2081

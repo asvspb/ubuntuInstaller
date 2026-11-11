@@ -127,7 +127,8 @@ def probe_profile(
         run: Optional[RunCmd] = None,
         samples: int = SAMPLES,
         timeout: float = PROBE_TIMEOUT,
-        sleep_fn: Callable[[float], None] = time.sleep) -> ProbeResult:
+        sleep_fn: Callable[[float], None] = time.sleep,
+        note: Optional[Callable[[str], None]] = None) -> ProbeResult:
     """Measure one profile: ensure it is up, take ``samples`` measurements.
 
     Does not stop the profile afterwards — the orchestrator owns the
@@ -154,12 +155,16 @@ def probe_profile(
         return result
     values: List[float] = []
     failed = False
-    for _ in range(samples):
+    for attempt in range(samples):
+        if note is not None:
+            note(f"замер {name}: попытка {attempt + 1}/{samples}…")
         value = measure_latency(socks_port, run=run, timeout=timeout)
         if value is None:
-            failed = True  # any timeout/000 fails the whole profile (strict)
-        else:
-            values.append(value)
+            # any timeout/000 fails the whole profile (strict) — досрочный
+            # выход: ждать ещё 2×timeout на мёртвом туннеле бессмысленно
+            failed = True
+            break
+        values.append(value)
     if failed or not values:
         result["error"] = "timeout or curl failure on %s" % (
             "some samples" if values else "all samples")
@@ -173,7 +178,8 @@ def run_probe(
         run: Optional[RunCmd] = None,
         switch_best: bool = True,
         sleep_between: float = SLEEP_BETWEEN,
-        sleep_fn: Callable[[float], None] = time.sleep) -> Dict[str, object]:
+        sleep_fn: Callable[[float], None] = time.sleep,
+        note: Optional[Callable[[str], None]] = None) -> Dict[str, object]:
     """Probe all profiles in store order and (optionally) switch to the fastest.
 
     Returns a dict with ``rows`` (probe results), ``initial_active``,
@@ -183,7 +189,9 @@ def run_probe(
     initial_active = runners.get_active()
     for record in profiles.list_profiles():
         name = str(record["name"])
-        row = probe_profile(name, run=run, sleep_fn=sleep_fn)
+        if note is not None:
+            note(f"профиль {name}…")
+        row = probe_profile(name, run=run, sleep_fn=sleep_fn, note=note)
         rows.append(row)
         # stop the profile we brought up for measuring, unless it was already
         # running before the probe (the initial active profile stays up)

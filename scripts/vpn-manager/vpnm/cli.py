@@ -2,7 +2,8 @@
 
 Working: profile import/list/remove/show/pull, up/down/switch/status,
 install-bins, install --linger, sysproxy on/off/status, doctor (WP-D),
-interactive TUI when invoked without arguments.
+repair (diagnose-to-log + restore traffic/DNS), interactive TUI when
+invoked without arguments.
 """
 
 from __future__ import annotations
@@ -45,12 +46,80 @@ class VpnTyper(typer.Typer):
         return super().__call__(*args, **kwargs)
 
 
-app = VpnTyper(help="vpn-manager: manage client VPN profiles "
-                    "(Xray Reality/XHTTP, Hysteria2)")
-profile_app = typer.Typer(help="Manage stored profiles")
+app = VpnTyper(
+    help="vpn-manager: клиентские VPN-профили (Xray Reality/XHTTP, "
+         "Hysteria2) через локальный SOCKS + каналы (AmneziaWG, zapret, "
+         "ZeroTier). Без аргументов — интерактивное TUI-меню.",
+    epilog="""
+Политика ноутбука (2026-11-11): при загрузке системы — только чистый
+трафик провайдера. Любой VPN включается вручную и живёт до выключения
+или ребута; автостарт всех VPN-юнитов отключён.
+
+Типовая сессия — включить VPN:
+
+  vpn probe                  # замерить задержки профилей и включить
+                             # самый быстрый (+ системный прокси сам
+                             # последует за активным профилем)
+
+  # либо по шагам:
+  vpn up <profile>           # запустить профиль (socks на 127.0.0.1:208x)
+  vpn sysproxy on            # направить системный прокси браузера в socks
+  vpn switch <profile>       # переключиться на другой профиль на лету
+  vpn amneziawg tunnel on    # AWG split-туннель: youtube/telegram через
+                             # asv1 на уровне маршрутов (остальное —
+                             # напрямую, провайдерский IP)
+
+  # чистый DNS через DoH (опционально; скрывает резолвинг от провайдера):
+  vpn doh on                 #resolved → dnsmasq → cloudflared → Cloudflare DoH
+  vpn doh guard on           #при загрузке DNS гарантированно у провайдера
+                             #(drop-in не переживает ребут — DNS не мёртв)
+
+Типовая сессия — выключить VPN:
+
+  vpn amneziawg tunnel off   # опустить AWG-туннель
+  vpn down                   # остановить socks-клиент (системный прокси
+                             # выключится автоматически)
+  vpn doh off                # DNS мгновенно вернётся к провайдеру (DHCP),
+                             # сервисы остановятся; статус: vpn doh status
+
+Диагностика:
+
+  vpn monitor                # матрица каналов: vpnm / zapret / zerotier /
+                             # amneziawg / dns-doh (+ zapret: on|off)
+  vpn status                 # активный профиль, unit, внешний IP (через socks)
+  vpn doctor                 # бинарники, порты, ssh-хост, DNS — всё разом
+  vpn repair                 # снимок состояния в лог + вернуть трафик
+                             # (починить DNS без правки resolved.conf)
+  vpn probe --no-switch      # замерить задержки, ничего не переключать
+
+Профили и сервер:
+
+  vpn profile pull -H root@asv1   # подтянуть share-линки с VDS (asv1)
+  vpn profile list                # сохранённые профили (без секретов)
+  vpn profile show <profile>      # детали + конфиг (ПЕЧАТАЕТ СЕКРЕТЫ)
+  vpn amneziawg status            # локальный туннель + сервер
+  vpn amneziawg add-client <name> # создать клиента на сервере и забрать конфиг
+
+Автозапуск профилей на логин (по умолчанию ВЫКЛ — см. политику):
+
+  vpn autostart status | on | off
+
+Нюанс «ру-сайты видят впн»: если включён системный прокси (vpn sysproxy
+on), браузер гоняет ВСЁ через socks и RU-сайты видят иностранный IP.
+Исключения по доменам уже внесены в:
+
+  gsettings get org.gnome.system.proxy ignore-hosts
+
+Добавить сайт в исключения:
+
+  gsettings set org.gnome.system.proxy ignore-hosts \\
+    "['localhost', '127.0.0.0/8', '::1', 'yandex.ru', <новый домен>, ...]"
+""")
+profile_app = typer.Typer(help="Профили: import/list/remove/show/pull "
+                                "(share-линки с сервера)")
 app.add_typer(profile_app, name="profile")
-amneziawg_app = typer.Typer(help="AmneziaWG channel: local tunnel and "
-                                 "server-side clients")
+amneziawg_app = typer.Typer(help="Канал AmneziaWG: локальный split-туннель "
+                                 "и клиенты на сервере")
 app.add_typer(amneziawg_app, name="amneziawg")
 
 
@@ -70,7 +139,7 @@ def _awg_resolve_host() -> str:
 
 @amneziawg_app.command("status")
 def amneziawg_status() -> None:
-    """Two sections: LOCAL tunnel state and SERVER 'vds amneziawg status'."""
+    """AWG: локальный туннель + сервер (по ssh)."""
     from . import amneziawg as awg
     typer.secho("── ЛОКАЛЬНО ──", fg=typer.colors.CYAN)
     for line in awg.local_status_lines():
@@ -92,7 +161,7 @@ def amneziawg_status() -> None:
 
 @amneziawg_app.command("add-client")
 def amneziawg_add_client(name: str) -> None:
-    """Create a client on the server and scp its config to ~/.awg/NAME.conf."""
+    """Создать клиента на сервере, конфиг придёт в ~/.awg/NAME.conf (0600)."""
     from . import amneziawg as awg
     try:
         host = _awg_resolve_host()
@@ -108,7 +177,7 @@ def amneziawg_add_client(name: str) -> None:
 def amneziawg_remove_client(name: str, apply: bool = typer.Option(
         False, "--apply", help="Actually remove on the server "
         "(server-side gate; without it the server only previews)")) -> None:
-    """Remove a client on the server (destructive: needs --apply)."""
+    """Удалить клиента на сервере (деструктивно — только с --apply)."""
     from . import amneziawg as awg
     try:
         host = _awg_resolve_host()
@@ -135,8 +204,19 @@ def amneziawg_remove_client(name: str, apply: bool = typer.Option(
 
 @amneziawg_app.command("tunnel")
 def amneziawg_tunnel(action: str = typer.Argument(
-        ..., help="'on', 'off' or 'status'")) -> None:
-    """Control the LOCAL systemd tunnel vpn-awg-split@laptop (sudo -n)."""
+        ..., help="'on', 'off' or 'status'"),
+        no_split: bool = typer.Option(
+            False, "--no-split",
+            help="Не применять/не снимать доменный split (ходовые зоны .com/"
+                 ".org/.net + youtube/telegram через AWG)")) -> None:
+    """AWG-туннель: vpn amneziawg tunnel on|off|status.
+
+    При on/off дополнительно применяется/демонтируется доменный split
+    (15_domain-split.sh): зоны из /opt/awg-split/domains.txt (ходовые
+    TLD .com/.org/.net/.io/.dev/.ai + youtube/telegram/google) идут
+    через AWG, остальное — напрямую. Правка списка — domains.txt,
+    повторный запуск скрипта.
+    """
     from . import amneziawg as awg
     action = action.strip().lower()
     if action not in ("on", "off", "status"):
@@ -146,12 +226,26 @@ def amneziawg_tunnel(action: str = typer.Argument(
         for line in awg.tunnel_status_lines():
             typer.echo(line)
         return
+    if action == "off":
+        # split снимать ДО остановки туннеля (nft/fwmark смотрят на iface)
+        if not no_split:
+            ok_s, msg_s = awg.domain_split_apply("off")
+            (_ok if ok_s else _warn)(msg_s)
+        ok, message = awg.tunnel_control(action)
+        if ok:
+            _ok(message)
+        else:
+            _err(message)
+            raise typer.Exit(code=1)
+        return
     ok, message = awg.tunnel_control(action)
-    if ok:
-        _ok(message)
-    else:
+    if not ok:
         _err(message)
         raise typer.Exit(code=1)
+    _ok(message)
+    if not no_split:
+        ok_s, msg_s = awg.domain_split_apply("on")
+        (_ok if ok_s else _warn)(msg_s)
 
 
 def _err(msg: str) -> None:
@@ -171,7 +265,7 @@ def profile_import(link: str, name: Optional[str] = typer.Option(
         None, "--name", "-n", help="Override profile name"),
         replace: bool = typer.Option(
             False, "--replace", help="Overwrite an existing profile name")) -> None:
-    """Parse a share link and store it as a profile."""
+    """Импорт share-ссылки как профиля: vpn profile import <link> --name NAME."""
     try:
         parsed = parse_link(link)
     except LinkError as exc:
@@ -193,7 +287,7 @@ def profile_import(link: str, name: Optional[str] = typer.Option(
 
 @profile_app.command("list")
 def profile_list() -> None:
-    """List stored profiles (no credentials shown)."""
+    """Список профилей (имя, протокол, socks-порт — без секретов)."""
     rows = profiles.list_profiles()
     if not rows:
         typer.echo("no profiles")
@@ -205,7 +299,7 @@ def profile_list() -> None:
 @profile_app.command("remove")
 def profile_remove(name: str, force: bool = typer.Option(
         False, "--force", "-f", help="Skip confirmation")) -> None:
-    """Remove a stored profile by name."""
+    """Удалить профиль (останавливающий клиент тоже остановится)."""
     if not force:
         confirm = typer.confirm(f"Remove profile '{name}'?", default=False)
         if not confirm:
@@ -229,7 +323,7 @@ def profile_remove(name: str, force: bool = typer.Option(
 
 @profile_app.command("show")
 def profile_show(name: str) -> None:
-    """Show profile details and generated client config (prints credentials)."""
+    """Детали профиля + сгенерированный конфиг (ПЕЧАТАЕТ СЕКРЕТЫ)."""
     try:
         record = profiles.get(name)
     except profiles.ProfileStoreError as exc:
@@ -276,7 +370,7 @@ def _sync_sysproxy_off_after() -> None:
 
 @app.command()
 def up(name: str) -> None:
-    """Generate configs and start the profile via a systemd user unit."""
+    """Запустить профиль: vpn up <profile> (socks-порт см. в vpn profile list)."""
     from . import runners
     try:
         config_path = runners.up(name)
@@ -289,7 +383,7 @@ def up(name: str) -> None:
 
 @app.command()
 def down(name: Optional[str] = typer.Argument(None)) -> None:
-    """Stop the running VPN client (default: the active one)."""
+    """Остановить активный socks-клиент (системный прокси выключится сам)."""
     from . import runners
     try:
         stopped = runners.down(name)
@@ -302,7 +396,7 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
 
 @app.command()
 def switch(name: str) -> None:
-    """Stop the active client and start another profile."""
+    """Переключиться на другой профиль: vpn switch <profile>."""
     from . import runners
     try:
         config_path = runners.switch(name)
@@ -315,7 +409,7 @@ def switch(name: str) -> None:
 
 @app.command()
 def status() -> None:
-    """Show the active profile, unit state and external IP (via SOCKS)."""
+    """Активный профиль, состояние unit, внешний IP (замер через socks)."""
     from . import runners
     active = runners.get_active()
     if not active:
@@ -342,7 +436,7 @@ def status() -> None:
 
 @app.command("install-bins")
 def install_bins() -> None:
-    """Download xray-core and hysteria binaries into ~/.local/lib/vpn."""
+    """Скачать/обновить бинарники xray-core и hysteria в ~/.local/lib/vpn."""
     from . import bins
     try:
         results = bins.install_all()
@@ -361,7 +455,7 @@ def install(linger: bool = typer.Option(
             None, "--autostart",
             help="Enable the profile unit so it starts at login; with no "
                  "value the currently active profile is used")) -> None:
-    """Install binaries (+ optional linger) and optionally enable autostart."""
+    """Установить бинарники; опц. --linger / --autostart [profile] (по умолчанию НЕ надо: политика чистого старта)."""
     from . import runners
     install_bins()
     if linger:
@@ -401,7 +495,7 @@ def _autostart_enable(profile: str) -> None:
 @app.command()
 def autostart(action: str = typer.Argument(
         ..., help="'on', 'off' or 'status'")) -> None:
-    """Toggle or inspect login autostart for vpnm profile units."""
+    """Автозапуск профилей при логине: vpn autostart status|on|off (по умолчанию выключен)."""
     from . import runners
     action = action.strip().lower()
     if action not in ("on", "off", "status"):
@@ -449,7 +543,7 @@ def autostart(action: str = typer.Argument(
 def profile_pull(host: Optional[str] = typer.Option(
         None, "--host", "-H", help="ssh target like root@asv1; when omitted, "
         "the saved host is used, otherwise asked interactively")) -> None:
-    """Pull share links from a VDS server ('vds gateway links' over ssh)."""
+    """Подтянуть share-линки с VDS (vds gateway links по ssh): vpn profile pull -H root@asv1."""
     from . import pull as pull_mod
     from . import settings
     if not host:
@@ -486,7 +580,7 @@ def profile_pull(host: Optional[str] = typer.Option(
 @app.command("sysproxy")
 def sysproxy_cmd(on_off: str = typer.Argument(
         ..., help="'on', 'off' or 'status'")) -> None:
-    """Toggle or inspect the GNOME system proxy (SOCKS to the active profile)."""
+    """Системный прокси GNOME: vpn sysproxy on|off|status (RU-сайты см. ignore-hosts в epilog)."""
     from . import runners, settings, sysproxy
     on_off = on_off.strip().lower()
     if on_off not in ("on", "off", "status"):
@@ -521,7 +615,7 @@ def sysproxy_cmd(on_off: str = typer.Argument(
 @app.command("zapret")
 def zapret_cmd(action: str = typer.Argument(
         ..., help="'on', 'off' or 'status'")) -> None:
-    """Channel 0: control or inspect the zapret (nfqws DPI-desync) service."""
+    """Канал 0 zapret (nfqws DPI-desync): vpn zapret on|off|status (sudo)."""
     from . import zapret as zapret_mod
     action = action.strip().lower()
     if action not in ("on", "off", "status"):
@@ -539,9 +633,51 @@ def zapret_cmd(action: str = typer.Argument(
         raise typer.Exit(code=1)
 
 
+@app.command("doh")
+def doh_cmd(action: str = typer.Argument(
+        ..., help="'on', 'off', 'status', 'guard' (+'on'/'off')"),
+        extra: Optional[str] = typer.Argument(
+        None, help="для 'guard': 'on' (по умолчанию) или 'off'")) -> None:
+    """DoH-режим (чистый DNS): vpn doh on|off|status, boot-guard: vpn doh guard on|off.
+
+    resolved → dnsmasq → cloudflared → Cloudflare DoH; откат одним
+    mv возвращает DNS провайдеру. По политике чистого старта не
+    включается при загрузке — только вручную на сессию.
+
+    ``vpn doh guard on`` ставит systemd oneshot, который при загрузке
+    возвращает drop-in в disabled-имя — гарантирует, что после ребута
+    DNS никогда не мёртв (даже если прошлый сеанс закончился с doh on).
+    """
+    from . import doh as doh_mod
+    action = action.strip().lower()
+    extra_l = (extra or "").strip().lower()
+    if action == "guard":
+        action = "guard-off" if extra_l == "off" else "guard-on"
+    if action not in ("on", "off", "status", "guard-on", "guard-off"):
+        _err("expected 'on', 'off', 'status', 'guard' (+ 'on'/'off')")
+        raise typer.Exit(code=2)
+    if action == "status":
+        for line in doh_mod.status_lines():
+            typer.echo(line)
+        return
+    if action == "guard-on":
+        ok, message = doh_mod.guard_install()
+    elif action == "guard-off":
+        ok, message = doh_mod.guard_remove()
+    elif action == "on":
+        ok, message = doh_mod.enable()
+    else:
+        ok, message = doh_mod.disable()
+    if ok:
+        _ok(message)
+    else:
+        _err(message)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def doctor() -> None:
-    """Diagnose environment: binaries, ports, v2rayA, ssh host, DNS."""
+    """Полная диагностика: бинарники, порты, ssh-хост, DNS — vpn doctor."""
     from . import doctor as doctor_mod
     from . import settings
     checks, verdict = doctor_mod.run_doctor(settings.get_host())
@@ -555,13 +691,88 @@ def doctor() -> None:
 
 
 @app.command()
+def repair(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Только диагностика и план, ничего не менять"),
+    dns: str = typer.Option(
+        "fix", "--dns", help="'fix' — вернуть DNS/трафик; 'off' — убрать "
+        "управляемый drop-in vpn-dns-fix.conf (чистый старт)"),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Не писать лог-файл в ~/.local/share/vpn-manager/logs/"),
+) -> None:
+    """Диагностика всего прокси-стека в лог + возврат трафика без nano.
+
+    «Полный блок» почти всегда = мёртвая DoH-цепочка при включённом
+    drop-in (resolved -> 127.0.0.1) либо мёртвые DNS-серверы в resolved.
+    Команда пишет полный снимок в лог и чинит DNS автоматически:
+    гасит мёртвую цепочку и/или направляет resolved на живой резолвер
+    через drop-in vpn-dns-fix.conf (resolved.conf руками не трогается).
+    """
+    from . import repair as repair_mod
+    from . import settings as settings_mod
+    from .runners import run_cmd as _run
+    runner = _run
+    log_lines: list = []
+
+    dns = dns.strip().lower()
+    if dns not in ("fix", "off"):
+        _err("expected --dns fix|off")
+        raise typer.Exit(code=2)
+
+    if dns == "off":
+        ok, msg = repair_mod.remove_dns_fix(runner)
+        (_ok if ok else _err)(msg)
+        if not ok:
+            raise typer.Exit(code=1)
+        return
+
+    # 1) снимок всего состояния -> лог
+    snapshot = repair_mod.snapshot_lines(runner)
+    for line in snapshot:
+        typer.echo(line)
+    log_lines.extend(snapshot)
+
+    # 2) doctor-чеки (статусы ok/warn/fail)
+    from . import doctor as doctor_mod
+    checks, verdict = doctor_mod.run_doctor(settings_mod.get_host())
+    for status, subject, detail in checks:
+        typer.echo(f"[{status}] {subject}: {detail}")
+    log_lines.append("-- doctor --")
+    log_lines.extend(f"[{s}] {subj}: {d}" for s, subj, d in checks)
+    log_lines.append(f"verdict: {verdict}")
+
+    # 3) восстановление DNS (сухой прогон по флагу)
+    action, fix_lines = repair_mod.fix_dns(runner, dry_run=dry_run)
+    typer.echo("-- восстановление DNS --")
+    for line in fix_lines:
+        typer.echo(line)
+    log_lines.append("-- repair dns --")
+    log_lines.extend(fix_lines)
+    log_lines.append(f"action: {action}")
+
+    # 4) лог
+    if not no_log:
+        log_path = repair_mod.write_log(log_lines)
+        if log_path:
+            _ok(f"log: {log_path}")
+        else:
+            _warn("не удалось записать лог-файл")
+
+    if action == "manual":
+        _warn("нужен root — выполните напечатанную ручную подсказку выше")
+        raise typer.Exit(code=1)
+    if action == "failed" or verdict == "fail":
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def monitor(as_json: bool = typer.Option(
         False, "--json", help="Machine-readable output (same matrix)"),
         zt_ping: Optional[str] = typer.Option(
             None, "--zt-ping",
             help="Ping an explicit ZeroTier peer IP and include the result "
                  "in the zerotier channel detail")) -> None:
-    """Show the VPN channel availability matrix (vpnm, ZeroTier, AmneziaWG, zapret, dns-doh)."""
+    """Матрица каналов: vpnm/zapret/zerotier/amneziawg/dns-doh; --json для скриптов."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:
@@ -635,12 +846,19 @@ def probe(switch_best: bool = typer.Option(
         True, "--switch-best/--no-switch",
         help="Switch to the fastest ok profile when done (default); "
              "--no-switch restores the initially active profile")) -> None:
-    """Probe all profiles' latency and report/switch to the fastest."""
+    """Замер задержек всех профилей и включение самого быстрого (--no-switch — только замер)."""
     from . import probe as probe_mod
+    import sys
     import time as time_mod
+
+    def _note(msg: str) -> None:
+        # прогресс в stderr: таблица в stdout остаётся чистой (и для --json-потребителей)
+        print(f"[info] {msg}", file=sys.stderr, flush=True)
+
     try:
         outcome = probe_mod.run_probe(switch_best=switch_best,
-                                      sleep_fn=time_mod.sleep)
+                                      sleep_fn=time_mod.sleep,
+                                      note=_note)
     except profiles.ProfileStoreError as exc:
         _err(str(exc))
         raise typer.Exit(code=2)

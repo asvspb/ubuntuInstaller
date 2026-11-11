@@ -226,6 +226,54 @@ def _sudo_hint(action: str) -> str:
     return f"sudo systemctl {action} {AWG_UNIT_PREFIX}{DEFAULT_LOCAL_INSTANCE}"
 
 
+# --- domain split -----------------------------------------------------------------
+# 15_domain-split.sh: dnsmasq+nft+fwmark маршрутизирует зоны из
+# /opt/awg-split/domains.txt (по умолчанию ходовые TLD: com/org/net/io/dev/ai +
+# youtube/telegram/google) через AWG. tunnel on применяет его после подъёма
+# туннеля, tunnel off демонтирует до остановки туннеля.
+
+DOMAIN_SPLIT_ENV = "VPNM_DOMAIN_SPLIT_SCRIPT"
+
+
+def domain_split_script() -> Optional[Path]:
+    """Путь к 15_domain-split.sh (env или дефолт репозитория), None если нет."""
+    env = os.environ.get(DOMAIN_SPLIT_ENV)
+    if env:
+        path = Path(env).expanduser()
+        return path if path.exists() else None
+    default = (Path.home() / "Dev" / "ubuntuInstaller" / "scripts"
+               / "15_domain-split.sh")
+    return default if default.exists() else None
+
+
+def domain_split_apply(action: str, run: Optional[RunCmd] = None
+                       ) -> Tuple[bool, str]:
+    """Установить ('on') или демонтировать ('off') доменный split.
+
+    Скрипт сам перекидывается в sudo и идемпотентен. Никогда не бросает:
+    (ok, сообщение) с ручной подсказкой при неудаче.
+    """
+    runner: RunCmd = run or run_cmd
+    if action not in ("on", "off"):
+        return False, f"неизвестное действие '{action}' (ожидается on|off)"
+    script = domain_split_script()
+    if script is None:
+        return False, (f"15_domain-split.sh не найден (задайте env "
+                       f"{DOMAIN_SPLIT_ENV}); split не применён")
+    args = ["sudo", "-n", "bash", str(script)]
+    if action == "off":
+        args.append("--off")
+    rc, out, err = runner(args)
+    if rc == 0:
+        word = "применён" if action == "on" else "демонтирован"
+        return True, f"доменный split {word} (15_domain-split.sh)"
+    detail = ((err or "").strip().splitlines() or [""])[-1]
+    word = "применён" if action == "on" else "демонтирован"
+    hint = "sudo bash " + str(script) + (" --off" if action == "off" else "")
+    return False, (f"доменный split не {word} "
+                   f"({detail or f'exit {rc}'}); вручную: {hint}")
+
+
 def tunnel_control(action: str, run: Optional[RunCmd] = None
                    ) -> Tuple[bool, str]:
     """on/off the local system instance via ``sudo -n systemctl``.

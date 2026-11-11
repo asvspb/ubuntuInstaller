@@ -49,6 +49,7 @@ RULE_PREF="21000"           # ip rule preference
 ROUTE_TABLE="21000"
 AWG_IFACE="${AWG_IFACE:-awg0-split}"
 AWG_CONF="${AWG_CONF:-$HOME/awg0-split.conf}"   # конфиг awg-quick (Table=off)
+EXCLUDE_FILE="/opt/awg-split/exclude.txt"
 DOH_PORT="5053"
 RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же файл, что у 13_dns-doh.sh
 PUBLIC_DNS_CONF="/etc/systemd/resolved.conf.d/public-dns.conf"  # глобальный DNS=1.1.1.1 8.8.8.8 — обходит dnsmasq, нейтрализуем
@@ -76,11 +77,36 @@ DEFAULT_DOMAINS=(
     gvt1.com
     gvt2.com
     recaptcha.net
+        # --- целые ходовые зоны через VPN (по запросу владельца 2026-11-11): ---
+    # dnsmasq матчит суффиксно: 'com' = ВЕСЬ *.com. Убери строку, если зона
+    # должна идти напрямую. NB: RU-проекты на .com (госуслуги-агрегаторы,
+    # банки) тоже уйдут через туннель, и GLM/западные AI тоже — следи за
+    # скоростью туннеля.
+    com
+    org
+    net
+    io
+    dev
+    ai
     # --- дополни своим списком (примеры заблокированных западных): ---
     instagram.com
     facebook.com
     x.com
     openai.com
+)
+
+# Домены, которые НЕЛЬЗЯ пускать через туннель (ходят напрямую даже если
+# попали в TLD-зону). Суффикс-матчинг dnsmasq: 'z.ai' покрывает api.z.ai.
+# Причина: AWG (UDP через TSPU-поддаваемый IP) рвёт GLM/ZCode-API
+# (инцидент 2026-11-11: EHOSTUNREACH 43.109.226.10 при split .ai/.com).
+DEFAULT_EXCLUDE_DOMAINS=(
+    z.ai
+    bigmodel.cn
+    chatglm.cn
+    zhipuai.cn
+    # pypi напрямую доступен из РФ; через AWG его душит TSPU (pipx зависал)
+    pypi.org
+    pythonhosted.org
 )
 
 # Новые дефолты для idempotent-merge в существующий domains.txt
@@ -116,7 +142,39 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
     [ -n "$SUDO_USER_HOME" ] && AWG_CONF="${AWG_CONF/$HOME/$SUDO_USER_HOME}"
     AWG_CONF="${AWG_CONF/#\/root\//$SUDO_USER_HOME/}"
 fi
+# --- Автодетект iface и конфига AWG (юнит может быть vpn-awg-split@<любой>) -------
+# конфиг берём из ExecStart активного юнита; iface = базовое имя конфига
+# (правило wg-quick/awg-quick), проверяем по 'awg show interfaces'.
+awg_unit_conf() {
+    local u
+    for u in vpn-awg-split@* vpn-awg-split; do
+        [ -n "$(systemctl list-units "$u" --all --no-legend 2>/dev/null)" ] || continue
+        local ex
+        ex="$(systemctl show "$u" --property=ExecStart 2>/dev/null | grep -oE '/etc/amnezia/amneziawg/[^ "]+')"
+        [ -n "$ex" ] && { echo "$ex"; return 0; }
+    done
+    echo ""
+}
+_unit_conf="$(awg_unit_conf)"
+if [ -n "$_unit_conf" ] && [ -f "$_unit_conf" ]; then
+    AWG_CONF="$_unit_conf"
+    AWG_IFACE="${AWG_IFACE:-$(basename "${AWG_CONF%.conf}")}"
+elif [ -z "${AWG_CONF:-}" ] || [ "${AWG_CONF:-}" = "$HOME/awg0-split.conf" ]; then
+    for _c in "$HOME/awg0-laptop.conf" "$HOME/awg0-split.conf" "$HOME/laptop.conf"; do
+        [ -f "$_c" ] && { AWG_CONF="$_c"; AWG_IFACE="${AWG_IFACE:-$(basename "${AWG_CONF%.conf}")}"; break; }
+    done
+fi
+# iface: если ещё не определён — берём живой из 'awg show'
+if [ -z "${AWG_IFACE:-}" ] || [ "${AWG_IFACE:-}" = "awg0-split" ]; then
+    _live="$(sudo -n awg show interfaces 2>/dev/null || awg show interfaces 2>/dev/null | head -1)"
+    [ -n "$_live" ] && AWG_IFACE="$_live"
+fi
 info "AWG-конфиг: ${AWG_CONF}"
+info "AWG-интерфейс: ${AWG_IFACE}"
+
+# Туннельная подсеть (из Address конфига, /24 от туннельного IP) — для masquerade
+AWG_ADDR="$(grep -m1 '^Address' "$AWG_CONF" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+TUNNEL_NET="$(echo "${AWG_ADDR:-10.9.0.2}" | cut -d. -f1-3).0/24"
 
 # --- Автодетект AWG-юнита ---------------------------------------------------------
 AWG_UNIT=""
@@ -169,16 +227,16 @@ if [ "$1" = "--off" ]; then
     done
     ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
     success "ip rule/route table ${ROUTE_TABLE} удалены"
-    # resolved: вернуть системный DNS на локальный DoH напрямую (как у 13_dns-doh.sh)
+    # resolved: вернуть DNS провайдеру (clean-boot). Раньше здесь писался
+    # DNS=127.0.0.1:5053 при выключаемом cloudflared → после tunnel off DNS
+    # был мёртв до ручного 'vpn doh off' (инцидент 2026-11-11).
     if [ -f "$RESOLVED_CONF" ]; then
-        cat > "$RESOLVED_CONF" <<CONF
-[Resolve]
-DNS=127.0.0.1:${DOH_PORT}
-CONF
-        chmod 0644 "$RESOLVED_CONF"
-        success "resolved: DNS возвращён на cloudflared DoH напрямую (127.0.0.1:${DOH_PORT})"
+        mv "$RESOLVED_CONF" "${RESOLVED_CONF%.conf}.conf.disabled-manualvpn" \
+            && success "resolved drop-in откачен (DNS → провайдер/DHCP)"
     fi
-    systemctl restart dnsmasq.service 2>/dev/null || true
+    # clean-boot: остановить и выключить DNS-цепочку (сессия закончилась)
+    systemctl disable --now dnsmasq.service 2>/dev/null || true
+    systemctl disable --now cloudflared-proxy-dns.service 2>/dev/null || true
     systemctl restart systemd-resolved.service
     # вернуть public-dns.conf (глобальный 1.1.1.1/8.8.8.8), если нейтрализовали
     if [ -f "${PUBLIC_DNS_CONF}.disabled-by-domain-split" ]; then
@@ -208,7 +266,8 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
     apt-get update -qq
     apt-get install -y "${MISSING[@]}"
 fi
-systemctl enable --now dnsmasq.service >/dev/null 2>&1 || true
+# clean-boot: только старт на сессию, НЕ enable (при загрузке DNS = провайдер)
+systemctl start dnsmasq.service >/dev/null 2>&1 || true
 
 # --- 1.5. Ubuntu-сборка dnsmasq без HAVE_NFTSET? → пересобираем из исходников -------
 # (jammy dnsmasq 2.91: 'no-nftset'; директива nftset нужна нам для routes-set)
@@ -282,7 +341,8 @@ success "dnsmasq / nftables готовы"
 info "2. DoH-резолвер (cloudflared-proxy-dns, 127.0.0.1:${DOH_PORT})"
 if systemctl is-active --quiet cloudflared-proxy-dns.service 2>/dev/null \
    || [ -x /usr/local/bin/cloudflared-proxy-dns-bin ]; then
-    systemctl enable --now cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    # clean-boot: только старт, не enable
+    systemctl start cloudflared-proxy-dns.service >/dev/null 2>&1 || true
     success "cloudflared-proxy-dns уже установлен — переиспользую"
 else
     info "  cloudflared не найден — минимальная установка (см. scripts/13_dns-doh.sh для деталей)"
@@ -320,8 +380,9 @@ WantedBy=multi-user.target
 UNIT
     chmod 0644 "$UNIT_DST"
     systemctl daemon-reload
-    systemctl enable --now cloudflared-proxy-dns.service >/dev/null 2>&1 || true
-    success "cloudflared-proxy-dns установлен и включён"
+    systemctl start cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    systemctl disable cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    success "cloudflared-proxy-dns установлен, стартует на сессию (не enable)"
 fi
 
 # --- 3. Список доменов (не перетирать существующий!) -----------------------------------
@@ -353,6 +414,25 @@ else
     chmod 0644 "$DOMAINS_FILE"
     success "создан со списком по умолчанию (${#DEFAULT_DOMAINS[@]} доменов)"
 fi
+# exclude.txt: то, что всегда напрямую (GLM-кластер и т.п.)
+if [ -f "$EXCLUDE_FILE" ]; then
+    MERGED=0
+    for d in "${DEFAULT_EXCLUDE_DOMAINS[@]}"; do
+        if ! grep -qE "^\s*${d}\s*(#|$)" "$EXCLUDE_FILE"; then
+            echo "$d" >> "$EXCLUDE_FILE"; MERGED=$((MERGED + 1))
+        fi
+    done
+    [ "$MERGED" -gt 0 ] && success "exclude.txt дополнен (+${MERGED})"
+else
+    mkdir -p "$(dirname "$EXCLUDE_FILE")"
+    {
+        echo "# Всегда НАПРЯМУЮ (не через туннель), даже если домен попал в TLD-зону."
+        echo "# Один домен на строку; суффикс-матчинг (z.ai покрывает api.z.ai)."
+        for d in "${DEFAULT_EXCLUDE_DOMAINS[@]}"; do echo "$d"; done
+    } > "$EXCLUDE_FILE"
+    chmod 0644 "$EXCLUDE_FILE"
+    success "exclude.txt создан (${#DEFAULT_EXCLUDE_DOMAINS[@]} доменов GLM-кластера)"
+fi
 DOMAIN_COUNT="$(read_domains | wc -l)"
 [ "$DOMAIN_COUNT" -gt 0 ] || { err "в $DOMAINS_FILE нет ни одного домена"; exit 1; }
 success "активных доменов: $DOMAIN_COUNT"
@@ -375,9 +455,16 @@ info "4. dnsmasq-конфиг: $DNSMASQ_CONF"
     while IFS= read -r d; do
         echo "nftset=/${d}/4 inet#${NFT_TABLE}#${NFT_SET}"
     done < <(read_domains)
+    echo "# exclude-домены: резолвы уходят в отдельный set, chain их пропускает"
+    if [ -f "$EXCLUDE_FILE" ]; then
+        while IFS= read -r d; do
+            echo "nftset=/${d}/4 inet#${NFT_TABLE}#excluded"
+        done < <(grep -vE '^\s*(#|$)' "$EXCLUDE_FILE" | sed 's/[[:space:]]//g' | sort -u)
+    fi
 } > "$DNSMASQ_CONF"
 chmod 0644 "$DNSMASQ_CONF"
-success "dnsmasq-конфиг записан (${DOMAIN_COUNT} nftset-строк)"
+EXCLUDE_COUNT="$( [ -f "$EXCLUDE_FILE" ] && grep -vcE '^\s*(#|$)' "$EXCLUDE_FILE" || echo 0 )"
+success "dnsmasq-конфиг записан (${DOMAIN_COUNT} маршрутов + ${EXCLUDE_COUNT} исключений)"
 
 # --- 5. nft-таблица inet/awg_split + ip rule/route -----------------------------------------
 info "5. nft/fwmark-маршрутизация (mark ${MARK_HEX} → table ${ROUTE_TABLE} dev ${AWG_IFACE})"
@@ -385,6 +472,13 @@ if ! ip link show "$AWG_IFACE" >/dev/null 2>&1; then
     err "интерфейс ${AWG_IFACE} не существует — сначала поднимите AWG: bash scripts/14_awg-split.sh"
     exit 1
 fi
+
+# rp_filter: ответные пакеты приходят с iface туннеля, а reverse-lookup в main
+# говорит «src достижим через wlp44s0» → strict rp_filter роняет их (инцидент
+# 2026-11-11: TCP SYN уходил, SYN-ACK отбрасывался ядром).
+sysctl -qw net.ipv4.conf.all.rp_filter=0
+sysctl -qw "net.ipv4.conf.${AWG_IFACE}.rp_filter=0"
+success "rp_filter отключён (all + ${AWG_IFACE})"
 
 # идемпотентно: recreate таблицы (nft ruleset для одной таблицы)
 nft delete table "inet $NFT_TABLE" 2>/dev/null || true
@@ -395,11 +489,25 @@ table inet ${NFT_TABLE} {
         flags interval
         auto-merge
     }
+    set excluded {
+        type ipv4_addr
+        flags interval
+        auto-merge
+    }
+    chain postroute {
+        type nat hook postrouting priority srcnat; policy accept;
+        # fwmark-перенаправление меняет интерфейс, но НЕ source address сокета
+        # (выбран по main-таблице = LAN IP). Сервер не маршрутизирует обратно
+        # на LAN-адрес → masquerade в туннельный адрес (фикс 2026-11-11).
+        oifname "${AWG_IFACE}" ip saddr != ${TUNNEL_NET} meta mark ${MARK_HEX} masquerade
+    }
     chain out {
         type route hook output priority mangle; policy accept;
         # UDP-пакеты самого AWG (fwmark 0xca6c от awg-quick) — не трогаем,
         # иначе endpoint-трафик зациклится в туннель
         meta mark 0xca6c return
+        # исключения (GLM-кластер и т.п.) — всегда напрямую, даже в TLD-зоне
+        ip daddr @excluded return
         # пакеты на доменные IP → mark ${MARK_HEX}
         ip daddr @${NFT_SET} meta mark set ${MARK_HEX}
     }
@@ -486,6 +594,15 @@ fi
 
 # --- 8. Рестарт сервисов + верификация ------------------------------------------------------------
 info "8. Рестарт dnsmasq + systemd-resolved, верификация"
+# дождаться прогрева DoH-upstream (гонка 2026-11-11: dnsmasq жив, а 5053 ещё
+# не отвечает → verification падала на свежем старте cloudflared)
+for i in $(seq 1 15); do
+    dig "@127.0.0.1" -p "${DOH_PORT}" ya.ru +short +time=2 +tries=1 | grep -q '.' \
+        && break
+    [ "$i" -eq 15 ] && { err "cloudflared DoH (127.0.0.1:${DOH_PORT}) не отвечает"; exit 1; }
+    sleep 1
+done
+success "DoH-upstream прогрет (127.0.0.1:${DOH_PORT})"
 systemctl restart dnsmasq.service
 systemctl restart systemd-resolved.service
 sleep 2
@@ -494,9 +611,18 @@ if ! systemctl is-active --quiet dnsmasq.service; then
     err "dnsmasq не поднялся — журнал: journalctl -u dnsmasq -n 30"
     exit 1
 fi
-RESOLVED_IP="$(dig "@127.0.0.1" www.youtube.com +short 2>/dev/null | grep -E '^[0-9]+\.' | head -1)"
+# retry: одиночный флап DoH-апстрима не должен ронять весь сплит (инцидент
+# 2026-11-11 11:00: cloudflare-dns.com таймаутил ~минуту — единая проверка
+# отвергла установку целиком)
+RESOLVED_IP=""
+for i in $(seq 1 5); do
+    RESOLVED_IP="$(dig "@127.0.0.1" www.youtube.com +short +time=3 +tries=1 2>/dev/null | grep -E '^[0-9]+\.' | head -1)"
+    [ -n "$RESOLVED_IP" ] && break
+    [ "$i" -lt 5 ] && warn "dig youtube не прошёл (попытка $i/5) — жду 3с (флап DoH-апстрима?)"
+    sleep 3
+done
 if [ -z "$RESOLVED_IP" ]; then
-    err "dnsmasq не резолвит www.youtube.com — проверьте cloudflared-proxy-dns (порт ${DOH_PORT})"
+    err "dnsmasq не резолвит www.youtube.com за 5 попыток — проверьте cloudflared-proxy-dns (порт ${DOH_PORT})"
     exit 1
 fi
 success "dig @127.0.0.1 www.youtube.com → ${RESOLVED_IP}"
@@ -518,6 +644,7 @@ echo "  dig @127.0.0.1 www.youtube.com +short"
 echo "  sudo nft list set inet ${NFT_TABLE} ${NFT_SET}"
 echo "  curl --noproxy '*' -o /dev/null -w '%{http_code}' https://www.youtube.com/generate_204"
 echo "Список доменов: $DOMAINS_FILE (правка → sudo bash scripts/15_domain-split.sh)"
+echo "Исключения (всегда напрямую): $EXCLUDE_FILE (GLM-кластер и т.п.)"
 echo "Статус:  sudo bash scripts/15_domain-split.sh --status"
 echo "Мониторинг: vpn monitor (строка amneziawg: ok (domain-split))"
 echo "Демонтаж: sudo bash scripts/15_domain-split.sh --off"
