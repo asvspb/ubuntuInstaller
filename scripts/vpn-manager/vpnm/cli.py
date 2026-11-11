@@ -417,6 +417,37 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
 
 
 @app.command()
+def start() -> None:
+    """Поднять основную рабочую схему: AWG-туннель + доменный split.
+
+    Зеркало 'vpn reset': туннель vpn-awg-split@laptop + маршрутизация зон
+    из /opt/awg-split/domains.txt (ходовые TLD + youtube/telegram) через
+    туннель, GLM-кластер и RU — напрямую; DNS-цепочка (dnsmasq+DoH с
+    fallback 77.88.8.8) поднимается автоматически. Системный прокси не
+    включается — схема работает на уровне маршрутов. Идемпотентно.
+    """
+    from . import amneziawg as awg
+    failures: list = []
+    ok_t, msg_t = awg.tunnel_control("on")
+    (_ok if ok_t else _err)(f"AWG: {msg_t}")
+    if not ok_t:
+        failures.append("AWG-туннель")
+        _err("split не применяется без туннеля — поднимите туннель и "
+             "повторите 'vpn start'")
+        raise typer.Exit(code=1)
+    ok_s, msg_s = awg.domain_split_apply("on")
+    (_ok if ok_s else _warn)(f"split: {msg_s}")
+    if not ok_s:
+        failures.append("доменный split")
+    if failures:
+        _warn("схема поднята частично: " + ", ".join(failures)
+              + " — повторите 'vpn start' или выполните подсказки выше")
+        raise typer.Exit(code=1)
+    _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
+        "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
+
+
+@app.command()
 def reset() -> None:
     """Вернуть всё к состоянию «как после перезагрузки ОС» (чистый старт).
 

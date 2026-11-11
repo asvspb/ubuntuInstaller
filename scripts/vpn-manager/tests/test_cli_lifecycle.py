@@ -137,3 +137,35 @@ def test_cli_reset_reports_partial_failure(monkeypatch):
     result = CliRunner().invoke(cli_app, ["reset"])
     assert result.exit_code == 1
     assert "split" in result.output
+
+
+def test_cli_start_order_tunnel_then_split(monkeypatch):
+    """vpn start: туннель ДО split (nft нужен поднятый iface), идемпотентен."""
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
+    result = CliRunner().invoke(cli_app, ["start"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("tun", "on"), ("split", "on")]
+    assert "основная схема активна" in result.output
+    result2 = CliRunner().invoke(cli_app, ["start"])
+    assert result2.exit_code == 0, result2.output
+
+
+def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+    monkeypatch.setattr(awg, "tunnel_control",
+                        lambda a, run=None: calls.append(("tun", a)) or (False, "no tunnel"))
+    monkeypatch.setattr(awg, "domain_split_apply",
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
+    result = CliRunner().invoke(cli_app, ["start"])
+    assert result.exit_code == 1
+    assert calls == [("tun", "on")]  # split не пытаемся без iface
