@@ -343,6 +343,44 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
 
 # --- zapret (channel 0) ------------------------------------------------------------
 
+CDN_PROFILE = "cdn-home"
+
+
+def check_cdn(run: Optional[RunCmd] = None) -> Channel:
+    """Канал выживания (CDN/Cloudflare): профиль cdn-home.
+
+    up -> одна egress-проба через его socks; существует, но остановлен ->
+    warn (резерв доступен одной командой); нет профиля -> not_installed.
+    Отдельная строка матрицы, потому что cdn используется И как активный
+    профиль (sysproxy), И как резерв при схеме AWG-split — раньше был
+    невидим в monitor именно во втором случае (gap 2026-11-11).
+    """
+    runner: RunCmd = run or run_cmd
+    try:
+        record = profiles.get(CDN_PROFILE)
+    except profiles.ProfileStoreError:
+        return _result("cdn", STATUS_NOT_INSTALLED,
+                       f"профиля '{CDN_PROFILE}' нет — "
+                       "импортируйте CDN-ссылку (vds gateway links)")
+    port = int(str(record["socks_port"]))
+    if not runners.is_active(CDN_PROFILE, runner):
+        return _result("cdn", STATUS_WARN,
+                       f"профиль есть, но остановлен — резерв: "
+                       f"'vpn up {CDN_PROFILE}' (socks 127.0.0.1:{port})")
+    rc, out, _err = runner(
+        ["curl", "--socks5-hostname", f"127.0.0.1:{port}",
+         "--max-time", "10", "-s", "-o", "/dev/null",
+         "-w", "%{http_code} %{time_total}",
+         "https://www.google.com/generate_204"])
+    if rc == 0 and out.strip().startswith("204"):
+        return _result("cdn", STATUS_OK,
+                       f"профиль '{CDN_PROFILE}' через CF "
+                       f"(socks 127.0.0.1:{port}, {out.strip()}s)")
+    return _result("cdn", STATUS_FAIL,
+                   f"профиль '{CDN_PROFILE}' запущен, но egress не прошёл "
+                   f"(http={out.strip() or 'none'})")
+
+
 def check_zapret(run: Optional[RunCmd] = None) -> Channel:
     """Channel 0: direct DPI-bypass via nfqws; canary without any SOCKS proxy."""
     runner: RunCmd = run or run_cmd
@@ -482,7 +520,8 @@ def awg_tunnel_latency(
 # --- top level -------------------------------------------------------------------
 
 def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
-    return [check_vpnm(run=run), check_zerotier(run=run),
+    return [check_vpnm(run=run), check_cdn(run=run),
+            check_zerotier(run=run),
             check_awg(run=run), check_zapret(run=run),
             check_dnsdoh(run=run)]
 
@@ -492,6 +531,7 @@ def run_monitor(run: Optional[RunCmd] = None,
     """Run all channel checks; return channels + healthy counters."""
     channels = [
         check_vpnm(run=run),
+        check_cdn(run=run),
         check_zerotier(run=run, peer_ip=peer_ip),
         check_awg(run=run),
         check_zapret(run=run),

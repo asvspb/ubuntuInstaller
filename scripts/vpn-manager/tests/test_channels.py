@@ -365,7 +365,7 @@ def test_monitor_exit_0_when_one_ok(env, monkeypatch):
     outcome = channels.run_monitor(run=make_run())
     assert channels.exit_code(outcome) == 0
     assert outcome["healthy"] == 1
-    assert outcome["total"] == 5
+    assert outcome["total"] == 6
 
 
 def test_monitor_exit_1_when_all_down(env, monkeypatch):
@@ -390,10 +390,10 @@ def test_cli_monitor_json_structure(env, monkeypatch):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert set(data) == {"channels", "healthy", "total"}
-    assert len(data["channels"]) == 5
+    assert len(data["channels"]) == 6
     for row in data["channels"]:
         assert set(row) == {"channel", "status", "detail"}
-    assert data["total"] == 5
+    assert data["total"] == 6
 
 
 def test_cli_monitor_exit_1(env, monkeypatch):
@@ -407,13 +407,18 @@ def test_cli_monitor_exit_1(env, monkeypatch):
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
     monkeypatch.setattr(
+        channels, "check_cdn",
+        lambda **kw: {"channel": "cdn",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
+    monkeypatch.setattr(
         channels, "check_dnsdoh",
         lambda **kw: {"channel": "dns-doh",
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
     result = runner.invoke(app, ["monitor"])
     assert result.exit_code == 1
-    assert "healthy channels: 0/5" in result.output
+    assert "healthy channels: 0/6" in result.output
 
 
 def test_cli_monitor_json_is_pure_json(env, monkeypatch):
@@ -424,6 +429,11 @@ def test_cli_monitor_json_is_pure_json(env, monkeypatch):
     monkeypatch.setattr(
         channels, "check_awg",
         lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
+    monkeypatch.setattr(
+        channels, "check_cdn",
+        lambda **kw: {"channel": "cdn",
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
     monkeypatch.setattr(
@@ -447,6 +457,11 @@ def test_cli_monitor_zt_ping_flag(env, monkeypatch):
     monkeypatch.setattr(
         channels, "check_awg",
         lambda **kw: {"channel": "amneziawg",
+                      "status": channels.STATUS_NOT_INSTALLED,
+                      "detail": "mocked"})
+    monkeypatch.setattr(
+        channels, "check_cdn",
+        lambda **kw: {"channel": "cdn",
                       "status": channels.STATUS_NOT_INSTALLED,
                       "detail": "mocked"})
     # machine-dependent ZT state must not matter: stub the shell layer
