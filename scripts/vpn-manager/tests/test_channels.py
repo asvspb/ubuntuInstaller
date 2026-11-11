@@ -483,10 +483,11 @@ def test_awg_domain_split_note(env, monkeypatch):
     fake_conf = env / "awg-split.conf"
     fake_conf.write_text("# fixture dnsmasq conf\n")
     monkeypatch.setattr(channels, "DOMAIN_SPLIT_CONF", fake_conf)
+    monkeypatch.setattr(channels, "DOMAIN_SPLIT_LIST", env / "no-domains.txt")
     result = channels.check_awg(run=make_run(**{"ip -o link": (0, out, "")}))
     assert result["status"] == channels.STATUS_OK
     assert "awg0-split" in result["detail"]
-    assert "(domain-split)" in result["detail"]
+    assert "domain-split:" in result["detail"]
 
 
 def test_awg_no_domain_split_note(env, monkeypatch):

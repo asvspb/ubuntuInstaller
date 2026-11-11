@@ -276,6 +276,14 @@ def _awg_confs() -> List[Path]:
 
 
 def _awg_interfaces(run: RunCmd) -> List[str]:
+    """Живые AWG-интерфейсы. Источник истины — 'awg show interfaces'
+    (сам AWG); имя-паттерн по ip link — fallback (gap 2026-11-11: инстанс
+    vpn-awg-split@laptop создаёт iface 'laptop', паттерн awg* не матчил ->
+    ложный warn в monitor при живом туннеле)."""
+    rc, out, _err = run(["sudo", "-n", "awg", "show", "interfaces"])
+    if rc == 0 and out.strip():
+        return [line.strip() for line in out.strip().splitlines()
+                if line.strip()]
     rc, out, _err = run(["ip", "-o", "link", "show"])
     if rc != 0:
         return []
@@ -291,6 +299,7 @@ def _awg_interfaces(run: RunCmd) -> List[str]:
 
 
 DOMAIN_SPLIT_CONF = Path("/etc/dnsmasq.d/awg-split.conf")
+DOMAIN_SPLIT_LIST = Path("/opt/awg-split/domains.txt")
 
 
 def _domain_split_active() -> bool:
@@ -308,9 +317,20 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
                        f"артефактов нет — {AWG_SPEC_NOTE}")
     ifaces = _awg_interfaces(runner)
     if ifaces:
-        split_note = " (domain-split)" if _domain_split_active() else ""
-        return _result("amneziawg", STATUS_OK,
-                       f"интерфейс поднят: {', '.join(ifaces)}{split_note}")
+        parts_detail: List[str] = [f"интерфейс {', '.join(ifaces)}"]
+        if _domain_split_active():
+            n = 0
+            try:
+                raw = DOMAIN_SPLIT_LIST.read_text(
+                    encoding="utf-8")
+                n = sum(1 for ln in raw.splitlines()
+                        if ln.strip() and not ln.strip().startswith("#"))
+            except OSError:
+                pass
+            parts_detail.append(
+                f"domain-split: {n} зон/доменов через туннель "
+                "(com/org/net/io/dev/ai + youtube/telegram; GLM/RU — напрямую)")
+        return _result("amneziawg", STATUS_OK, "; ".join(parts_detail))
     parts = []
     if bins_found:
         parts.append(f"бинарь: {', '.join(Path(b).name for b in bins_found)}")
