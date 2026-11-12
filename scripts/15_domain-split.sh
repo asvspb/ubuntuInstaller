@@ -109,6 +109,24 @@ DEFAULT_EXCLUDE_DOMAINS=(
     pythonhosted.org
 )
 
+# Статические IP-диапазоны для nft-set: хосты, ходящие МИМО DNS
+# (приложения с хардкод-адресами). Классика — Telegram: клиент коннектится
+# к захардкоженным DC-IP (149.154.x, 91.108.x), доменный split их не видит,
+# трафик уходит напрямую и блокируется (инцидент 2026-11-12: TG мёртв при
+# живом youtube). Официальные диапазоны telegram.org.
+STATIC_ROUTES_NETS=(
+    91.108.4.0/22
+    91.108.8.0/22
+    91.108.12.0/22
+    91.108.16.0/22
+    91.108.20.0/22
+    91.108.56.0/22
+    149.154.160.0/20
+    2001:67c:4e8::/48
+    2001:b28:f23d::/48
+    2001:b28:f23f::/48
+)
+
 # Новые дефолты для idempotent-merge в существующий domains.txt
 # (то, что появилось после первой установки — добавляется, существующее не трогается)
 MERGE_EXTRA_DOMAINS=(
@@ -521,7 +539,12 @@ table inet ${NFT_TABLE} {
     }
 }
 NFT
-success "nft-таблица inet/${NFT_TABLE} создана (set ${NFT_SET}, chain out)"
+# статические диапазоны (Telegram DC и т.п.) — вне DNS-механики
+STATIC_V4="$(echo "${STATIC_ROUTES_NETS[@]}" | tr ' ' '\n' | grep -E '^[0-9]+\.' | paste -sd,)"
+STATIC_V6="$(echo "${STATIC_ROUTES_NETS[@]}" | tr ' ' '\n' | grep -E '^2001' | paste -sd,)"
+[ -n "$STATIC_V4" ] && nft add element "inet ${NFT_TABLE} ${NFT_SET}" "{ ${STATIC_V4} }"
+[ -n "$STATIC_V6" ] && nft add element "inet ${NFT_TABLE} ${NFT_SET}" "{ ${STATIC_V6} }" 2>/dev/null || true
+success "nft-таблица inet/${NFT_TABLE} создана (set ${NFT_SET}, chain out; +${#STATIC_ROUTES_NETS[@]} стат. диапазонов)"
 
 # ip rule + default в table 21000 (идемпотентно)
 if ! ip rule show | grep -q "^${RULE_PREF}:.*fwmark ${MARK_HEX}"; then
