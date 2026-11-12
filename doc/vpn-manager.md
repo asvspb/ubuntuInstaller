@@ -69,7 +69,7 @@ vpn install --linger
 |---------|-----------|
 | `vpn` | TUI-меню (Подключить / Отключить / Переключить / Статус / Профили / Системный прокси / Doctor) |
 | `vpn profile import <link>` | Импорт share-ссылки (`--name`, `--replace`) |
-| `vpn profile pull [--host root@asv1]` | Импорт ссылок с VDS-сервера по ssh |
+| `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
 | `vpn profile list` / `remove <name>` / `show <name>` | Управление профилями |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
 | `vpn scheme awg\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / CDN / общий прокси / частный прокси |
@@ -98,10 +98,15 @@ Antigravity без активного VPN) признаёт, помимо ZeroTi
 шлюзов в формате `<имя>: <link>`. `vpn profile pull` выполняет:
 
 ```
-ssh <host> "vds gateway links"
+ssh <host> "vds gateway links"            # обычный режим
+ssh <host> "vds gateway links --include-obfs"   # + obfs-профили
 ```
 
-и синхронизирует результат с локальным store:
+Флаг `--include-obfs` забирает и obfs-ссылку каждого hysteria2-клиента
+(`<name>@obfs`, отдельный UDP-порт, `obfs=salamander`): в store появляется
+вторая запись рядом с основной — обе синхронизируются независимо.
+
+Синхронизация результата с локальным store:
 
 - имя новое → импорт;
 - ссылка изменилась → обновление (эквивалентно `--replace`) с предупреждением;

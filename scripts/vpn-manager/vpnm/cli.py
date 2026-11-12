@@ -758,9 +758,14 @@ def autostart(action: str = typer.Argument(
 # --- WP-D: pull / sysproxy / doctor / TUI --------------------------------------
 
 @profile_app.command("pull")
-def profile_pull(host: Optional[str] = typer.Option(
-        None, "--host", "-H", help="ssh target like root@asv1; when omitted, "
-        "the saved host is used, otherwise asked interactively")) -> None:
+def profile_pull(
+        host: Optional[str] = typer.Option(
+            None, "--host", "-H", help="ssh target like root@asv1; when omitted, "
+            "the saved host is used, otherwise asked interactively"),
+        include_obfs: bool = typer.Option(
+            False, "--include-obfs",
+            help="также забрать obfs-профили hysteria2 (`<name>@obfs`, "
+                 "obfs=salamander)")) -> None:
     """Подтянуть share-линки с VDS (vds gateway links по ssh): vpn profile pull -H root@asv1."""
     from . import pull as pull_mod
     from . import settings
@@ -774,7 +779,7 @@ def profile_pull(host: Optional[str] = typer.Option(
         else:
             _ok(f"using saved host '{host}'")
     try:
-        actions = pull_mod.pull(host)
+        actions = pull_mod.pull(host, include_obfs=include_obfs)
     except pull_mod.PullError as exc:
         _err(str(exc))
         raise typer.Exit(code=1)

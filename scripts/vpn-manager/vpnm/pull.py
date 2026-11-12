@@ -86,10 +86,17 @@ def parse_gateway_links(text: str) -> ParseResult:
     return out
 
 
-def fetch_links(host: str, run: Optional[RunCmd] = None) -> ParseResult:
-    """Run ssh, parse the output; raise PullError on any failure."""
+def fetch_links(host: str, run: Optional[RunCmd] = None,
+                include_obfs: bool = False) -> ParseResult:
+    """Run ssh, parse the output; raise PullError on any failure.
+
+    include_obfs asks the server for the extra obfs links of every hysteria2
+    client (``vds gateway links --include-obfs`` -> rows named
+    ``<name>@obfs``); without it only the plain hysteria2 link is returned.
+    """
     runner: RunCmd = run or run_cmd
-    rc, out, err = runner(["ssh", host, "vds gateway links"])
+    remote_cmd = "vds gateway links" + (" --include-obfs" if include_obfs else "")
+    rc, out, err = runner(["ssh", host, remote_cmd])
     if rc != 0:
         detail = (err or out).strip()
         raise PullError(
@@ -103,15 +110,17 @@ def fetch_links(host: str, run: Optional[RunCmd] = None) -> ParseResult:
 
 
 def pull(host: str, run: Optional[RunCmd] = None,
-         path: Optional[object] = None) -> List[Tuple[str, str]]:
+         path: Optional[object] = None,
+         include_obfs: bool = False) -> List[Tuple[str, str]]:
     """Sync links into the store. Returns [(name, action), ...].
 
-    action is 'imported' | 'updated' | 'skipped'.
+    action is 'imported' | 'updated' | 'skipped'. include_obfs also imports the
+    obfs (salamander) profile of each hysteria2 client as ``<name>@obfs``.
     """
     store = profiles.list_profiles()
     names = {p.get("name") for p in store}
     actions: List[Tuple[str, str]] = []
-    for name, link in fetch_links(host, run):
+    for name, link in fetch_links(host, run, include_obfs=include_obfs):
         if name not in names:
             parsed = parse_link(link)
             profiles.add(parsed, raw_link=link, name=name)

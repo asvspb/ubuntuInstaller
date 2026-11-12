@@ -111,6 +111,7 @@ vds cleanup                      # Очистка (логи, кэши, стар�
 ```bash
 vds gateway status               # state.json, клиенты, протоколы
 vds gateway links                # Share-links всех клиентов (--protocol xray|hysteria2|amneziawg)
+vds gateway links --include-obfs # + obfs-ссылки hysteria2 (`<name>@obfs`, порт obfs-инстанса)
 vds gateway blockcheck           # «блок IP» vs «деградация» vs «локальная проблема»
 ```
 
@@ -170,7 +171,9 @@ vds wireguard install
 ## Share-линки и клиентская сторона
 
 `vds gateway links` печатает `имя: ссылка`; на ноутбуке
-`vpn profile pull -H root@asv1` импортирует их в vpnm (store 0600).
+`vpn profile pull -H root@asv1 [--include-obfs]` импортирует их в vpnm
+(store 0600). С `--include-obfs` сервер добавляет вторую строку
+`<name>@obfs` — ссылку obfs-инстанса (salamander, отдельный UDP-порт).
 
 - **Reality/XHTTP/CDN**: `vless://...` (CDN — `vless` за Cloudflare, имя профиля
   может быть вида `<name>@<front>`).

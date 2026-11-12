@@ -21,6 +21,11 @@ FIXTURE_VLESS = (
 )
 FIXTURE_VLESS_V2 = FIXTURE_VLESS.replace("sid=ab", "sid=cd")
 FIXTURE_HY2 = "hysteria2://FIXTURE_PW_hy2@203.0.113.11:8443?insecure=1#srv-hy2"
+FIXTURE_HY2_OBFS = (
+    "hysteria2://FIXTURE_PW_hy2@203.0.113.11:51826"
+    "?sni=203.0.113.11&obfs=salamander&obfs-password=FIXTURE_PW_obfs"
+    "&insecure=1&mport=20000-20500#srv-hy2%40obfs"
+)
 FIXTURE_XHTTP = (
     "vless://11111111-2222-3333-4444-555555555555@203.0.113.12:443"
     "?security=tls&network=xhttp&path=/xhttp-test#srv-xhttp"
@@ -168,3 +173,30 @@ def test_parser_ignores_garbage_before_first_record():
     ])
     got = pull.parse_gateway_links(text)
     assert got == [("srv-reality", FIXTURE_VLESS)]
+
+
+# --- obfs profiles ---------------------------------------------------------------
+
+def test_fetch_links_include_obfs_flag_is_forwarded():
+    run = make_run_mock({"ssh": (0, SAMPLE_OUTPUT, "")})
+    pull.fetch_links("root@asv1", run=run, include_obfs=True)
+    assert run.calls[0][2] == "vds gateway links --include-obfs"
+
+
+def test_fetch_links_without_flag_keeps_plain_command():
+    run = make_run_mock({"ssh": (0, SAMPLE_OUTPUT, "")})
+    pull.fetch_links("root@asv1", run=run)
+    assert run.calls[0][2] == "vds gateway links"
+
+
+def test_pull_imports_obfs_profile(env):
+    output = "\n".join([
+        f"srv-hy2: {FIXTURE_HY2}",
+        f"srv-hy2@obfs: {FIXTURE_HY2_OBFS}",
+    ])
+    run = make_run_mock({"ssh": (0, output, "")})
+    actions = pull.pull("root@asv1", run=run, include_obfs=True)
+    assert dict(actions) == {"srv-hy2": "imported", "srv-hy2@obfs": "imported"}
+    obfs = profiles.get("srv-hy2@obfs")
+    assert obfs["protocol"] == "hysteria2"
+    assert obfs["link"] == FIXTURE_HY2_OBFS
