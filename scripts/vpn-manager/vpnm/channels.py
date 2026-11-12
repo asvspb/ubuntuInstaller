@@ -354,12 +354,13 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
 
 # --- zapret (channel 0) ------------------------------------------------------------
 
-CDN_PROFILE = "cdn-home"
-
 
 def check_cdn(run: Optional[RunCmd] = None) -> Channel:
-    """Канал выживания (CDN/Cloudflare): профиль cdn-home.
+    """Канал выживания (CDN/Cloudflare): CDN-профиль (ws).
 
+    Имя профиля не хардкодится: vds рендерит CDN-ссылки с произвольным
+    именем, поэтому берётся profiles.resolve_cdn() (cdn-home → *cdn* →
+    первый ws-профиль).
     up -> одна egress-проба через его socks; существует, но остановлен ->
     warn (резерв доступен одной командой); нет профиля -> not_installed.
     Отдельная строка матрицы, потому что cdn используется И как активный
@@ -367,17 +368,17 @@ def check_cdn(run: Optional[RunCmd] = None) -> Channel:
     невидим в monitor именно во втором случае (gap 2026-11-11).
     """
     runner: RunCmd = run or run_cmd
-    try:
-        record = profiles.get(CDN_PROFILE)
-    except profiles.ProfileStoreError:
+    name = profiles.resolve_cdn()
+    if not name:
         return _result("cdn", STATUS_NOT_INSTALLED,
-                       f"профиля '{CDN_PROFILE}' нет — "
-                       "импортируйте CDN-ссылку (vds gateway links)")
+                       "CDN-профиля нет — импортируйте CDN-ссылку "
+                       "(vds gateway links)")
+    record = profiles.get(name)
     port = int(str(record["socks_port"]))
-    if not runners.is_active(CDN_PROFILE, runner):
+    if not runners.is_active(name, runner):
         return _result("cdn", STATUS_WARN,
-                       f"профиль есть, но остановлен — резерв: "
-                       f"'vpn up {CDN_PROFILE}' (socks 127.0.0.1:{port})")
+                       f"профиль '{name}' есть, но остановлен — резерв: "
+                       f"'vpn up {name}' (socks 127.0.0.1:{port})")
     rc, out, _err = runner(
         ["curl", "--socks5-hostname", f"127.0.0.1:{port}",
          "--max-time", "10", "-s", "-o", "/dev/null",
@@ -385,10 +386,10 @@ def check_cdn(run: Optional[RunCmd] = None) -> Channel:
          "https://www.google.com/generate_204"])
     if rc == 0 and out.strip().startswith("204"):
         return _result("cdn", STATUS_OK,
-                       f"профиль '{CDN_PROFILE}' через CF "
+                       f"профиль '{name}' через CF "
                        f"(socks 127.0.0.1:{port}, {out.strip()}s)")
     return _result("cdn", STATUS_FAIL,
-                   f"профиль '{CDN_PROFILE}' запущен, но egress не прошёл "
+                   f"профиль '{name}' запущен, но egress не прошёл "
                    f"(http={out.strip() or 'none'})")
 
 

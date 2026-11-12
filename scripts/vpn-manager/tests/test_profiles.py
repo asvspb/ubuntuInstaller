@@ -71,3 +71,38 @@ def test_file_mode_0600_after_write(store):
 def test_empty_name_rejected(store):
     with pytest.raises(profiles.ProfileStoreError, match="name is empty"):
         profiles.add(make_link(name=""), raw_link="vless://x", path=store)
+
+
+# --- CDN profile resolution (no hardcoded name) --------------------------------
+
+
+def test_resolve_cdn_none_when_store_empty(store):
+    assert profiles.resolve_cdn(path=store) is None
+
+
+def test_resolve_cdn_none_without_ws_profile(store):
+    profiles.add(make_link(), raw_link="vless://x", path=store)
+    assert profiles.resolve_cdn(path=store) is None
+
+
+def test_resolve_cdn_prefers_cdn_home(store):
+    profiles.add(make_link(protocol="xray-cdn-ws", name="front-2"),
+                 raw_link="vless://x", path=store)
+    profiles.add(make_link(protocol="xray-cdn-ws", name="cdn-home"),
+                 raw_link="vless://y", path=store)
+    assert profiles.resolve_cdn(path=store) == "cdn-home"
+
+
+def test_resolve_cdn_falls_back_to_cdn_name_then_first(store):
+    profiles.add(make_link(protocol="xray-cdn-ws", name="alpha-cdn"),
+                 raw_link="vless://x", path=store)
+    profiles.add(make_link(protocol="xray-cdn-ws", name="beta"),
+                 raw_link="vless://y", path=store)
+    assert profiles.resolve_cdn(path=store) == "alpha-cdn"
+
+
+def test_resolve_cdn_first_ws_profile_when_no_cdn_marker(store):
+    profiles.add(make_link(name="reality"), raw_link="vless://x", path=store)
+    profiles.add(make_link(protocol="xray-cdn-ws", name="front-a"),
+                 raw_link="vless://y", path=store)
+    assert profiles.resolve_cdn(path=store) == "front-a"

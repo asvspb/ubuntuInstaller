@@ -91,7 +91,8 @@ app = VpnTyper(
 
   vpn scheme awg              # основная схема: AWG + доменный split
                               # (= 'vpn start')
-  vpn scheme cdn              # канал выживания: cdn-home + системный прокси
+  vpn scheme cdn              # канал выживания: CDN-профиль (ws) + системный
+                              # прокси (профиль определяется автоматически)
   vpn scheme proxy <profile>  # vpnm как ОБЩИЙ системный прокси по
                               # заданному протоколу (весь браузер через него)
   vpn scheme private <profile># vpnm как ЧАСТНЫЙ прокси: sysproxy не трогается,
@@ -442,8 +443,10 @@ def scheme_cmd(preset: str = typer.Argument(
 
     vpn scheme awg               — основная схема: AWG-туннель + доменный
                                    split (то же, что 'vpn start')
-    vpn scheme cdn               — канал выживания: up cdn-home + системный
-                                   прокси на его socks (браузер — весь через CF)
+    vpn scheme cdn               — канал выживания: CDN-профиль (ws) +
+                                   системный прокси на его socks (браузер —
+                                   весь через CF); имя профиля определяется
+                                   автоматически (cdn-home → *cdn* → первый ws)
     vpn scheme proxy <profile>   —vpnm как ОБЩИЙ системный прокси: поднять
                                    профиль по заданному протоколу + sysproxy on
     vpn scheme private <profile> — vpnm как ЧАСТНЫЙ прокси: поднять профиль,
@@ -474,15 +477,21 @@ def scheme_cmd(preset: str = typer.Argument(
         return
 
     if preset == "cdn":
+        cdn = profiles.resolve_cdn()
+        if not cdn:
+            _err("CDN-профиля нет — импортируйте ws-ссылку "
+                 "('vpn profile pull -H <host>' или 'vpn profile import')")
+            raise typer.Exit(code=2)
         try:
-            runners.up("cdn-home")
+            runners.up(cdn)
         except (profiles.ProfileStoreError, runners.RunnerError,
                 LinkError) as exc:
-            _err(f"cdn-home: {exc}")
+            _err(f"{cdn}: {exc}")
             raise typer.Exit(code=2)
-        _sync_sysproxy_after("cdn-home", "scheme")
-        _ok("схема cdn активна: браузер через Cloudflare "
-            "(socks 127.0.0.1:2081); exit — 'vpn reset'/'vpn down'")
+        port = int(str(profiles.get(cdn)["socks_port"]))
+        _sync_sysproxy_after(cdn, "scheme")
+        _ok(f"схема cdn активна: профиль '{cdn}' через Cloudflare "
+            f"(socks 127.0.0.1:{port}); exit — 'vpn reset'/'vpn down'")
         return
 
     if preset in ("proxy", "private"):
@@ -985,7 +994,7 @@ def monitor(as_json: bool = typer.Option(
 
     Строка amneziawg показывает схему AWG-split (N зон через туннель,
     GLM/RU напрямую); строка cdn — канал выживания за Cloudflare
-    (ok=работает, warn=резерв 'vpn up cdn-home'). --json для скриптов."""
+    (ok=работает, warn=резерв 'vpn up <cdn-профиль>'). --json для скриптов."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:

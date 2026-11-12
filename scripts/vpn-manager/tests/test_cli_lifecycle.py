@@ -232,6 +232,11 @@ def test_cli_scheme_cdn_and_unknown(monkeypatch):
     monkeypatch.setattr(runners_mod, "set_sysproxy", lambda v: None)
     # isolate from the live state.json: the sysproxy flag must not leak in
     monkeypatch.setattr(runners_mod, "get_sysproxy", lambda *a, **k: False)
+    # CDN-профиль резолвится из store (не хардкод): имя задаёт тест
+    monkeypatch.setattr(profiles, "resolve_cdn", lambda *a, **k: "cdn-home")
+    monkeypatch.setattr(profiles, "get",
+                        lambda name, *a, **k: {"socks_port": 2081,
+                                               "protocol": "xray-cdn-ws"})
     from vpnm import sysproxy as sysproxy_mod
     monkeypatch.setattr(sysproxy_mod, "on", lambda port: None)
     r1 = CliRunner().invoke(cli_app, ["scheme", "cdn"])
@@ -239,3 +244,16 @@ def test_cli_scheme_cdn_and_unknown(monkeypatch):
     assert ups == ["cdn-home"]
     r2 = CliRunner().invoke(cli_app, ["scheme", "wat"])
     assert r2.exit_code == 2
+
+
+def test_cli_scheme_cdn_without_profile_fails(monkeypatch):
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    called = []
+    monkeypatch.setattr(profiles, "resolve_cdn", lambda *a, **k: None)
+    from vpnm import runners as runners_mod
+    monkeypatch.setattr(runners_mod, "up", lambda name: called.append(name))
+    result = CliRunner().invoke(cli_app, ["scheme", "cdn"])
+    assert result.exit_code == 2
+    assert "CDN-профиля нет" in result.output
+    assert called == []

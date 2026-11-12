@@ -128,3 +128,21 @@ def list_profiles(path: Optional[Path] = None) -> List[Dict[str, Any]]:
 
 def get(name: str, path: Optional[Path] = None) -> Dict[str, Any]:
     return _find(_load(path), name)
+
+
+def resolve_cdn(path: Optional[Path] = None) -> Optional[str]:
+    """Имя CDN-профиля (protocol ``xray-cdn-ws``) или ``None``.
+
+    Имя CDN-профиля не должно быть захардкожено: сервер (vds) рендерит
+    CDN-ссылки как ``<name>@<front>: vless://...`` и имя задаёт пользователь.
+    Приоритет: ``cdn-home`` (историческое имя), затем любое имя со ``cdn``,
+    затем первый ws-профиль в порядке store.
+    """
+    ws = [p for p in _load(path) if p.get("protocol") == PROTOCOL_XRAY_WS]
+    for profile in ws:
+        if profile.get("name") == "cdn-home":
+            return "cdn-home"
+    for profile in ws:
+        if "cdn" in str(profile.get("name", "")).lower():
+            return str(profile.get("name"))
+    return str(ws[0].get("name")) if ws else None
