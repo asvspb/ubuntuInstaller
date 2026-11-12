@@ -23,12 +23,27 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from . import profiles, runners
+from .runners import run_cmd
 from .links import LinkError
 
 PROBE_URL = "https://www.google.com/generate_204"
 PROBE_TIMEOUT = 8.0  # seconds per curl measurement
 SAMPLES = 3
 SLEEP_BETWEEN = 1.0  # seconds between consecutive profile up/down cycles
+
+# --- D-SPEED (REQ-20261112, цикл 1): bulk-сэмпл скорости -------------------------
+# GAP, который закрываем: generate_204 (204 байта) быстр даже под TSPU-
+# душением — probe слеп к «тихой деградации» (bulk просел, latency ок).
+# chain кандидатов: speed.cloudflare не отдаёт bulk из некоторых регионов РФ
+# (2026-11-12: прямо 0 байт) — пробуем по порядку, первый с валидным ответом
+BULK_URLS = [
+    "https://speed.cloudflare.com/__down?bytes=1000000",
+    "https://proof.ovh.net/files/1Mb.dat",
+    "https://raw.githubusercontent.com/asvspb/my-first-vds/main/README.md",
+]
+BULK_BYTES = 1000000
+BULK_TIMEOUT = 15.0     # seconds per bulk download
+DEGRADED_MBPS = 2.0     # порог деградации (Мбит/с); tunable via --min-speed
 
 RunCmd = Callable[[List[str]], "tuple[int, str, str]"]
 
@@ -73,6 +88,33 @@ def measure_latency(
     except Exception:  # defensive: a broken probe must never crash the run
         return None
     return parse_time_total(out, _err, rc)
+
+
+def measure_speed(socks_port: int, run: Optional[RunCmd] = None,
+                  timeout: float = BULK_TIMEOUT,
+                  bulk_bytes: int = BULK_BYTES) -> Optional[float]:
+    """Bulk-скорость профиля в Мбит/с (скачивание bulk_bytes через socks).
+
+    None при timeout/ошибке/пустом выводе. curl -w speed_download
+    (байт/с) -> * 8 / 1e6 = Мбит/с.
+    """
+    runner: RunCmd = run or run_cmd
+    for url in BULK_URLS:
+        real_url = url.replace("bytes=1000000", f"bytes={int(bulk_bytes)}")
+        cmd = ["curl", "--socks5-hostname", f"127.0.0.1:{socks_port}",
+               "--max-time", str(int(timeout)), "-sL", "-o", "/dev/null",
+               "-w", "%{speed_download}", real_url]
+        rc, out, _err = runner(cmd)
+        if rc != 0 or not out.strip():
+            continue
+        try:
+            bytes_per_sec = float(out.strip())
+        except ValueError:
+            continue
+        if bytes_per_sec <= 0:
+            continue  # 0 B/s = не скачалось (timeout) — пробуем следующий
+        return round(bytes_per_sec * 8.0 / 1_000_000.0, 1)
+    return None
 
 
 def median(values: List[float]) -> float:
@@ -128,7 +170,10 @@ def probe_profile(
         samples: int = SAMPLES,
         timeout: float = PROBE_TIMEOUT,
         sleep_fn: Callable[[float], None] = time.sleep,
-        note: Optional[Callable[[str], None]] = None) -> ProbeResult:
+        note: Optional[Callable[[str], None]] = None,
+        bulk: bool = True,
+        bulk_bytes: int = BULK_BYTES,
+        min_speed: float = DEGRADED_MBPS) -> ProbeResult:
     """Measure one profile: ensure it is up, take ``samples`` measurements.
 
     Does not stop the profile afterwards — the orchestrator owns the
@@ -143,6 +188,8 @@ def probe_profile(
         ok=False,
         latency_ms=None,
         error="",
+        speed_mbps=None,
+        degraded=False,
         already_active=runners.is_active(name, run),
     )
     try:
@@ -171,6 +218,14 @@ def probe_profile(
         return result
     result["ok"] = True
     result["latency_ms"] = round(median(values) * 1000.0, 1)
+    # D-SPEED: bulk-сэмпл скорости; degraded = latency жив, throughput мёртв
+    if bulk:
+        if note is not None:
+            note(f"замер {name}: bulk-скорость…")
+        speed = measure_speed(socks_port, run=run, bulk_bytes=bulk_bytes)
+        result["speed_mbps"] = speed
+        if speed is not None and speed < min_speed:
+            result["degraded"] = True
     return result
 
 
@@ -179,7 +234,10 @@ def run_probe(
         switch_best: bool = True,
         sleep_between: float = SLEEP_BETWEEN,
         sleep_fn: Callable[[float], None] = time.sleep,
-        note: Optional[Callable[[str], None]] = None) -> Dict[str, object]:
+        note: Optional[Callable[[str], None]] = None,
+        bulk: bool = True,
+        bulk_bytes: int = BULK_BYTES,
+        min_speed: float = DEGRADED_MBPS) -> Dict[str, object]:
     """Probe all profiles in store order and (optionally) switch to the fastest.
 
     Returns a dict with ``rows`` (probe results), ``initial_active``,
@@ -191,7 +249,9 @@ def run_probe(
         name = str(record["name"])
         if note is not None:
             note(f"профиль {name}…")
-        row = probe_profile(name, run=run, sleep_fn=sleep_fn, note=note)
+        row = probe_profile(name, run=run, sleep_fn=sleep_fn, note=note,
+                            bulk=bulk, bulk_bytes=bulk_bytes,
+                            min_speed=min_speed)
         rows.append(row)
         # stop the profile we brought up for measuring, unless it was already
         # running before the probe (the initial active profile stays up)
@@ -204,10 +264,14 @@ def run_probe(
             sleep_fn(sleep_between)
 
     ok_rows = [r for r in rows if r["ok"]]
+    # degraded-семантика: живой по latency, но мёртвый по throughput профиль
+    # выбирается ПОСЛЕДНИМ (только если недеградировавших нет вовсе)
+    healthy_rows = [r for r in ok_rows if not r.get("degraded")]
+    candidates = healthy_rows or ok_rows
     fastest: Optional[str] = None
     switched_to: Optional[str] = None
-    if ok_rows:
-        best = min(ok_rows, key=lambda r: float(r["latency_ms"]))  # type: ignore[arg-type]
+    if candidates:
+        best = min(candidates, key=lambda r: float(r["latency_ms"]))  # type: ignore[arg-type]
         fastest = str(best["name"])
         if switch_best:
             if runners.is_active(fastest, run):
@@ -237,6 +301,7 @@ def run_probe(
         "initial_active": initial_active,
         "fastest": fastest,
         "switched_to": switched_to,
+        "bulk_used": bulk,
     }
 
 

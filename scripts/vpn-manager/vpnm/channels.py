@@ -99,9 +99,20 @@ def check_vpnm(run: Optional[RunCmd] = None) -> Channel:
         return _result("vpnm", STATUS_FAIL,
                        f"профиль '{active}': запрос через "
                        f"127.0.0.1:{port} не прошёл — туннель не отвечает")
-    return _result("vpnm", STATUS_OK,
+    # D-SPEED: bulk-скорость активного профиля (детекция «тихой деградации»:
+    # generate_204 быстр даже под душением — только bulk показывает правду)
+    speed = probe.measure_speed(port, run=run)
+    speed_note = ""
+    status = STATUS_OK
+    if speed is not None and speed < probe.DEGRADED_MBPS:
+        speed_note = f", DEGRADED: bulk {speed} Mbps < {probe.DEGRADED_MBPS}"
+        status = STATUS_FAIL
+    elif speed is not None:
+        speed_note = f", bulk {speed} Mbps"
+    return _result("vpnm", status,
                    f"профиль '{active}' ({record['protocol']}) через "
-                   f"127.0.0.1:{port}, egress {round(latency * 1000.0, 1)} ms")
+                   f"127.0.0.1:{port}, egress {round(latency * 1000.0, 1)} ms"
+                   + speed_note)
 
 
 # --- ZeroTier -------------------------------------------------------------------

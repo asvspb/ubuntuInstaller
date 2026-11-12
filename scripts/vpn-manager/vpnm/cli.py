@@ -1058,7 +1058,15 @@ def _print_channels_section() -> None:
 def probe(switch_best: bool = typer.Option(
         True, "--switch-best/--no-switch",
         help="Switch to the fastest ok profile when done (default); "
-             "--no-switch restores the initially active profile")) -> None:
+             "--no-switch restores the initially active profile"),
+        no_bulk: bool = typer.Option(
+            False, "--no-bulk",
+            help="Не замерять bulk-скорость (быстрый probe; без детекции "
+                 "«тихой деградации» D-SPEED)"),
+        bulk_bytes: int = typer.Option(
+            1000000, "--bulk-bytes", help="Размер bulk-сэмпла, байт"),
+        min_speed: float = typer.Option(
+            2.0, "--min-speed", help="Порог degraded, Мбит/с")) -> None:
     """Замер задержек всех профилей и включение самого быстрого (--no-switch — только замер)."""
     from . import probe as probe_mod
     import sys
@@ -1071,7 +1079,9 @@ def probe(switch_best: bool = typer.Option(
     try:
         outcome = probe_mod.run_probe(switch_best=switch_best,
                                       sleep_fn=time_mod.sleep,
-                                      note=_note)
+                                      note=_note, bulk=not no_bulk,
+                                      bulk_bytes=bulk_bytes,
+                                      min_speed=min_speed)
     except profiles.ProfileStoreError as exc:
         _err(str(exc))
         raise typer.Exit(code=2)
@@ -1099,6 +1109,7 @@ def _latency_of(outcome: dict) -> object:
 
 def _print_probe_table(outcome: dict) -> None:
     """Render the probe results as a rich table (plain text fallback)."""
+    bulk_enabled = bool(outcome.get("bulk_used", True))
     try:
         from rich.console import Console
         from rich.table import Table
@@ -1119,14 +1130,24 @@ def _print_probe_table(outcome: dict) -> None:
     table.add_column("socks port")
     table.add_column("status")
     table.add_column("latency (median of 3)")
+    table.add_column("speed (bulk)")
     table.add_column("error")
     for row in outcome["rows"]:
         status = "ok" if row.get("ok") else "fail"
+        if row.get("degraded"):
+            status = "degraded"
         latency = row.get("latency_ms")
+        speed = row.get("speed_mbps")
+        speed_cell = ("" if not bulk_enabled
+                      else "n/a" if speed is None and row.get("ok")
+                      else "" if speed is None
+                      else f"{speed} Mbps" +
+                           (" (!)" if row.get("degraded") else ""))
         table.add_row(
             str(row.get("name")), str(row.get("protocol")),
             f"127.0.0.1:{row.get('port')}", status,
             "" if latency is None else f"{latency} ms",
+            speed_cell,
             str(row.get("error") or ""))
     Console().print(table)
     fastest = outcome.get("fastest")

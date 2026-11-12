@@ -489,3 +489,119 @@ def test_probe_cli_includes_channels_section(env, monkeypatch):
     assert "── Каналы (vpn/zapret/zerotier/amneziawg) ──" in result.output
     assert "awg (tun): не поднят" in result.output
 
+
+
+# --- D-SPEED: bulk speed, degraded classification (REQ-20261112) -------------------
+
+def test_measure_speed_parses_mbps():
+    from vpnm.probe import measure_speed
+    def run(cmd):
+        assert "speed_download" in " ".join(cmd)
+        assert "bytes=1000000" in " ".join(cmd)
+        return 0, "150000", ""  # байт/с → 1.2 Mbps
+    assert measure_speed(2080, run=run) == 1.2
+
+
+def test_measure_speed_fail_is_none():
+    from vpnm.probe import measure_speed
+    assert measure_speed(2080, run=lambda c: (7, "", "err")) is None
+    assert measure_speed(2080, run=lambda c: (0, "", "")) is None
+    assert measure_speed(2080, run=lambda c: (0, "notanumber", "")) is None
+
+
+def _mk_row(name, latency, speed=None, degraded=False):
+    from vpnm.probe import ProbeResult
+    return ProbeResult(name=name, protocol="x", port=2080, ok=True,
+                       latency_ms=latency, error="", speed_mbps=speed,
+                       degraded=degraded, already_active=False)
+
+
+def test_degraded_profile_not_picked_when_healthy_exists(monkeypatch):
+    """degraded (latency ок, throughput мёртв) выбирается последним."""
+    import vpnm.probe as probe_mod
+    rows_data = [
+        ("slow-healthy", 400.0, 15.0, False),   # медленный но живой
+        ("fast-degraded", 100.0, 0.8, True),    # быстрый latency, мёртвый bulk
+    ]
+    monkeypatch.setattr(probe_mod.profiles, "list_profiles",
+                        lambda: [{"name": n, "protocol": "x", "socks_port": 2080}
+                                 for n, *_ in rows_data])
+    def fake_probe(name, **kw):
+        for n, lat, sp, deg in rows_data:
+            if n == name:
+                return _mk_row(n, lat, sp, deg)
+        raise AssertionError(name)
+    monkeypatch.setattr(probe_mod, "probe_profile", fake_probe)
+    monkeypatch.setattr(probe_mod.runners, "get_active", lambda *a, **k: None)
+    monkeypatch.setattr(probe_mod, "_restore_initial", lambda *a, **k: None)
+    monkeypatch.setattr(probe_mod.runners, "is_active", lambda *a, **k: False)
+    outcome = probe_mod.run_probe(run=lambda c: (0, "", ""), switch_best=True,
+                                  sleep_between=0)
+    assert outcome["fastest"] == "slow-healthy"  # degraded НЕ выбран
+
+
+def test_degraded_picked_when_only_option(monkeypatch):
+    import vpnm.probe as probe_mod
+    rows_data = [("only-degraded", 100.0, 0.5, True)]
+    monkeypatch.setattr(probe_mod.profiles, "list_profiles",
+                        lambda: [{"name": "only-degraded", "protocol": "x",
+                                  "socks_port": 2080}])
+    monkeypatch.setattr(probe_mod, "probe_profile",
+                        lambda name, **kw: _mk_row(*rows_data[0]))
+    monkeypatch.setattr(probe_mod.runners, "get_active", lambda *a, **k: None)
+    monkeypatch.setattr(probe_mod, "_restore_initial", lambda *a, **k: None)
+    monkeypatch.setattr(probe_mod.runners, "is_active", lambda *a, **k: False)
+    outcome = probe_mod.run_probe(run=lambda c: (0, "", ""), switch_best=True,
+                                  sleep_between=0)
+    assert outcome["fastest"] == "only-degraded"
+
+
+def test_cli_no_bulk_disables_bulk_column(monkeypatch):
+    from vpnm import probe as probe_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    kwargs = {}
+    def fake_run_probe(**kw):
+        kwargs.update(kw)
+        return {"rows": [], "initial_active": None, "fastest": "x",
+                "switched_to": None, "bulk_used": kw.get("bulk", True)}
+    monkeypatch.setattr(probe_mod, "run_probe", fake_run_probe)
+    monkeypatch.setattr("vpnm.cli._print_probe_table", lambda o: None)
+    monkeypatch.setattr("vpnm.cli._print_channels_section", lambda: None)
+    result = CliRunner().invoke(cli_app, ["probe", "--no-switch", "--no-bulk"])
+    assert result.exit_code == 0, result.output
+    assert kwargs["bulk"] is False
+    assert kwargs["bulk_bytes"] == 1000000 and kwargs["min_speed"] == 2.0
+
+
+def test_measure_speed_falls_through_dead_urls():
+    """Первый URL мёртв (0 B/s / timeout) → пробуется следующий из chain."""
+    from vpnm.probe import measure_speed
+    urls_seen = []
+    def run(cmd):
+        urls_seen.append([c for c in cmd if c.startswith("http")][0])
+        if "cloudflare" in urls_seen[-1]:
+            return 0, "0", ""          # не скачалось
+        return 0, "50000", ""          # живой: 0.4 Mbps
+    assert measure_speed(2080, run=run) == 0.4
+    assert len(urls_seen) >= 2 and "cloudflare" in urls_seen[0]
+
+
+def test_bulk_url_flag_in_cli(monkeypatch):
+    from vpnm import probe as probe_mod
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    kwargs = {}
+    def fake_run_probe(**kw):
+        kwargs.update(kw)
+        return {"rows": [], "initial_active": None, "fastest": "x",
+                "switched_to": None, "bulk_used": True}
+    monkeypatch.setattr(probe_mod, "run_probe", fake_run_probe)
+    monkeypatch.setattr("vpnm.cli._print_probe_table", lambda o: None)
+    monkeypatch.setattr("vpnm.cli._print_channels_section", lambda: None)
+    r = CliRunner().invoke(cli_app, ["probe", "--no-switch", "--no-bulk",
+                                     "--bulk-bytes", "500000",
+                                     "--min-speed", "5"])
+    assert r.exit_code == 0, r.output
+    assert kwargs["bulk"] is False and kwargs["bulk_bytes"] == 500000
+    assert kwargs["min_speed"] == 5.0
