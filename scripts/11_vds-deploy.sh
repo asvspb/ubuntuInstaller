@@ -4,7 +4,8 @@
 #  Часть ubuntuInstaller
 #
 #  Запускается на ЛОКАЛЬНОЙ машине. Копирует SSH-ключ, синхронизирует репо
-#  vds на сервер (rsync с обязательными excludes, включая gateway/state.json —
+#  vds (VDS_REPO, по умолчанию ~/Dev/my-coding/vds) на сервер (rsync с
+#  обязательными excludes, включая gateway/state.json —
 #  runtime-файл живого сервера), устанавливает Xray + Hysteria2,
 #  при необходимости включает GitHub-mirror, выпускает LE-сертификат
 #  и XHTTP-транспорт (если задан домен), создаёт демо-клиентов
@@ -30,8 +31,9 @@ fail_step() {
     exit 1
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_REPO="/home/asv-spb/Dev/my-coding/vds"
+# Источник vds — рабочий checkout (как в 8_vds-server.sh): переопределяется
+# через VDS_REPO, по умолчанию ~/Dev/my-coding/vds.
+LOCAL_REPO="${VDS_REPO:-/home/asv-spb/Dev/my-coding/vds}"
 INSTALL_DIR="/opt/my-vds"
 ACCEPT_USER="vpn-accept"
 
@@ -75,7 +77,7 @@ REMOTE="${SERVER_USER}@${SERVER_IP}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
 
 [[ -d "$LOCAL_REPO" && -f "$LOCAL_REPO/install.sh" ]] \
-    || err "Локальный репо не найден: $LOCAL_REPO (скачивание с GitHub в этом скрипте не предусмотрено)"
+    || err "Локальный репо не найден: $LOCAL_REPO (задайте VDS_REPO=/путь/к/vds; скачивание с GitHub в этом скрипте не предусмотрено)"
 
 echo ""
 log "План: ${REMOTE}:${INSTALL_DIR} | домен: ${SERVER_DOMAIN:-нет} | протоколы: Xray + Hysteria2"

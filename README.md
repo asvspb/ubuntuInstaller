@@ -29,10 +29,10 @@ ubuntuInstaller/
 │   ├── 5_samsung-printer-driver.sh # Драйверы принтеров Samsung
 │   ├── 6_zerotier-client.sh    # ZeroTier клиент и управление сетями
 │   ├── 7_v2raya-proxy.sh       # v2rayA веб-интерфейс прокси
-│   ├── 8_vds-server.sh         # Инициализация VDS через VDS Orchestrator (репо vds, VDS_REPO=...)
+│   ├── 8_vds-server.sh         # Инициализация VDS через VDS Orchestrator (VDS_REPO)
 │   ├── 9_local-proxy-tunnel.sh # Локальный SOCKS5/Nginx туннель
 │   ├── 10_vpn-manager.sh       # Установка vpn-manager (бинари xray/hysteria, pipx, smoke-тест)
-│   ├── 11_vds-deploy.sh        # One-shot деплой vds на сервер (rsync + install.sh + share-линки)
+│   ├── 11_vds-deploy.sh        # One-shot деплой vds на сервер (VDS_REPO, rsync + install.sh + share-линки)
 │   ├── 12_zapret.sh            # Обход DPI: zapret/nfqws (канал 0, без прокси)
 │   ├── 13_dns-doh.sh           # DoH-резолвер cloudflared (127.0.0.1:5053)
 │   ├── 14_awg-split.sh         # AmneziaWG split-tunnel
@@ -52,8 +52,8 @@ ubuntuInstaller/
 
 > Серверная часть (`vds`) живёт в отдельном репозитории
 > [my-first-vds](https://github.com/asvspb/my-first-vds) — здесь её копии нет
-> (vendored `vds/` удалён 2026-11-12; `8_vds-server.sh` берёт рабочий репозиторий,
-> путь можно переопределить через `VDS_REPO`).
+> (vendored `vds/` удалён 2026-11-12; `8_vds-server.sh` и `11_vds-deploy.sh`
+> берут рабочий репозиторий, путь переопределяется через `VDS_REPO`).
 
 ---
 
