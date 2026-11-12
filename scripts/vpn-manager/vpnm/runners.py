@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import signal
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -266,6 +269,60 @@ def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     return False
 
 
+# --- stale-client adoption ----------------------------------------------------
+
+def _own_stale_pids(port: int, name: str,
+                    run: Optional[RunCmd] = None) -> List[int]:
+    """PIDs listening on ``port`` that are this profile's own orphaned client.
+
+    Whitelist (per project safety rules): the executable must live in BIN_DIR
+    and the command line must reference this profile's generated config.
+    Anything else is not ours and is left untouched.
+    """
+    rc, out, _err = (run or run_cmd)(["ss", "-tlnp", "-H", f"sport = :{port}"])
+    if rc != 0:
+        return []
+    wanted_config = str(GENERATED_DIR / f"{name}.json").encode()
+    pids: List[int] = []
+    for pid_str in re.findall(r"pid=(\d+)", out):
+        pid = int(pid_str)
+        try:
+            exe = os.readlink(f"/proc/{pid}/exe")
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            continue
+        if exe.startswith(str(BIN_DIR)) and wanted_config in cmdline:
+            pids.append(pid)
+    return pids
+
+
+def _terminate_stale(pids: List[int], timeout: float = 2.0) -> None:
+    """SIGTERM own stale clients, then SIGKILL after the grace period."""
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and any(alive(p) for p in pids):
+        time.sleep(0.1)
+    for pid in pids:
+        if alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 # --- lifecycle ----------------------------------------------------------------
 
 def _require_profile(name: str) -> Tuple[Dict[str, object], ProfileLink]:
@@ -280,9 +337,23 @@ def up(name: str, run: Optional[RunCmd] = None) -> Path:
     record, link = _require_profile(name)
     socks_port = int(str(record["socks_port"]))
     if port_in_use(socks_port):
-        raise RunnerError(
-            f"port {socks_port} is already in use; "
-            "stop the conflicting client first (vpn down / vpn switch)")
+        # Desync recovery: the client for this very profile is running but
+        # state lost track of it (e.g. unit stopped out-of-band, state edited,
+        # or an orphan after a crash). Adopt it instead of dead-ending.
+        if is_active(name, run):
+            rc, _out, err = systemctl_stop(name, run)
+            if rc != 0:
+                raise RunnerError(
+                    f"systemctl --user stop {unit_name(name)} failed: "
+                    f"{err.strip()}")
+        else:
+            stale = _own_stale_pids(socks_port, name, run)
+            if not stale:
+                raise RunnerError(
+                    f"port {socks_port} is already in use by another "
+                    "program; stop the conflicting client first "
+                    "(vpn down / vpn switch)")
+            _terminate_stale(stale)
     protocol = str(record["protocol"])
     config_path = write_config(name, link, socks_port)
     bin_path = BIN_DIR / bin_name(protocol)

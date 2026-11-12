@@ -230,6 +230,8 @@ def test_cli_scheme_cdn_and_unknown(monkeypatch):
     monkeypatch.setattr(runners_mod, "up", lambda name: ups.append(name) or "/c")
     monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: "cdn-home")
     monkeypatch.setattr(runners_mod, "set_sysproxy", lambda v: None)
+    # isolate from the live state.json: the sysproxy flag must not leak in
+    monkeypatch.setattr(runners_mod, "get_sysproxy", lambda *a, **k: False)
     from vpnm import sysproxy as sysproxy_mod
     monkeypatch.setattr(sysproxy_mod, "on", lambda port: None)
     r1 = CliRunner().invoke(cli_app, ["scheme", "cdn"])

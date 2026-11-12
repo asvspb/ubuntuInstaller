@@ -412,6 +412,12 @@ def up(name: str) -> None:
         raise typer.Exit(code=2)
     _ok(f"started '{name}' (config: {config_path})")
     _sync_sysproxy_after(name, "up")
+    # Auto-follow only applies when the sysproxy flag is on (clean-boot keeps
+    # it off). A silently started client that no app routes through is the
+    # most common "vpn up ran but VPN does not work" confusion — say it.
+    if not runners.get_sysproxy():
+        _warn("system proxy is OFF — traffic still goes direct; "
+              "run 'vpn sysproxy on' to route apps through this client")
 
 
 @app.command()

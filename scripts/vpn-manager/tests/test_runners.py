@@ -209,8 +209,96 @@ def test_up_port_conflict(env, socks_port):
         sock.bind(("127.0.0.1", socks_port))
         sock.listen(1)
         with pytest.raises(runners.RunnerError, match="already in use"):
-            runners.up("a", run=recording_run([]))
+            runners.up("a", run=not_active_run([]))
     assert runners.get_active() is None
+
+
+def not_active_run(calls):
+    """Recording run whose is-active always reports inactive (state desync)."""
+    def run(cmd):
+        calls.append(list(cmd))
+        if "is-active" in cmd:
+            return 1, "", ""  # state desync: unit not tracked as active
+        return 0, "", ""       # ss etc. succeed but find nothing
+    return run
+
+
+def hold_port(port):
+    """Bind+listen a socket on 127.0.0.1:port (context manager)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", port))
+    sock.listen(1)
+    return sock
+
+
+def test_up_port_conflict_foreign_holder(env, monkeypatch, socks_port):
+    """Non-own holder on the port (unit not active, no stale pids): the
+    dead-end error stays — never kill a process we did not whitelist."""
+    seed_profiles(["a"], {"a": socks_port})
+    make_fake_bin(env)
+    monkeypatch.setattr(runners, "_own_stale_pids", lambda *a, **k: [])
+    with hold_port(socks_port):
+        with pytest.raises(runners.RunnerError, match="another program"):
+            runners.up("a", run=not_active_run([]))
+    assert runners.get_active() is None
+
+
+def test_up_adopts_own_stale_client(env, monkeypatch, socks_port):
+    """Regression 2026-11-11: own profile client alive (orphan after desync)
+    blocked `vpn up` with 'port in use' instead of being adopted."""
+    seed_profiles(["a"], {"a": socks_port})
+    make_fake_bin(env)
+    terminated = []
+    monkeypatch.setattr(runners, "_own_stale_pids",
+                        lambda *a, **k: [4242])
+    monkeypatch.setattr(runners, "_terminate_stale",
+                        lambda pids, **k: terminated.extend(pids))
+    with hold_port(socks_port):
+        config_path = runners.up("a", run=not_active_run([]))
+    assert terminated == [4242]
+    assert config_path == env["GENERATED_DIR"] / "a.json"
+    assert runners.get_active() == "a"
+
+
+def test_up_adopts_when_unit_tracked_active(env, monkeypatch, socks_port):
+    """Unit reports active but state lost track: restart cleanly, no kill."""
+    seed_profiles(["a"], {"a": socks_port})
+    make_fake_bin(env)
+    monkeypatch.setattr(runners, "_own_stale_pids",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("must not inspect pids")))
+    calls = []
+
+    def run(cmd):
+        calls.append(list(cmd))
+        if "is-active" in cmd:
+            return 0, "active\n", ""
+        return 0, "", ""
+
+    with hold_port(socks_port):
+        runners.up("a", run=run)
+    assert ["systemctl", "--user", "stop", "vpnm-a.service"] in calls
+    assert ["systemctl", "--user", "start", "vpnm-a.service"] in calls
+    assert runners.get_active() == "a"
+
+
+def test_own_stale_pid_whitelist(env, monkeypatch, socks_port):
+    """_own_stale_pids only accepts BIN_DIR binaries with our config path."""
+    def run(cmd):
+        assert cmd[0] == "ss"
+        return 0, ('LISTEN 127.0.0.1:%d users:(("xray",pid=334259,fd=3))'
+                   % socks_port), ""
+
+    monkeypatch.setattr(runners, "run_cmd", run)
+    good = str(env["GENERATED_DIR"] / "a.json").encode()
+    monkeypatch.setattr(Path, "read_bytes", lambda self: good)
+
+    monkeypatch.setattr(os, "readlink", lambda pid: str(env["BIN_DIR"] / "xray"))
+    assert runners._own_stale_pids(socks_port, "a") == [334259]
+
+    monkeypatch.setattr(os, "readlink", lambda pid: "/usr/bin/evil")
+    assert runners._own_stale_pids(socks_port, "a") == []
 
 
 def test_down_stops_and_clears_state(env):

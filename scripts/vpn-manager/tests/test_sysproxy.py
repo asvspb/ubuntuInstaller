@@ -101,7 +101,8 @@ def test_off_reset_failure_is_warn_not_fatal():
         return 0, "", ""
 
     sysproxy.off(run=run, warn=warned.append)
-    assert len(warned) == 6
+    # 6 http/https/ftp keys + 2 socks keys (host, port)
+    assert len(warned) == 8
 
 
 def test_status_reads_three_values():
@@ -125,3 +126,48 @@ def test_failing_gsettings_raises():
 
     with pytest.raises(sysproxy.SysproxyError, match="dconf error"):
         sysproxy.on(2080, run=run)
+
+
+def test_off_resets_socks_keys_too():
+    rec = recorder()
+    """Regression 2026-11-11: off() left socks host/port set -> half-configured
+    proxy (values present, mode none) that looked enabled but routed direct."""
+    import vpnm.sysproxy as sp
+    sp.off(run=rec)
+    assert len([c for c in rec.commands
+                if c[:2] == ["gsettings", "reset"] and c[2] == sp.SCHEMA_SOCKS
+                and c[3] in ("host", "port")]) == 2
+    assert rec.commands[-1][:4] == ["gsettings", "set", sp.SCHEMA, "mode"]
+
+
+def test_on_merges_canonical_ignore_hosts():
+    """sysproxy.on(): GLM-кластер и RU попадают в ignore-hosts идемпотентно,
+    пользовательские записи сохраняются, повторный вызов ничего не меняет."""
+    calls = []
+    def run(cmd):
+        calls.append(cmd)
+        joined = " ".join(cmd)
+        if joined == "gsettings get org.gnome.system.proxy ignore-hosts":
+            return 0, "['localhost', 'mycustom.example']", ""
+        if joined.startswith("gsettings set org.gnome.system.proxy ignore-hosts"):
+            return 0, "", ""
+        return 0, "", ""
+    sysproxy.on(2083, run=run)
+    set_cmds = [c for c in calls
+                if "ignore-hosts" in c and c[:2] == ["gsettings", "set"]]
+    assert len(set_cmds) == 1
+    rendered = set_cmds[0][-1]
+    assert "'z.ai'" in rendered and "'bigmodel.cn'" in rendered
+    assert "'pypi.org'" in rendered and "'ya.ru'" in rendered
+    assert "'mycustom.example'" in rendered  # пользовательское сохранено
+    # идемпотентность: второй on() не пишет ignore-hosts
+    calls.clear()
+    def run2(cmd):
+        joined = " ".join(cmd)
+        if joined == "gsettings get org.gnome.system.proxy ignore-hosts":
+            cur = sysproxy.IGNORE_HOSTS_CANONICAL + ["mycustom.example"]
+            return 0, "[" + ", ".join(f"'{d}'" for d in cur) + "]", ""
+        return 0, "", ""
+    sysproxy.on(2083, run=run2)
+    assert not [c for c in calls
+                if "ignore-hosts" in c and c[:2] == ["gsettings", "set"]]
