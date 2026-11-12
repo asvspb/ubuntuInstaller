@@ -31,17 +31,19 @@ BRAVE_CLEAN="${BRAVE_CLEAN:-0}"            # по желанию
 DRY_RUN="${DRY_RUN:-0}"
 
 # Новые опции для расширенной безопасной очистки (по умолчанию включены только безопасные шаги)
-CLEAN_CHROME_MODEL="${CLEAN_CHROME_MODEL:-1}"         # ~/.config/google-chrome/OptGuideOnDeviceModel -> корзина
+CLEAN_CHROME_MODEL="${CLEAN_CHROME_MODEL:-1}"         # ~/.config/google-chrome/OptGuideOnDeviceModel -> корзина / rm
 CLEAN_VSCODE_CACHES="${CLEAN_VSCODE_CACHES:-1}"       # ~/.config/Code/{WebStorage,Cache,CachedData,CachedExtensionVSIXs}
 CLEAN_PYPPETEER_SHARE="${CLEAN_PYPPETEER_SHARE:-1}"   # ~/.local/share/pyppeteer
 EMPTY_TRASH="${EMPTY_TRASH:-1}"                        # очистить корзину в конце
 JOURNALCTL_VACUUM="${JOURNALCTL_VACUUM:-1}"            # попытаться сжать журналы (sudo -n)
 JOURNALCTL_VACUUM_SIZE="${JOURNALCTL_VACUUM_SIZE:-200M}"
+JOURNALCTL_CLEAN_OLD_MIDS="${JOURNALCTL_CLEAN_OLD_MIDS:-1}" # удалять журналы неактивных machine-id
 SNAP_CLEAN_DISABLED="${SNAP_CLEAN_DISABLED:-1}"        # удалить отключённые ревизии snap (sudo -n)
 UNINSTALL_ML="${UNINSTALL_ML:-0}"                      # Удалить тяжёлые ML-пакеты из pip (torch/nvidia/...) — ТОЛЬКО по явному включению
 VACUUM_SQLITE="${VACUUM_SQLITE:-1}"
 SQLITE_DB_PATHS="${SQLITE_DB_PATHS:-$HOME/Dev/my-coding/warandpeace/database/articles.db}"
-ALLOW_RM="${ALLOW_RM:-0}"                              # если нет gio и нужно удалять без корзины (по умолчанию — безопасно: пропуск)
+ALLOW_RM="${ALLOW_RM:-1}"                              # если gio trash недоступен/ошибается под sudo, удалять через rm -rf
+SNAP_CHROMIUM_CACHE_CLEAN="${SNAP_CHROMIUM_CACHE_CLEAN:-1}" # чистить кэш ~/snap/chromium
 
 # Дополнительные (опциональные) системные чистки
 APT_CLEAN="${APT_CLEAN:-1}"
@@ -65,6 +67,7 @@ SNAP_RETAIN_N="${SNAP_RETAIN_N:-2}"
 NPM_CACHE_VERIFY="${NPM_CACHE_VERIFY:-0}"
 NPM_CACHE_CLEAN="${NPM_CACHE_CLEAN:-1}"
 CLEAN_NPM_CACHE_DIR="${CLEAN_NPM_CACHE_DIR:-1}"
+PNPM_STORE_PRUNE="${PNPM_STORE_PRUNE:-1}"
 
 FLATPAK_UNUSED="${FLATPAK_UNUSED:-1}"
 
@@ -74,7 +77,7 @@ DOCKER_PRUNE_VOLUMES="${DOCKER_PRUNE_VOLUMES:-0}"
 DOCKER_SAFE_PRUNE="${DOCKER_SAFE_PRUNE:-1}"
 DOCKER_PRUNE_CONTAINERS_UNTIL="${DOCKER_PRUNE_CONTAINERS_UNTIL:-48h}"
 DOCKER_PRUNE_IMAGES_UNTIL="${DOCKER_PRUNE_IMAGES_UNTIL:-168h}"
-DOCKER_PRUNE_BUILDER_UNTIL="${DOCKER_PRUNE_BUILDER_UNTIL:-168h}"
+DOCKER_PRUNE_BUILDER_UNTIL="${DOCKER_PRUNE_BUILDER_UNTIL:-48h}"
 DOCKER_DEEP_PRUNE="${DOCKER_DEEP_PRUNE:-0}"
 DOCKER_DEEP_PRUNE_UNTIL="${DOCKER_DEEP_PRUNE_UNTIL:-336h}"
 
@@ -106,20 +109,32 @@ fi
 proc_running() { pgrep -x "$1" >/dev/null 2>&1; }
 
 trash_path() {
-  # безопасное перемещение в корзину, либо пропуск, если нет gio
+  # безопасное перемещение в корзину (через SUDO_USER), либо rm -rf если корзина недоступна
   local p="$1"
   [ -e "$p" ] || { return 0; }
   if [ "$DRY_RUN" = "1" ]; then
     log "DRY-RUN: переместил бы в корзину: $p"
     return 0
   fi
+
+  local trashed=0
   if command -v gio >/dev/null 2>&1; then
-    gio trash "$p" || log "warn: не удалось переместить в корзину: $p"
-  else
+    if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+      if sudo -u "$SUDO_USER" gio trash "$p" >/dev/null 2>&1; then
+        trashed=1
+      fi
+    else
+      if gio trash "$p" >/dev/null 2>&1; then
+        trashed=1
+      fi
+    fi
+  fi
+
+  if [ "$trashed" -eq 0 ]; then
     if [ "$ALLOW_RM" = "1" ]; then
       rm -rf -- "$p" || true
     else
-      log "skip: нет gio (корзина), ALLOW_RM!=1, пропускаю $p"
+      log "warn: не удалось переместить в корзину: $p (ALLOW_RM=0, пропускаю)"
     fi
   fi
 }
@@ -147,10 +162,13 @@ empty_trash() {
     log "DRY-RUN: очистил бы корзину"
     return 0
   fi
-  if command -v gio >/dev/null 2>&1; then
-    gio trash --empty || true
-  else
-    log "skip: нет gio для очистки корзины"
+  if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+    sudo -u "$SUDO_USER" gio trash --empty >/dev/null 2>&1 || true
+  elif command -v gio >/dev/null 2>&1; then
+    gio trash --empty >/dev/null 2>&1 || true
+  fi
+  if [ -d "$HOME/.local/share/Trash" ]; then
+    rm -rf "$HOME/.local/share/Trash/files"/* "$HOME/.local/share/Trash/info"/* 2>/dev/null || true
   fi
 }
 
@@ -330,6 +348,44 @@ clean_copilot_cache() {
   fi
 }
 
+clean_playwright_all() {
+  [ "$PLAYWRIGHT_CLEAN" = "1" ] || return 0
+  for d in "ms-playwright" "ms-playwright-mcp" "ms-playwright-go" "puppeteer"; do
+    local p="$CACHE_DIR/$d"
+    if [ -d "$p" ]; then
+      local sz
+      sz=$(size_of "$p")
+      log "Очистка $d ($sz): $p"
+      purge_dir_contents "$p" || true
+    fi
+  done
+  if [ -d "$HOME/.chromium-browser-snapshots" ]; then
+    local sz
+    sz=$(size_of "$HOME/.chromium-browser-snapshots")
+    log "Очистка Chromium snapshots ($sz): $HOME/.chromium-browser-snapshots"
+    if [ "$DRY_RUN" = "1" ]; then
+      log "DRY-RUN: rm -rf $HOME/.chromium-browser-snapshots/*"
+    else
+      find "$HOME/.chromium-browser-snapshots" -mindepth 1 -delete 2>/dev/null || true
+    fi
+  fi
+}
+
+clean_snap_chromium_cache() {
+  [ "$SNAP_CHROMIUM_CACHE_CLEAN" = "1" ] || return 0
+  local base="$HOME/snap/chromium/common/chromium"
+  [ -d "$base" ] || return 0
+  if proc_running chromium; then
+    log "skip: Chromium (snap) запущен — пропускаю кэш"
+    return 0
+  fi
+  log "Очистка кэшей Chromium (Snap)..."
+  find "$base" -type d \( -name "Cache" -o -name "Code Cache" -o -name "GPUCache" -o -name "DawnCache" -o -name "ShaderCache" \) -exec rm -rf {} + 2>/dev/null || true
+  if [ -d "$HOME/snap/chromium/common/.cache" ]; then
+    rm -rf "$HOME/snap/chromium/common/.cache"/* 2>/dev/null || true
+  fi
+}
+
 show_home_summary() {
   echo "=============================================="
   echo "  СВОДКА ПО РАЗМЕРАМ В ДОМАШНЕЙ ДИРЕКТОРИИ"
@@ -353,13 +409,13 @@ show_home_summary() {
   echo "--- .nvm версии ---"
   du -sh "$HOME/.nvm/versions/node"/*/ 2>/dev/null | sort -rh || true
 
-  echo "--- ИТОГО .nvm / .npm ---"
-  du -sh "$HOME/.nvm" "$HOME/.npm" 2>/dev/null || true
+  echo "--- ИТОГО .nvm / .npm / pnpm ---"
+  du -sh "$HOME/.nvm" "$HOME/.npm" "$HOME/.local/share/pnpm" 2>/dev/null || true
 
   # --- Собираем данные для таблиц ---
   local s_chrome_cfg=0 s_chrome_cache=0 s_brave_cfg=0 s_brave_cache=0 s_vscode_cfg=0
   local s_codeium=0 s_cline=0 s_copilot_cache=0 s_copilot_cfg=0 s_qwen=0
-  local s_nvm=0 s_npm_cache=0 s_pip=0 s_poetry_cache=0 s_poetry_local=0 s_uv_cache=0 s_uv_local=0
+  local s_nvm=0 s_npm_cache=0 s_pnpm=0 s_pip=0 s_poetry_cache=0 s_poetry_local=0 s_uv_cache=0 s_uv_local=0
   local s_playwright=0 s_playwright_go=0 s_puppeteer=0 s_chromium_snap=0
   local s_snap_chromium=0 s_snap_firefox=0 s_snap_telegram=0 s_snap_obsidian=0
   local s_kilo=0 s_acli=0 s_backgrounds=0 s_vs_ext=0
@@ -379,6 +435,7 @@ show_home_summary() {
   s_qwen=$(_sz "$HOME/.qwen")
   s_nvm=$(_sz "$HOME/.nvm")
   s_npm_cache=$(_sz "$HOME/.npm")
+  s_pnpm=$(_sz "$HOME/.local/share/pnpm")
   s_pip=$(_sz "$HOME/.cache/pip")
   s_poetry_cache=$(_sz "$HOME/.cache/pypoetry")
   s_poetry_local=$(_sz "$HOME/.local/share/pypoetry")
@@ -400,7 +457,7 @@ show_home_summary() {
   local chrome_total=$((s_chrome_cfg + s_chrome_cache))
   local brave_total=$((s_brave_cfg + s_brave_cache))
   local ai_total=$((s_codeium + s_cline + s_copilot_cache + s_copilot_cfg + s_qwen))
-  local node_total=$((s_nvm + s_npm_cache))
+  local node_total=$((s_nvm + s_npm_cache + s_pnpm))
   local poetry_total=$((s_poetry_cache + s_poetry_local))
   local uv_total=$((s_uv_cache + s_uv_local))
   local playwright_total=$((s_playwright + s_playwright_go))
@@ -429,6 +486,7 @@ show_home_summary() {
   printf "%-35s %10s MB  %s\n" "uv" "$uv_total" ".cache + .local"
   printf "%-35s %10s MB  %s\n" "Copilot" "$copilot_total" ".cache + .copilot"
   printf "%-35s %10s MB  %s\n" "Snap: Obsidian" "$s_snap_obsidian" "snap/obsidian/"
+  printf "%-35s %10s MB  %s\n" "pnpm store" "$s_pnpm" ".local/share/pnpm/"
   printf "%-35s %10s MB  %s\n" "Kilo" "$s_kilo" ".local/share/"
   printf "%-35s %10s MB  %s\n" "acli" "$s_acli" ".local/share/acli/"
   printf "%-35s %10s MB  %s\n" "Backgrounds" "$s_backgrounds" ".local/share/backgrounds/"
@@ -442,7 +500,7 @@ show_home_summary() {
   printf "%-35s %10s MB  %s\n" "Browsers" "$((chrome_total + brave_total + s_snap_chromium + s_snap_firefox))" "Chrome, Brave, Chromium snap, Firefox snap"
   printf "%-35s %10s MB  %s\n" "Dev Tools" "$((s_vscode_cfg + s_vs_ext))" "VS Code + extensions"
   printf "%-35s %10s MB  %s\n" "AI Coding Assistants" "$ai_total" "Codeium, Cline, Copilot, Qwen"
-  printf "%-35s %10s MB  %s\n" "Node.js Tooling" "$node_total" "nvm + npm cache"
+  printf "%-35s %10s MB  %s\n" "Node.js Tooling" "$node_total" "nvm + npm cache + pnpm store"
   printf "%-35s %10s MB  %s\n" "Python Tooling" "$((s_pip + poetry_total + uv_total))" "pip + poetry + uv"
   printf "%-35s %10s MB  %s\n" "Browser Automation" "$((playwright_total + s_puppeteer))" "Playwright + Puppeteer"
   printf "%-35s %10s MB  %s\n" "Snap Apps" "$snap_total" "Chromium, Telegram, Firefox, Obsidian"
@@ -468,12 +526,39 @@ show_home_summary() {
 
 vacuum_journal() {
   [ "$JOURNALCTL_VACUUM" = "1" ] || return 0
-  if sudo -n true 2>/dev/null; then
+  if sudo -n true 2>/dev/null || [ "$(id -u)" -eq 0 ]; then
     if [ "$DRY_RUN" = "1" ]; then
       log "DRY-RUN: sudo journalctl --vacuum-size=$JOURNALCTL_VACUUM_SIZE"
     else
       log "journalctl vacuum до $JOURNALCTL_VACUUM_SIZE"
-      sudo journalctl --vacuum-size="$JOURNALCTL_VACUUM_SIZE" || log "warn: journalctl vacuum не удался"
+      journalctl --vacuum-size="$JOURNALCTL_VACUUM_SIZE" || sudo journalctl --vacuum-size="$JOURNALCTL_VACUUM_SIZE" || log "warn: journalctl vacuum не удался"
+    fi
+
+    # Очистка неактивных каталогов machine-id в /var/log/journal
+    if [ "$JOURNALCTL_CLEAN_OLD_MIDS" = "1" ] && [ -f "/etc/machine-id" ] && [ -d "/var/log/journal" ]; then
+      local current_mid
+      current_mid=$(tr -d '[:space:]' < /etc/machine-id 2>/dev/null || true)
+      if [ -n "$current_mid" ]; then
+        for jdir in /var/log/journal/*; do
+          [ -d "$jdir" ] || continue
+          local bname
+          bname=$(basename "$jdir")
+          if [ "$bname" != "$current_mid" ]; then
+            local sz
+            sz=$(size_of "$jdir")
+            if [ "$DRY_RUN" = "1" ]; then
+              log "DRY-RUN: удалил бы старый журнал machine-id $bname ($sz)"
+            else
+              log "Удаление старого журнала machine-id $bname ($sz)"
+              if [ "$(id -u)" -eq 0 ]; then
+                rm -rf "$jdir" || true
+              else
+                sudo rm -rf "$jdir" || true
+              fi
+            fi
+          fi
+        done
+      fi
     fi
   else
     log "skip: требуется sudo для journalctl vacuum"
@@ -657,12 +742,42 @@ clean_npm_cache_dir() {
   fi
 }
 
+pnpm_store_prune() {
+  [ "$PNPM_STORE_PRUNE" = "1" ] || return 0
+
+  local pnpm_cmd=""
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm_cmd="pnpm"
+  elif [ -d "$HOME/.nvm/versions/node" ]; then
+    local latest_node
+    latest_node=$(ls -t "$HOME/.nvm/versions/node" 2>/dev/null | head -1 || true)
+    if [ -n "$latest_node" ] && [ -x "$HOME/.nvm/versions/node/$latest_node/bin/pnpm" ]; then
+      pnpm_cmd="$HOME/.nvm/versions/node/$latest_node/bin/pnpm"
+    fi
+  fi
+
+  if [ -n "$pnpm_cmd" ]; then
+    log "Очистка неиспользуемых пакетов pnpm (store prune)..."
+    if [ "$DRY_RUN" = "1" ]; then
+      log "DRY-RUN: pnpm store prune"
+    else
+      if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+        sudo -u "$SUDO_USER" HOME="$HOME" "$pnpm_cmd" store prune || true
+      else
+        "$pnpm_cmd" store prune || true
+      fi
+    fi
+  else
+    log "skip: pnpm не найден"
+  fi
+}
+
 clean_old_node_modules() {
   [ "$CLEAN_OLD_NODE_MODULES" = "1" ] || return 0
   log "Поиск и удаление старых node_modules (>30 дней без изменений) в ~/Dev..."
   if [ -d "$HOME/Dev" ]; then
     if [ "$DRY_RUN" = "1" ]; then
-      find "$HOME/Dev" -type d -name "node_modules" -prune -mtime +30 -exec echo "DRY-RUN: удалил бы {}" \;
+      find "$HOME/Dev" -type d -name "node_modules" -prune -mtime +30 -exec echo "DRY-RUN: удалил бы {}" \; 2>/dev/null || true
     else
       find "$HOME/Dev" -type d -name "node_modules" -prune -mtime +30 -exec rm -rf {} + 2>/dev/null || true
     fi
@@ -710,10 +825,12 @@ docker_prune_safe() {
   if [ "$DRY_RUN" = "1" ]; then
     log "DRY-RUN: docker container prune -f --filter until=${cont_until}"
     log "DRY-RUN: docker image prune -f"
+    log "DRY-RUN: docker builder prune -f"
     log "DRY-RUN: docker builder prune -af --filter until=${builder_until}"
   else
     docker container prune -f --filter "until=${cont_until}" >/dev/null 2>&1 || true
     docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || true
     docker builder prune -af --filter "until=${builder_until}" >/dev/null 2>&1 || true
   fi
 
@@ -775,8 +892,7 @@ log "Свободно ДО: $(printf "%s" "$BEFORE_FREE" | human)"
 clean_pip
 clean_huggingface
 [ "$CHROME_CLEAN" = "1" ]     && clean_dir_if_idle "google-chrome" "$CACHE_DIR/google-chrome" "chrome"
-[ "$PUPPETEER_CLEAN" = "1" ]  && clean_dir_if_idle "puppeteer"     "$CACHE_DIR/puppeteer"     ""
-[ "$PLAYWRIGHT_CLEAN" = "1" ] && clean_dir_if_idle "ms-playwright-go" "$CACHE_DIR/ms-playwright-go" ""
+clean_playwright_all
 [ "$THUMBNAILS_CLEAN" = "1" ] && purge_dir_contents "$CACHE_DIR/thumbnails"
 [ "$MESA_CLEAN" = "1" ]       && purge_dir_contents "$CACHE_DIR/mesa_shader_cache"
 [ "$UV_CLEAN" = "1" ]         && purge_dir_contents "$CACHE_DIR/uv"
@@ -787,6 +903,7 @@ clean_chrome_model
 clean_vscode_caches
 clean_pyppeteer_share
 clean_chrome_profile_cache
+clean_snap_chromium_cache
 
 # Очистка Node.js, Chrome cache, Poetry cache, Copilot cache
 # clean_old_node_versions  # отключено
@@ -810,6 +927,7 @@ clean_vartmp_all
 # Пакетные менеджеры/платформы (опционально)
 npm_cache_ops
 clean_npm_cache_dir
+pnpm_store_prune
 flatpak_unused
 # Сначала безопасная чистка (тонкая), затем — опциональный тотальный prune
 docker_prune_safe

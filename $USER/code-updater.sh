@@ -81,6 +81,16 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 log_message "INFO" "Node.js version after updates: $(node --version)"
 
+# Enable and update pnpm via Corepack
+log_message "INFO" "Enabling and updating pnpm via Corepack..."
+if command -v corepack >/dev/null 2>&1; then
+    corepack enable pnpm || true
+    corepack prepare pnpm@latest --activate 2>/dev/null || true
+    log_message "SUCCESS" "pnpm is active: $(pnpm -v 2>/dev/null || echo 'enabled')"
+else
+    log_message "WARN" "Corepack not found, skipping pnpm auto-activation"
+fi
+
 log_message "HEADER" "Updating CODE CLI's..."
 log_message "INFO" "Installing/Updating CODE CLI tools..."
 

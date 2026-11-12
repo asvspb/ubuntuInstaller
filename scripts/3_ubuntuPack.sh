@@ -97,6 +97,8 @@ export NVM_DIR="$HOME/.nvm"
 nvm install --lts || true
 nvm use --lts || true
 nvm alias default 'lts/*' || true
+corepack enable pnpm || true
+success "Node.js LTS и pnpm успешно настроены!"
 
 info "4. Установка глобальных AI CLI утилит через npm"
 npm install -g @google/gemini-cli@latest cline@latest opencode-ai@latest 2>/dev/null || true
