@@ -2,7 +2,11 @@
 
 > Универсальный Python CLI для управления VDS/VPS на Ubuntu 24.04
 
-Версия: **3.0** | Входит в [ubuntuInstaller](../) как модуль `vds/`
+Версия: **3.0** | Отдельный репозиторий
+[my-first-vds](https://github.com/asvspb/my-first-vds) — серверная часть связки
+с ubuntuInstaller. Vendored-копии в этом репозитории нет: деплой
+(`scripts/8_vds-server.sh`, `scripts/11_vds-deploy.sh`) берёт рабочий checkout
+(`VDS_REPO`, по умолчанию `~/Dev/my-coding/vds`).
 
 ## Что это
 
@@ -15,7 +19,7 @@ VDS Orchestrator — единый инструмент инициализаци�
 - Системный dashboard: CPU, RAM, диск, Docker-контейнеры
 - Первичная настройка: пользователь, SSH, UFW, Docker, Swap
 
-## Структура модуля
+## Структура репозитория vds
 
 ```
 vds/
@@ -47,7 +51,9 @@ bash ~/Dev/ubuntuInstaller/scripts/8_vds-server.sh
 Скрипт автоматически:
 1. Запросит IP и пользователя сервера
 2. Скопирует SSH-ключ (попросит пароль один раз)
-3. Синхронизирует локальные исходники `vds/` на сервер через rsync
+3. Синхронизирует рабочий репозиторий `vds` (`VDS_REPO`, по умолчанию
+   `~/Dev/my-coding/vds`) на сервер через rsync; `gateway/state.json` живого
+   сервера не перезаписывается (exclude)
 4. Запустит `install.sh` на сервере
 5. Откроет интерактивное меню `vds`
 

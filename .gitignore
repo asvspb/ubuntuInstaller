@@ -42,13 +42,6 @@ node_modules/
 .vscode
 .kilo
 
-# VDS Python artifacts
-vds/venv/
-vds/__pycache__/
-vds/**/__pycache__/
-vds/**/*.pyc
-vds/.kilo/
-
 # Secrets in env files — never track
 *.env
 .env

@@ -16,8 +16,24 @@ log()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 err()  { echo -e "${RED}[x]${NC} $*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VDS_DIR="$(dirname "$SCRIPT_DIR")/vds"
+# Источник VDS — рабочий репозиторий, как в 11_vds-deploy.sh. Vendored-копия
+# ubuntuInstaller/vds/ удалена (2026-11-12): она отставала (v2, без gateway/
+# xray/hysteria2/acme/amneziawg) и деплоила сервер без протоколов.
+VDS_DIR="${VDS_REPO:-/home/asv-spb/Dev/my-coding/vds}"
+
+# gateway/state.json — runtime-файл живого сервера: rsync его не перезаписывает
+# (тот же набор excludes, что в 11_vds-deploy.sh).
+RSYNC_EXCLUDES=(
+    --exclude='.git'
+    --exclude='.zcode'
+    --exclude='venv'
+    --exclude='__pycache__'
+    --exclude='.pytest_cache'
+    --exclude='*.pyc'
+    --exclude='gateway/state.json'
+    --exclude='upload-ssh-cert.sh'
+    --exclude='xhttp.log'
+)
 
 echo -e "${BOLD}${CYAN}=== VDS Server Setup ===${NC}"
 echo ""
@@ -48,17 +64,17 @@ log "SSH-ключ скопирован."
 echo ""
 
 # ── 3. Копирование VDS-проекта или скачивание ─────────────────────────────────
-if [[ -d "$VDS_DIR" && -f "$VDS_DIR/requirements.txt" ]]; then
+if [[ -d "$VDS_DIR" && -f "$VDS_DIR/install.sh" ]]; then
     log "Найден локальный VDS-проект: $VDS_DIR"
     log "Копирование на сервер ${REMOTE}:${INSTALL_DIR} ..."
     ssh -o StrictHostKeyChecking=accept-new "$REMOTE" "mkdir -p ${INSTALL_DIR}"
-    rsync -az --exclude='.git' --exclude='venv' \
-        --exclude='__pycache__' --exclude='*.pyc' --exclude='.kilo' \
+    rsync -az "${RSYNC_EXCLUDES[@]}" \
         "$VDS_DIR/" "${REMOTE}:${INSTALL_DIR}/"
     log "Файлы скопированы."
     INSTALL_CMD="INSTALL_DIR=${INSTALL_DIR} bash ${INSTALL_DIR}/install.sh"
 else
-    warn "Локальный VDS-проект не найден — скачиваем с GitHub."
+    warn "Локальный VDS-проект не найден ($VDS_DIR) — скачиваем с GitHub."
+    warn "Для локального деплоя: VDS_REPO=/путь/к/vds bash $0"
     INSTALL_CMD="curl -fsSL https://raw.githubusercontent.com/asvspb/my-first-vds/main/install.sh | bash"
 fi
 

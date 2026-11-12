@@ -9,8 +9,10 @@
 
 `vpnm` — CLI + интерактивное TUI-меню для управления VPN-профилями на клиенте:
 
-- **Xray VLESS Reality** (TCP 443) и **Xray VLESS XHTTP** (TLS + xhttp)
-- **Hysteria2** (QUIC, UDP 443)
+- **Xray VLESS Reality** (TCP 443), **Xray VLESS XHTTP** (TLS + xhttp) и
+  **Xray VLESS WS за CDN/Cloudflare** (канал выживания)
+- **Hysteria2** (QUIC, UDP 443), включая port hopping (`mport=`) и
+  obfs salamander (`obfs=`) — серверные фичи vds (SPEC-20261112 WP-1)
 
 Каждый профиль хранит share-ссылку (содержит приватные креды — файлы 0600),
 генерирует клиентский конфиг и запускается как systemd user-unit
@@ -25,15 +27,21 @@ scripts/vpn-manager/
 │   ├── __main__.py        # точка входа: python3 -m vpnm
 │   ├── cli.py             # typer-команды
 │   ├── tui.py             # интерактивное меню (questionary), `vpn` без аргументов
-│   ├── links.py           # парсер share-ссылок (vless://, hysteria2://)
-│   ├── profiles.py        # store профилей (0600)
+│   ├── links.py           # парсер share-ссылок (vless://, hysteria2://), валидация mport/obfs
+│   ├── profiles.py        # store профилей (0600), resolve_cdn (имя CDN-профиля)
 │   ├── settings.py        # settings.json (ssh-хост для pull)
 │   ├── runners.py         # генерация конфигов, systemd user units, up/down/switch
-│   ├── xclient.py         # генератор конфигов xray/hysteria
+│   ├── xclient.py         # генератор конфигов xray/hysteria (hop, obfs)
 │   ├── bins.py            # установщик бинарей xray-core / hysteria (с зеркалами)
 │   ├── pull.py            # импорт ссылок с сервера по ssh
+│   ├── probe.py           # замер задержек + bulk-скорость (D-SPEED), выбор быстрейшего
+│   ├── channels.py        # матрица каналов для `vpn monitor`
 │   ├── sysproxy.py        # GNOME системный прокси через gsettings
-│   └── doctor.py          # диагностика окружения
+│   ├── zapret.py          # канал 0: zapret/nfqws (DPI-desync без прокси)
+│   ├── doh.py             # DoH-резолвер cloudflared
+│   ├── amneziawg.py       # AWG: локальный туннель + клиенты на сервере
+│   ├── doctor.py          # диагностика окружения
+│   └── repair.py          # снимок состояния + возврат трафика/DNS
 └── tests/                 # pytest, без сети/root (моки subprocess)
 ```
 
@@ -64,13 +72,19 @@ vpn install --linger
 | `vpn profile pull [--host root@asv1]` | Импорт ссылок с VDS-сервера по ssh |
 | `vpn profile list` / `remove <name>` / `show <name>` | Управление профилями |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
+| `vpn scheme awg\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / CDN / общий прокси / частный прокси |
+| `vpn probe` | Замер задержек + bulk-скорость по профилям, переключение на быстрейший |
 | `vpn status` | Активный профиль, состояние unit, внешний IP через SOCKS |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
+| `vpn doh on\|off\|status` | DoH-резолвер cloudflared (127.0.0.1:5053) |
+| `vpn amneziawg status\|add-client\|remove-client\|tunnel` | AWG: локальный туннель и клиенты на сервере |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
-| `vpn monitor [--json]` | Матрица каналов: vpnm / ZeroTier / AmneziaWG / zapret / dns-doh (N/5) |
+| `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
+| `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / amneziawg / zapret / ZeroTier / dns-doh (N/6) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
+| `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
 `vpn` также доступен как `python3 -m vpnm`.
 
@@ -97,6 +111,29 @@ ssh <host> "vds gateway links"
 `~/.config/vpn-manager/settings.json` и в дальнейшем используется по умолчанию;
 если хост не задан — интерактивный вопрос. Ошибки ssh (нет связи, нет `vds`)
 дают читаемое сообщение и exit 1.
+
+## Hysteria2: port hopping и obfs (серверные фичи vds)
+
+Сервер vds может отдавать ссылки двух «усиленных» инстансов Hysteria2
+(SPEC-20261112 WP-1), и vpnm рендерит их в клиентский конфиг:
+
+| Параметр ссылки | Клиентский конфиг (hysteria2 YAML) |
+|---|---|
+| `mport=20000-20500` (или `a-b,c`) | `server: host:443,20000-20500` + `transport.udp.hopInterval: 30s` — клиент прыгает по портам |
+| `obfs=salamander&obfs-password=...` | блок `obfs: {type: salamander, salamander: {password: ...}}` |
+
+Валидация — на импорте (`vpn profile import` / `pull`): битый `mport`
+(вне 1–65535, `start > end`), неизвестный тип `obfs` или `obfs` без
+`obfs-password` дают `LinkError` с читаемым сообщением, а не «тихо без
+обфускации». Переимпорт после изменения серверной ссылки — обычный
+`vpn profile pull` (ссылка изменилась → запись обновляется).
+
+## CDN-профиль без хардкода имени
+
+`vpn scheme cdn` и строка `cdn` в `vpn monitor` не привязаны к имени `cdn-home`:
+профиль выбирается из store по протоколу `xray-cdn-ws` с приоритетом
+`cdn-home` → имя, содержащее `cdn` → первый ws-профиль. Нет ни одного —
+команда завершается с подсказкой импортировать ws-ссылку (`vds gateway links`).
 
 ## Примеры
 
