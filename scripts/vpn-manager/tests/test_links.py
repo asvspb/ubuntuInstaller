@@ -86,6 +86,44 @@ class TestHysteria2:
         p = parse_link(link)
         assert p.params["insecure"] == "0"
 
+    def test_hy2_port_hopping_mport_kept(self):
+        link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                "?sni=example-test.invalid&insecure=1&mport=20000-20500#hop")
+        p = parse_link(link)
+        assert p.params["mport"] == "20000-20500"
+
+    def test_hy2_mport_list_kept(self):
+        link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                "?mport=20000-20500,30000#hop")
+        assert parse_link(link).params["mport"] == "20000-20500,30000"
+
+    def test_hy2_bad_mport_raises(self):
+        for bad in ("abc", "20000-", "30000-20000", "0-100", "70000"):
+            link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                    f"?mport={bad}")
+            with pytest.raises(LinkError, match="mport"):
+                parse_link(link)
+
+    def test_hy2_obfs_salamander_kept(self):
+        link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                "?sni=example-test.invalid&insecure=1"
+                "&obfs=salamander&obfs-password=FIXTURE_PW_obfs_only#obfs")
+        p = parse_link(link)
+        assert p.params["obfs"] == "salamander"
+        assert p.params["obfs-password"] == "FIXTURE_PW_obfs_only"
+
+    def test_hy2_unknown_obfs_raises(self):
+        link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                "?obfs=none&obfs-password=x")
+        with pytest.raises(LinkError, match="unsupported obfs"):
+            parse_link(link)
+
+    def test_hy2_obfs_without_password_raises(self):
+        link = (f"hysteria2://{FIXTURE_PW_HY2}@203.0.113.30:443/"
+                "?obfs=salamander")
+        with pytest.raises(LinkError, match="obfs-password"):
+            parse_link(link)
+
 
 class TestErrors:
     def test_empty_link(self):

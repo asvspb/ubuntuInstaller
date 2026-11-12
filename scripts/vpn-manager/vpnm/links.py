@@ -7,6 +7,7 @@ needed later by the config generator. All values are percent-decoded.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict
 from urllib.parse import unquote, parse_qs
@@ -15,6 +16,13 @@ PROTOCOL_XRAY_REALITY = "xray-reality"
 PROTOCOL_XRAY_XHTTP = "xray-xhttp"
 PROTOCOL_XRAY_WS = "xray-cdn-ws"
 PROTOCOL_HYSTERIA2 = "hysteria2"
+
+# Hysteria2 port hopping (SPEC-20261112 WP-1): `mport` в ссылке — диапазон
+# портов, по которым клиент прыгает ('20000-20500'), либо их список
+# ('20000-20500,30000'). Клиентский конфиг получает multi-port адрес
+# `host:443,20000-20500` (см. xclient.hysteria2_config).
+HYSTERIA2_OBFS_SALAMANDER = "salamander"
+_MPORT_RE = re.compile(r"^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$")
 
 
 class LinkError(ValueError):
@@ -113,6 +121,28 @@ def _parse_vless(link: str) -> ProfileLink:
                        credential=uuid, name=name, params=params)
 
 
+def _validate_mport(mport: str) -> str:
+    """Validate a Hysteria2 hop range ('20000-20500' / 'a-b,c') and return it.
+
+    The client renders the range into a multi-port server address, so a
+    malformed value would produce an unrunnable config — fail at import time
+    with a readable error instead.
+    """
+    value = mport.strip()
+    if not _MPORT_RE.match(value):
+        raise LinkError(
+            f"hysteria2 link: bad mport '{mport}' "
+            "(expected '20000-20500' or '20000-20500,30000')")
+    for part in value.split(","):
+        lo_s, _, hi_s = part.partition("-")
+        lo = int(lo_s)
+        hi = int(hi_s) if hi_s else lo
+        if not (1 <= lo <= 65535 and 1 <= hi <= 65535 and lo <= hi):
+            raise LinkError(f"hysteria2 link: mport '{part}' out of range "
+                            "(1-65535, start <= end)")
+    return value
+
+
 def _parse_hysteria2(link: str) -> ProfileLink:
     rest = link[len("hysteria2://"):]
     if "#" in rest:
@@ -143,9 +173,26 @@ def _parse_hysteria2(link: str) -> ProfileLink:
 
     insecure = params.get("insecure", "") in ("1", "true")
 
+    # obfs salamander (SPEC-20261112 WP-1): неизвестный тип обфускации не
+    # умеем рендерить — лучше явная ошибка, чем «тихо без обфускации».
+    obfs = params.get("obfs", "").strip()
+    if obfs and obfs != HYSTERIA2_OBFS_SALAMANDER:
+        raise LinkError(
+            f"hysteria2 link: unsupported obfs '{obfs}' "
+            f"(supported: {HYSTERIA2_OBFS_SALAMANDER})")
+    if obfs and not params.get("obfs-password"):
+        raise LinkError("hysteria2 link: 'obfs' given without 'obfs-password'")
+
+    mport = params.get("mport", "").strip()
+    if mport:
+        mport = _validate_mport(mport)
+
+    merged = {**params, "insecure": "1" if insecure else "0"}
+    if mport:
+        merged["mport"] = mport
+
     return ProfileLink(protocol=PROTOCOL_HYSTERIA2, host=host, port=int(port_s),
-                       credential=password, name=name,
-                       params={**params, "insecure": "1" if insecure else "0"})
+                       credential=password, name=name, params=merged)
 
 
 def parse_link(link: str) -> ProfileLink:

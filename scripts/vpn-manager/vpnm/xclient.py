@@ -13,12 +13,33 @@ import json
 from typing import Any, Dict
 
 from .links import (
+    HYSTERIA2_OBFS_SALAMANDER,
     PROTOCOL_HYSTERIA2,
     PROTOCOL_XRAY_REALITY,
     PROTOCOL_XRAY_XHTTP,
     PROTOCOL_XRAY_WS,
     ProfileLink,
 )
+
+# Интервал смены порта при хоппинге (Hysteria2: минимум 5s, дефолт 30s).
+HY2_HOP_INTERVAL = "30s"
+
+
+def _hysteria2_server(link: ProfileLink) -> str:
+    """Адрес сервера: обычный `host:port` либо multi-port `host:443,20000-20500`.
+
+    Hysteria2 клиент принимает список портов и диапазонов в поле `server` и
+    периодически переключается между ними; базовый порт ссылки остаётся в
+    наборе (сервер слушает именно его, диапазон редиректится nft/iptables).
+    """
+    mport = (link.params.get("mport") or "").strip()
+    if not mport:
+        return f"{link.host}:{link.port}"
+    ports = [p for p in mport.split(",") if p]
+    base = str(link.port)
+    if base not in ports:
+        ports.insert(0, base)
+    return f"{link.host}:{','.join(ports)}"
 
 
 def xray_config(link: ProfileLink, socks_port: int) -> str:
@@ -95,11 +116,19 @@ def xray_config(link: ProfileLink, socks_port: int) -> str:
 
 def hysteria2_config(link: ProfileLink, socks_port: int,
                      up_mbps: int = 20, down_mbps: int = 50) -> str:
-    """Generate a YAML config string for a hysteria2 client (fixed template)."""
+    """Generate a YAML config string for a hysteria2 client (fixed template).
+
+    Ссылка может нести port hopping (`mport='20000-20500'`) и obfs salamander
+    (`obfs=salamander&obfs-password=...`) — серверные инстансы из vds
+    (SPEC-20261112 WP-1). Хоппинг выражается multi-port адресом сервера
+    (`host:443,20000-20500`, см. Hysteria2 docs «Port Hopping»), интервал —
+    `transport.udp.hopInterval`; obfs — блоком `obfs: salamander`.
+    """
     insecure = link.params.get("insecure") == "1"
     sni = link.params.get("sni", link.host)
+    server = _hysteria2_server(link)
     lines = [
-        f"server: {link.host}:{link.port}",
+        f"server: {server}",
         "",
         f"auth: {link.credential}",
         "",
@@ -108,6 +137,16 @@ def hysteria2_config(link: ProfileLink, socks_port: int,
     ]
     if insecure:
         lines.append("  insecure: true")
+    obfs = link.params.get("obfs", "")
+    obfs_password = link.params.get("obfs-password", "")
+    if obfs == HYSTERIA2_OBFS_SALAMANDER and obfs_password:
+        lines += [
+            "",
+            "obfs:",
+            f"  type: {HYSTERIA2_OBFS_SALAMANDER}",
+            "  salamander:",
+            f"    password: {json.dumps(obfs_password)}",
+        ]
     lines += [
         "",
         "socks5:",
@@ -117,6 +156,13 @@ def hysteria2_config(link: ProfileLink, socks_port: int,
         f"  up: {up_mbps} mbps",
         f"  down: {down_mbps} mbps",
     ]
+    if link.params.get("mport"):
+        lines += [
+            "",
+            "transport:",
+            "  udp:",
+            f"    hopInterval: {HY2_HOP_INTERVAL}",
+        ]
     return "\n".join(lines) + "\n"
 
 
