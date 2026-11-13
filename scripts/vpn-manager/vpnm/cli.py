@@ -403,11 +403,16 @@ def _sync_sysproxy_off_after() -> None:
 
 
 @app.command()
-def up(name: str) -> None:
+def up(
+    name: str,
+    mux: Optional[bool] = typer.Option(
+        None, "--mux/--no-mux",
+        help="Mux для CDN-профиля (разово; по умолчанию — настройка 'vpn mux')"),
+) -> None:
     """Запустить профиль: vpn up <profile> (socks-порт см. в vpn profile list)."""
     from . import runners
     try:
-        config_path = runners.up(name)
+        config_path = runners.up(name, mux=mux)
     except (profiles.ProfileStoreError, runners.RunnerError, LinkError) as exc:
         _err(str(exc))
         raise typer.Exit(code=2)
@@ -432,6 +437,35 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
         raise typer.Exit(code=2)
     _ok(f"stopped '{stopped}'")
     _sync_sysproxy_off_after()
+
+
+@app.command("mux")
+def mux_cmd(action: str = typer.Argument(
+        ..., help="'on' | 'off' | 'status'")) -> None:
+    """Mux для CDN-профилей (VLESS+WS): vpn mux on|off|status.
+
+    Mux мультиплексирует несколько потоков в одном TLS-соединении — каждый
+    запрос не платит полный TLS→WS→VLESS стек. Применяется ТОЛЬКО к
+    WS-профилям (CDN через Cloudflare): Vision несовместим с Mux, XHTTP
+    мультиплексирует сам. По умолчанию выключен.
+    """
+    from . import settings
+    action = action.strip().lower()
+    if action == "on":
+        settings.set_mux(True)
+        _ok("mux on (применится при следующем 'vpn up <CDN-профиль>')")
+    elif action == "off":
+        settings.set_mux(False)
+        _ok("mux off")
+    elif action == "status":
+        enabled = settings.get_mux()
+        state = "on" if enabled else "off"
+        typer.echo(f"mux: {state}")
+        _warn("mux применяется только к CDN-профилям (VLESS+WS); "
+              "Reality/XHTTP его не используют")
+    else:
+        _err("mux: ожидается on|off|status")
+        raise typer.Exit(code=2)
 
 
 @app.command("scheme")

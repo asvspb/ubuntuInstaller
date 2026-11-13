@@ -133,10 +133,10 @@ def unit_name(name: str) -> str:
 
 
 def write_config(name: str, link: ProfileLink, socks_port: int,
-                 gen_dir: Optional[Path] = None) -> Path:
+                 gen_dir: Optional[Path] = None, mux: bool = False) -> Path:
     """Generate and write the client config for a profile (mode 0600)."""
     gen_dir = gen_dir if gen_dir is not None else GENERATED_DIR
-    text = generate(link, socks_port)
+    text = generate(link, socks_port, mux=mux)
     out = gen_dir / config_filename(name, link.protocol)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
@@ -332,8 +332,13 @@ def _require_profile(name: str) -> Tuple[Dict[str, object], ProfileLink]:
     return record, link
 
 
-def up(name: str, run: Optional[RunCmd] = None) -> Path:
-    """Generate config + unit and start the profile via systemctl --user."""
+def up(name: str, run: Optional[RunCmd] = None,
+       mux: Optional[bool] = None) -> Path:
+    """Generate config + unit and start the profile via systemctl --user.
+
+    ``mux=None`` берёт настройку из settings.json (по умолчанию выключен);
+    ``True``/``False`` переопределяют её разово, настройку не меняя.
+    """
     record, link = _require_profile(name)
     socks_port = int(str(record["socks_port"]))
     if port_in_use(socks_port):
@@ -355,7 +360,10 @@ def up(name: str, run: Optional[RunCmd] = None) -> Path:
                     "(vpn down / vpn switch)")
             _terminate_stale(stale)
     protocol = str(record["protocol"])
-    config_path = write_config(name, link, socks_port)
+    if mux is None:
+        from . import settings  # lazy: settings store on disk
+        mux = settings.get_mux()
+    config_path = write_config(name, link, socks_port, mux=mux)
     bin_path = BIN_DIR / bin_name(protocol)
     if not bin_path.exists():
         raise RunnerError(
@@ -386,7 +394,8 @@ def down(name: Optional[str] = None, run: Optional[RunCmd] = None) -> str:
     return target
 
 
-def switch(name: str, run: Optional[RunCmd] = None) -> Path:
+def switch(name: str, run: Optional[RunCmd] = None,
+           mux: Optional[bool] = None) -> Path:
     """Stop the currently active profile (if any), then start ``name``."""
     current = get_active()
     if current and current != name:
@@ -394,7 +403,7 @@ def switch(name: str, run: Optional[RunCmd] = None) -> Path:
     elif current == name and is_active(name, run):
         # already running the same profile; restart cleanly
         down(name, run)
-    return up(name, run)
+    return up(name, run, mux=mux)
 
 
 def _sync_sysproxy(run: Optional[RunCmd] = None) -> Optional[int]:
