@@ -593,3 +593,11 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 
 ### Синхронизация repo ↔ установленная команда
 После правок кода модуля переустанавливайте пакет: `pipx install --force scripts/vpn-manager` — установленный `vpn` не подхватывает изменения автоматически (не editable-инсталляция).
+
+
+## Планы: split для других транспортов
+
+Сейчас системный зонный split есть только у AWG. Разбор «может ли Reality /
+Hysteria2 / XHTTP / CDN стать основным со split» (что мешает, оценки,
+порядок внедрения, почему Docker не решает) — в vds:
+[docs/SPLIT-TRANSPORTS.md](https://github.com/asvspb/my-first-vds/blob/main/docs/SPLIT-TRANSPORTS.md).
