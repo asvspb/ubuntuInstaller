@@ -172,7 +172,8 @@ vds wireguard install
 
 `vds gateway links` печатает `имя: ссылка`; на ноутбуке
 `vpn profile pull -H root@asv1 [--include-obfs]` импортирует их в vpnm
-(store 0600). С `--include-obfs` сервер добавляет вторую строку
+(store 0600). Скорость каналов после импорта — `vpn speed` (живая таблица,
+несколько эндпоинтов; см. `doc/vpn-manager.md`). С `--include-obfs` сервер добавляет вторую строку
 `<name>@obfs` — ссылку obfs-инстанса (salamander, отдельный UDP-порт).
 
 - **Reality/XHTTP/CDN**: `vless://...` (CDN — `vless` за Cloudflare, имя профиля
