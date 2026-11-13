@@ -59,6 +59,9 @@ AWG_UNIT_PREF=(vpn-awg-split@laptop.service vpn-awg-split.service)
 # Дефолтный список доменов. Редактируйте в $DOMAINS_FILE после установки.
 DEFAULT_DOMAINS=(
     youtube.com
+    # короткие ссылки YouTube: домен .be, TLD-зона 'be' не входит в split
+    # (инцидент 2026-11-13: https://youtu.be/... открывался напрямую → блок)
+    youtu.be
     googlevideo.com
     ytimg.com
     ggpht.com
@@ -130,6 +133,7 @@ STATIC_ROUTES_NETS=(
 # Новые дефолты для idempotent-merge в существующий domains.txt
 # (то, что появилось после первой установки — добавляется, существующее не трогается)
 MERGE_EXTRA_DOMAINS=(
+    youtu.be
     google.com
     googleapis.com
     gstatic.com

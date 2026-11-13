@@ -546,10 +546,16 @@ inet/awg_split/routes → mark 0x21000 → table 21000 → default dev awg0-spli
 
 `/opt/awg-split/domains.txt` — один домен на строку, комментарии `#`.
 dnsmasq-суффикс-матчинг: запись `google.com` покрывает все поддомены.
+Если сервис отдаёт ссылки на **другой TLD** (пример: `youtu.be` — `.be`),
+его нужно вписать отдельно: TLD-зоны `com/org/net/io/dev/ai` такие домены
+не покрывают. После правки — `sudo bash scripts/15_domain-split.sh`
+(merge дефолтов идемпотентен, существующий список не перетирается).
 Дефолт при установке:
 
-- **YouTube**: `youtube.com`, `googlevideo.com`, `ytimg.com`, `ggpht.com`,
-  `youtubei.googleapis.com`
+- **YouTube**: `youtube.com`, **`youtu.be`** (короткие ссылки — домен `.be`,
+  TLD-зона `be` в split не входит; инцидент 2026-11-13:
+  `https://youtu.be/...` уходил напрямую и не открывался),
+  `googlevideo.com`, `ytimg.com`, `ggpht.com`, `youtubei.googleapis.com`
 - **Telegram**: `telegram.org`, `t.me`, `telesco.pe`, `cdn-telegram.org`,
   `teleg.ru`
 - **Google-кластер** (поиск, Gemini, Meet, аккаунты, reCAPTCHA):
