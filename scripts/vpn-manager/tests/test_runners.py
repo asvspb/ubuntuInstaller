@@ -17,12 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from vpnm import profiles, runners  # noqa: E402
 from vpnm.links import ProfileLink, parse_link  # noqa: E402
 
-FIXTURE_WS = (
-    "vless://11111111-2222-3333-4444-555555555555@203.0.113.12:2053"
-    "?type=ws&security=tls&sni=cdn.example.invalid&path=%2Fcdnws"
-    "&host=cdn.example.invalid&fp=chrome#fixture-cdn"
-)
-
 FIXTURE_VLESS = (
     "vless://11111111-2222-3333-4444-555555555555@203.0.113.10:443"
     "?security=reality&sni=example-test.invalid&pbk=FIXTURE_PBK&sid=ab"
@@ -52,8 +46,6 @@ def env(tmp_path, monkeypatch):
 def make_link(protocol="xray-reality", name="a"):
     if protocol == "hysteria2":
         return parse_link(FIXTURE_HY2)
-    if protocol == "xray-cdn-ws":
-        return parse_link(FIXTURE_WS)
     link = parse_link(FIXTURE_VLESS)
     if name != "a" or protocol != "xray-reality":
         return ProfileLink(protocol=protocol, host=link.host, port=link.port,
@@ -124,22 +116,6 @@ def test_write_config_hysteria_yaml(env, socks_port):
     path = runners.write_config("hy", make_link("hysteria2"), socks_port)
     assert path == env["GENERATED_DIR"] / "hy.yaml"
     assert "socks5:" in path.read_text()
-
-
-def test_write_config_mux_flag_reaches_config(env, socks_port):
-    """mux=True доходит до генератора (WS-конфиг получает блок mux)."""
-    path = runners.write_config("cdn", make_link("xray-cdn-ws"),
-                                socks_port, mux=True)
-    import json as _json
-    cfg = _json.loads(path.read_text())
-    assert cfg["outbounds"][0]["mux"]["enabled"] is True
-
-
-def test_write_config_default_nomux(env, socks_port):
-    path = runners.write_config("cdn", make_link("xray-cdn-ws"), socks_port)
-    import json as _json
-    cfg = _json.loads(path.read_text())
-    assert "mux" not in cfg["outbounds"][0]
 
 
 # --- state tracking -----------------------------------------------------------
@@ -217,39 +193,6 @@ def test_up_generates_and_starts(env, monkeypatch, socks_port):
     assert ["systemctl", "--user", "daemon-reload"] in calls
     assert ["systemctl", "--user", "start", "vpnm-a.service"] in calls
     assert runners.get_active() == "a"
-
-
-def test_up_mux_default_from_settings(env, monkeypatch, socks_port):
-    """mux=None берёт настройку из settings.json; None в настройке = off."""
-    from vpnm import settings as settings_mod
-    monkeypatch.setattr(settings_mod, "SETTINGS_PATH",
-                        env["STATE_PATH"].parent / "settings.json")
-    profiles.add(make_link("xray-cdn-ws", name="cdn"),
-                 raw_link=FIXTURE_WS, name="cdn", socks_port=socks_port)
-    make_fake_bin(env)
-    runners.up("cdn", run=recording_run([]), mux=None)
-    text = (env["GENERATED_DIR"] / "cdn.json").read_text()
-    assert '"mux"' not in text  # no setting stored -> off
-
-    settings_mod.set_mux(True)
-    runners.up("cdn", run=recording_run([]), mux=None)
-    text = (env["GENERATED_DIR"] / "cdn.json").read_text()
-    assert '"mux"' in text
-
-
-def test_up_mux_explicit_overrides_settings(env, monkeypatch, socks_port):
-    """Явный --no-mux переопределяет настройку mux=on разово."""
-    from vpnm import settings as settings_mod
-    monkeypatch.setattr(settings_mod, "SETTINGS_PATH",
-                        env["STATE_PATH"].parent / "settings.json")
-    settings_mod.set_mux(True)
-    profiles.add(make_link("xray-cdn-ws", name="cdn"),
-                 raw_link=FIXTURE_WS, name="cdn", socks_port=socks_port)
-    make_fake_bin(env)
-    runners.up("cdn", run=recording_run([]), mux=False)
-    text = (env["GENERATED_DIR"] / "cdn.json").read_text()
-    assert '"mux"' not in text
-    assert settings_mod.get_mux() is True  # настройка не изменилась
 
 
 def test_up_missing_binary_fails(env, socks_port):

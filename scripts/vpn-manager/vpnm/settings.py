@@ -61,22 +61,3 @@ def set_host(host: str, path: Optional[Path] = None) -> None:
     settings["ssh_host"] = host
     _atomic_write_0600(path if path is not None else SETTINGS_PATH,
                        json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
-
-
-def get_mux(path: Optional[Path] = None) -> bool:
-    """True when new `vpn up` runs should generate mux-enabled WS configs.
-
-    Applies only to xray-cdn-ws profiles (see SPEC-20261113); absence of the
-    key means False (older settings files migrate cleanly, unknown keys are
-    preserved on write).
-    """
-    value = _load(path).get("mux")
-    return value is True
-
-
-def set_mux(enabled: bool, path: Optional[Path] = None) -> None:
-    """Persist the mux flag (merges into the existing settings)."""
-    settings = _load(path)
-    settings["mux"] = bool(enabled)
-    _atomic_write_0600(path if path is not None else SETTINGS_PATH,
-                       json.dumps(settings, indent=2, ensure_ascii=False) + "\n")

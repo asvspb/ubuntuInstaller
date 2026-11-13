@@ -46,39 +46,6 @@ def hy2_link(insecure="0"):
     )
 
 
-def cdn_ws_link():
-    return ProfileLink(
-        protocol="xray-cdn-ws", host="203.0.113.40", port=2053,
-        credential=UUID_FIXTURE, name="cdn-home",
-        params={"security": "tls", "network": "ws",
-                "sni": "cdn.example.invalid", "path": "/cdnws",
-                "host": "cdn.example.invalid", "fp": "chrome"},
-    )
-
-
-# --- mux (SPEC-20261113 WP-1) ---------------------------------------------------
-
-def test_mux_absent_by_default_for_all_protocols():
-    for link in (reality_link(), xhttp_link(), cdn_ws_link()):
-        assert "mux" not in json.loads(xray_config(link, 2080))["outbounds"][0]
-
-
-def test_mux_present_only_for_ws_profile():
-    cfg = json.loads(xray_config(cdn_ws_link(), 2081, mux=True))
-    assert cfg["outbounds"][0]["mux"] == {"enabled": True, "concurrency": 8}
-
-
-def test_mux_ignored_for_reality_and_xhttp():
-    for link in (reality_link(), xhttp_link()):
-        cfg = json.loads(xray_config(link, 2080, mux=True))
-        assert "mux" not in cfg["outbounds"][0]
-
-
-def test_generate_passes_mux_to_xray_config():
-    cfg = json.loads(generate(cdn_ws_link(), 2081, mux=True))
-    assert cfg["outbounds"][0]["mux"]["enabled"] is True
-
-
 def test_reality_json_valid_and_complete():
     cfg = json.loads(xray_config(reality_link(), 2080))
     inbound = cfg["inbounds"][0]

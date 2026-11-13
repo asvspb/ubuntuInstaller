@@ -24,10 +24,6 @@ from .links import (
 # Интервал смены порта при хоппинге (Hysteria2: минимум 5s, дефолт 30s).
 HY2_HOP_INTERVAL = "30s"
 
-# Mux (multiplexing) применяется только к WS-профилю (CDN через Cloudflare):
-# Vision несовместим с Mux, XHTTP мультиплексирует сам (SPEC-20261113).
-MUX_CONCURRENCY = 8
-
 
 def _hysteria2_server(link: ProfileLink) -> str:
     """Адрес сервера: обычный `host:port` либо multi-port `host:443,20000-20500`.
@@ -46,13 +42,8 @@ def _hysteria2_server(link: ProfileLink) -> str:
     return f"{link.host}:{','.join(ports)}"
 
 
-def xray_config(link: ProfileLink, socks_port: int, mux: bool = False) -> str:
-    """Generate a JSON config string for an xray client (reality/xhttp/ws).
-
-    ``mux=True`` добавляет блок ``mux`` в outbound только для WS-профиля
-    (PROTOCOL_XRAY_WS); для Reality/XHTTP блок не появляется ни при каких
-    флагах.
-    """
+def xray_config(link: ProfileLink, socks_port: int) -> str:
+    """Generate a JSON config string for an xray client (reality or xhttp)."""
     inbound: Dict[str, Any] = {
         "listen": "127.0.0.1",
         "port": int(socks_port),
@@ -119,8 +110,6 @@ def xray_config(link: ProfileLink, socks_port: int, mux: bool = False) -> str:
         },
         "streamSettings": stream,
     }
-    if mux and link.protocol == PROTOCOL_XRAY_WS:
-        outbound["mux"] = {"enabled": True, "concurrency": MUX_CONCURRENCY}
     return json.dumps({"inbounds": [inbound], "outbounds": [outbound]},
                       indent=2, ensure_ascii=False)
 
@@ -177,11 +166,11 @@ def hysteria2_config(link: ProfileLink, socks_port: int,
     return "\n".join(lines) + "\n"
 
 
-def generate(link: ProfileLink, socks_port: int, mux: bool = False) -> str:
+def generate(link: ProfileLink, socks_port: int) -> str:
     """Dispatch to the right generator by protocol."""
     if link.protocol in (PROTOCOL_XRAY_REALITY, PROTOCOL_XRAY_XHTTP,
                          PROTOCOL_XRAY_WS):
-        return xray_config(link, socks_port, mux=mux)
+        return xray_config(link, socks_port)
     if link.protocol == PROTOCOL_HYSTERIA2:
         return hysteria2_config(link, socks_port)
     raise ValueError(f"generate: unknown protocol '{link.protocol}'")
