@@ -150,7 +150,10 @@ for i in $(seq 1 "$SAMPLES"); do
     fi
     sleep "$PAUSE"
 
-    read -r size elapsed < <(curl -sL -o /dev/null --max-time "$BULK_TIMEOUT" \
+    # `_` отбрасывает остаток строки: при таймауте curl печатает -w-хвост без
+    # перевода строки и `|| echo "0 0"` приклеивает второй ответ ("30.0 0"),
+    # из-за чего elapsed ранее получал лишнее поле.
+    read -r size elapsed _ < <(curl -sL -o /dev/null --max-time "$BULK_TIMEOUT" \
         -w '%{size_download} %{time_total}' \
         --socks5-hostname "127.0.0.1:${SOCKS_PORT}" "$BULK_URL" 2>/dev/null || echo "0 0")
     if [ "${size:-0}" -gt 0 ] && [ "${elapsed:-0}" != "0" ]; then
