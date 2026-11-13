@@ -183,6 +183,11 @@ vds wireguard install
 - **AmneziaWG**: `.conf` (0600) в `gateway/clients/amneziawg/`, забирается
   `vpn amneziawg add-client <name>` (ssh/scp → `~/.awg/`).
 
+При приёмке — **серийные пробы с паузами** (инвариант И26): не запускать
+`openssl s_client`/`ssh`/`curl` к одному и тому же SNI параллельно — серия
+хендшейков сама вызывает behavioral-blackhole TSPU (~120 с). `vpn probe`
+соблюдает это сам (пауза между замерами и профилями).
+
 Секреты (UUID, пароли, приватные ключи) — только в серверных конфигах и
 клиентском store; в лог и git не попадают. Порты TCP/UDP 443 (и 2053/51825
 при использовании CDN/AWG) открываются в UFW.

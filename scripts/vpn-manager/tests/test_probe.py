@@ -80,7 +80,7 @@ def test_probe_profile_median_of_three(env, monkeypatch):
     monkeypatch.setattr(probe.runners, "port_in_use",
                         lambda port, host="127.0.0.1": True)
     monkeypatch.setattr(probe.runners, "run_cmd", fake)
-    row = probe.probe_profile("p1")
+    row = probe.probe_profile("p1", sample_pause=0)
     assert row["ok"] is True
     assert row["latency_ms"] == pytest.approx(300.0)
     assert len(fake.commands) == 3
@@ -98,7 +98,7 @@ def test_probe_profile_any_timeout_fails(env, monkeypatch):
                         lambda port, host="127.0.0.1": True)
     monkeypatch.setattr(probe.runners, "run_cmd",
                         FakeCurl([(0, "0.100"), (28, ""), (0, "0.200")]))
-    row = probe.probe_profile("p1")
+    row = probe.probe_profile("p1", sample_pause=0)
     assert row["ok"] is False
     assert row["latency_ms"] is None
     assert "timeout" in str(row["error"])
@@ -605,3 +605,31 @@ def test_bulk_url_flag_in_cli(monkeypatch):
     assert r.exit_code == 0, r.output
     assert kwargs["bulk"] is False and kwargs["bulk_bytes"] == 500000
     assert kwargs["min_speed"] == 5.0
+
+
+# --- И26: серийные пробы с паузами ---------------------------------------------
+
+def test_probe_samples_are_serial_with_pause(env, monkeypatch):
+    """И26: между замерами одного профиля — пауза (серия хендшейков = триггер)."""
+    _add("p1", FIXTURE_LINK, 2080)
+    monkeypatch.setattr(probe.runners, "is_active", lambda name, run=None: True)
+    monkeypatch.setattr(probe, "measure_latency", lambda *a, **k: 0.1)
+    monkeypatch.setattr(probe, "measure_speed", lambda *a, **k: 100.0)
+
+    sleeps: list = []
+    row = probe.probe_profile("p1", sleep_fn=sleeps.append)
+
+    assert row["ok"] is True
+    # 3 замера -> 2 паузы (перед первым паузы нет)
+    assert sleeps == [probe.SAMPLE_PAUSE, probe.SAMPLE_PAUSE]
+
+
+def test_probe_sample_pause_can_be_disabled(env, monkeypatch):
+    _add("p1", FIXTURE_LINK, 2080)
+    monkeypatch.setattr(probe.runners, "is_active", lambda name, run=None: True)
+    monkeypatch.setattr(probe, "measure_latency", lambda *a, **k: 0.1)
+    monkeypatch.setattr(probe, "measure_speed", lambda *a, **k: 100.0)
+
+    sleeps: list = []
+    probe.probe_profile("p1", sleep_fn=sleeps.append, sample_pause=0)
+    assert sleeps == []

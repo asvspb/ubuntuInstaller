@@ -30,6 +30,10 @@ PROBE_URL = "https://www.google.com/generate_204"
 PROBE_TIMEOUT = 8.0  # seconds per curl measurement
 SAMPLES = 3
 SLEEP_BETWEEN = 1.0  # seconds between consecutive profile up/down cycles
+# И26 (PATTERNS 2026-11-13): behavioral-«заморозка» TSPU триггерится серией
+# параллельных хендшейков к одному SNI. Пробы внутри профиля тоже разносим
+# во времени: 3 замера подряд — это ровно та серия, поэтому пауза между ними.
+SAMPLE_PAUSE = 1.0  # seconds between the latency samples of one profile
 
 # --- D-SPEED (REQ-20261112, цикл 1): bulk-сэмпл скорости -------------------------
 # GAP, который закрываем: generate_204 (204 байта) быстр даже под TSPU-
@@ -173,11 +177,16 @@ def probe_profile(
         note: Optional[Callable[[str], None]] = None,
         bulk: bool = True,
         bulk_bytes: int = BULK_BYTES,
-        min_speed: float = DEGRADED_MBPS) -> ProbeResult:
+        min_speed: float = DEGRADED_MBPS,
+        sample_pause: float = SAMPLE_PAUSE) -> ProbeResult:
     """Measure one profile: ensure it is up, take ``samples`` measurements.
 
     Does not stop the profile afterwards — the orchestrator owns the
     lifecycle so the initially-active profile stays untouched.
+
+    И26: между замерами ``sample_pause`` секунд (по умолчанию 1.0) — серия
+    хендшейков к одному SNI без паузы может сама вызвать blackhole на
+    ~120 с; пробы обязаны быть серийными и разнесёнными во времени.
     """
     record = profiles.get(name)
     socks_port = int(str(record["socks_port"]))
@@ -203,6 +212,9 @@ def probe_profile(
     values: List[float] = []
     failed = False
     for attempt in range(samples):
+        if attempt and sample_pause > 0:
+            # И26: пауза между замерами одного профиля (не перед первым).
+            sleep_fn(sample_pause)
         if note is not None:
             note(f"замер {name}: попытка {attempt + 1}/{samples}…")
         value = measure_latency(socks_port, run=run, timeout=timeout)
@@ -237,7 +249,8 @@ def run_probe(
         note: Optional[Callable[[str], None]] = None,
         bulk: bool = True,
         bulk_bytes: int = BULK_BYTES,
-        min_speed: float = DEGRADED_MBPS) -> Dict[str, object]:
+        min_speed: float = DEGRADED_MBPS,
+        sample_pause: float = SAMPLE_PAUSE) -> Dict[str, object]:
     """Probe all profiles in store order and (optionally) switch to the fastest.
 
     Returns a dict with ``rows`` (probe results), ``initial_active``,
@@ -250,6 +263,7 @@ def run_probe(
         if note is not None:
             note(f"профиль {name}…")
         row = probe_profile(name, run=run, sleep_fn=sleep_fn, note=note,
+                            sample_pause=sample_pause,
                             bulk=bulk, bulk_bytes=bulk_bytes,
                             min_speed=min_speed)
         rows.append(row)
