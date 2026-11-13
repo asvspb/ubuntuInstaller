@@ -10,7 +10,8 @@
 #  `vds gateway init --apply` поднимает выбранные протоколы
 #  (VDS_PROTOCOLS, по умолчанию reality,hysteria2; опционально
 #  obfs/hop/xhttp/cdn/awg), при заданном домене выпускает LE-сертификат,
-#  создаёт демо-клиентов, ставит healthcheck-таймер и печатает share-links.
+#  создаёт демо-клиентов (только для полного набора reality+hysteria2),
+#  ставит healthcheck-таймер и печатает share-links.
 #
 #  Идемпотентен: повторный запуск не ломает состояние
 #  («уже установлен» / «сертификат уже выдан» / «клиент уже есть» — ок).
@@ -71,8 +72,11 @@ if [[ -z "$SERVER_IP" ]]; then
 fi
 [[ -z "$SERVER_IP" ]] && err "IP не может быть пустым"
 
-read -rp "Пользователь (по умолчанию root): " SERVER_USER </dev/tty
-SERVER_USER="${SERVER_USER:-root}"
+SERVER_USER="${VDS_USER:-}"
+if [[ -z "$SERVER_USER" ]]; then
+    read -rp "Пользователь (по умолчанию root): " SERVER_USER </dev/tty
+    SERVER_USER="${SERVER_USER:-root}"
+fi
 
 SERVER_DOMAIN="${VDS_DOMAIN:-}"
 if [[ -z "$SERVER_DOMAIN" ]]; then
@@ -198,11 +202,16 @@ echo ""
 # транспорты), ACME/use-domain при домене, демо-клиенты, healthcheck-таймер.
 # Без домена ACME/XHTTP/CDN пропускаются init'ом с warning (установленное
 # работает). Fail-fast с командой ручного доката печатает сам init.
-INIT_ARGS=("gateway" "init" "--apply" "--protocols" "${VDS_PROTOCOLS}")
+INIT_ARGS=("vds" "gateway" "init" "--apply" "--protocols" "${VDS_PROTOCOLS}")
 if [[ -n "$SERVER_DOMAIN" ]]; then
     INIT_ARGS+=("--domain" "${SERVER_DOMAIN}" "--email" "${SERVER_EMAIL}")
 fi
-INIT_ARGS+=("--demo-clients")
+# Демо-клиенты создаём только для полного набора reality+hysteria2: иначе init
+# завёл бы часть клиентов, и результат зависел бы от состава VDS_PROTOCOLS.
+PROTOCOLS_CSV=",${VDS_PROTOCOLS// /},"
+if [[ "$PROTOCOLS_CSV" == *",reality,"* && "$PROTOCOLS_CSV" == *",hysteria2,"* ]]; then
+    INIT_ARGS+=("--demo-clients")
+fi
 
 log "Шаги 6-8/9: vds gateway init (${VDS_PROTOCOLS}, домен: ${SERVER_DOMAIN:-нет}) ..."
 ssh "${SSH_OPTS[@]}" "$REMOTE" "$(printf '%q ' "${INIT_ARGS[@]}")" \
@@ -216,7 +225,7 @@ log "Шаг 9/9: получение share-links ..."
 echo ""
 echo -e "${BOLD}${CYAN}=== Ссылки для импорта в клиентские приложения ===${NC}"
 echo ""
-LINKS_ARGS=("gateway" "links")
+LINKS_ARGS=("vds" "gateway" "links")
 [[ "$VDS_PROTOCOLS" == *obfs* ]] && LINKS_ARGS+=("--include-obfs")
 ssh "${SSH_OPTS[@]}" "$REMOTE" "$(printf '%q ' "${LINKS_ARGS[@]}")" \
     || fail_step 9 "vds gateway links" \
