@@ -313,6 +313,20 @@ def _probe_latency_of(outcome: dict) -> object:
     return "?"
 
 
+def action_speed() -> None:
+    """Live-замер скорости по всем каналам (та же команда, что `vpn speed`)."""
+    import shutil
+    import subprocess
+    import sys
+
+    vpn = shutil.which("vpn")
+    cmd = [vpn, "speed"] if vpn else [sys.executable, "-m", "vpnm.cli", "speed"]
+    try:
+        subprocess.run(cmd, check=False)
+    except OSError as exc:
+        _err(f"не удалось запустить замер: {exc}")
+
+
 def action_channels() -> None:
     """Show the VPN channel availability matrix."""
     from .cli import _print_channels_table
@@ -357,6 +371,7 @@ MENU_ACTIONS: ActionMap = {
     "Мониторинг каналов": action_channels,
     "Канал 0 (zapret)": action_zapret,
     "Опрос протоколов / выбрать быстрейший": action_probe,
+    "Замер скорости (live)": action_speed,
     "Profiles": None,  # submenu, handled in run_menu
     "System proxy": action_sysproxy,
     "Doctor": action_doctor,

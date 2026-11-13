@@ -1068,6 +1068,174 @@ def _print_channels_section() -> None:
         typer.secho("awg (tun): не поднят", fg=typer.colors.YELLOW)
 
 
+@app.command("speed")
+def speed_cmd(
+        samples: int = typer.Option(2, "--samples", min=1, max=5,
+                                    help="Замеров на канал (latency и bulk)"),
+        flows: int = typer.Option(1, "--flows", min=1, max=8,
+                                  help="Параллельных потоков в одном bulk-замере"),
+        timeout: float = typer.Option(35.0, "--timeout",
+                                      help="Таймаут одного bulk-замера, с"),
+        no_awg: bool = typer.Option(False, "--no-awg",
+                                    help="Не мерить AmneziaWG-split"),
+        only: Optional[str] = typer.Option(
+            None, "--profiles",
+            help="Только эти профили (через запятую); по умолчанию все"),
+        as_json: bool = typer.Option(False, "--json",
+                                     help="Только JSON, без live-таблицы"),
+        out: Optional[str] = typer.Option(
+            None, "--out", help="Сохранить отчёт JSON в файл")) -> None:
+    """Живой замер скорости: все каналы, несколько эндпоинтов, серийно.
+
+    В отличие от `vpn probe`, меряет НЕСКОЛЬКО bulk-эндпоинтов с фолбэком
+    (OVH -> Cloudflare -> GitHub) и показывает таблицу в реальном времени:
+    статус, задержку и Мбит/с по каждому каналу по мере замера.
+    """
+    from . import speed as speed_mod
+    from datetime import datetime as _dt
+
+    records = profiles.list_profiles()
+    known = [str(r["name"]) for r in records]
+    if only:
+        wanted = [n.strip() for n in only.split(",") if n.strip()]
+        missing = [n for n in wanted if n not in known]
+        for name in missing:
+            _err(f"нет профиля '{name}'")
+        if missing:
+            raise typer.Exit(code=2)
+        names = wanted
+    else:
+        names = known
+    if not names and no_awg:
+        _err("нет профилей для замера")
+        raise typer.Exit(code=2)
+
+    snapshots: dict = {}
+    state = {"index": 0, "total": len(names) + (0 if no_awg else 1),
+             "started": _dt.now()}
+
+    def build_table():
+        from rich.table import Table
+        from rich.text import Text
+        table = Table(title="vpn speed — живой замер", expand=False)
+        table.add_column("канал", style="bold")
+        table.add_column("протокол")
+        table.add_column("статус")
+        table.add_column("latency, с", justify="right")
+        table.add_column("скорость, Мбит/с", justify="right")
+        table.add_column("эндпоинт")
+        table.add_column("примечание")
+        for name in [*names, *([] if no_awg else ["awg"])]:
+            st = snapshots.get(name) or {"name": name, "protocol": "—",
+                                         "status": "ожидание"}
+            lat = st.get("latency_s")
+            spd = st.get("speed_mbps")
+            if spd is None:
+                speed_cell = Text("—", style="dim")
+            elif spd >= 50:
+                speed_cell = Text(f"{spd:.1f}", style="green")
+            elif spd >= 15:
+                speed_cell = Text(f"{spd:.1f}", style="yellow")
+            else:
+                speed_cell = Text(f"{spd:.1f}", style="red")
+            status = str(st.get("status") or "")
+            status_style = {"готово": "green", "ошибка": "red",
+                            "нет данных": "yellow"}.get(status, "cyan")
+            table.add_row(
+                str(st.get("name") or name),
+                str(st.get("protocol") or "—"),
+                Text(status, style=status_style),
+                "—" if lat is None else f"{lat:.2f}",
+                speed_cell,
+                str(st.get("endpoint") or ""),
+                str(st.get("error") or st.get("note") or ""),
+            )
+        elapsed = (_dt.now() - state["started"]).total_seconds()
+        table.caption = (f"канал {state['index']}/{state['total']} · "
+                         f"{elapsed:.0f} с")
+        return table
+
+    renderer = None
+    if not as_json:
+        try:
+            from rich.live import Live
+            renderer = Live(build_table(), refresh_per_second=8,
+                            transient=False)
+            renderer.start()
+        except ImportError:
+            renderer = None
+            typer.echo("[live недоступен: нет rich — прогресс построчно]")
+
+    def on_event(ev: dict) -> None:
+        st = ev.get("state")
+        if isinstance(st, dict):
+            snapshots[str(st.get("name"))] = st
+        if ev.get("type") in ("channel_start", "channel_done"):
+            state["index"] = int(ev.get("index", 0)) + 1
+            state["total"] = int(ev.get("total", state["total"]))
+        if renderer is not None:
+            renderer.update(build_table())
+        elif not as_json:
+            kind = ev.get("type")
+            if kind in ("channel_start", "channel_done"):
+                typer.echo(f"  {ev.get('channel')}: {kind}")
+            elif snapshots:
+                last = snapshots.get(str(ev.get("channel")))
+                if last and kind in ("latency", "speed"):
+                    typer.echo(
+                        f"  {last['name']}: latency={last['latency_s']} "
+                        f"speed={last['speed_mbps']}")
+
+    try:
+        report = speed_mod.run_speed(
+            names, samples=samples, flows=flows, timeout=timeout,
+            include_awg=not no_awg, on_event=on_event)
+    except profiles.ProfileStoreError as exc:
+        if renderer is not None:
+            renderer.stop()
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    finally:
+        if renderer is not None:
+            renderer.stop()
+
+    # финальная таблица (после Live) + вердикт
+    if not as_json:
+        try:
+            from rich.console import Console
+            Console().print(build_table())
+            v = report.get("verdict") or {}
+            if v.get("fastest"):
+                _ok(f"быстрее всех: {v['fastest']}")
+            if v.get("most_stable"):
+                _ok(f"стабильнее всех: {v['most_stable']}")
+            for note in v.get("notes") or []:
+                _warn(note)
+        except ImportError:
+            for ch in report["channels"]:
+                typer.echo(f"{ch['name']}	{ch.get('speed_mbps')}	"
+                           f"{ch.get('latency_s')}	{ch.get('error')}")
+
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    target = out or str(speed_mod.REPORT_PATH)
+    try:
+        from pathlib import Path as _Path
+        dest = _Path(target)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(payload + "\n", encoding="utf-8")
+        try:
+            dest.chmod(0o600)
+        except OSError:
+            pass
+        if not as_json:
+            _ok(f"отчёт сохранён: {dest}")
+    except OSError as exc:
+        _warn(f"не удалось сохранить отчёт: {exc}")
+
+    if as_json:
+        typer.echo(payload)
+
+
 @app.command()
 def probe(switch_best: bool = typer.Option(
         True, "--switch-best/--no-switch",
