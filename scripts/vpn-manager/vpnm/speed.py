@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import profiles, runners
+from .links import PROTOCOL_XRAY_WS
 from .probe import SAMPLE_PAUSE
 from .runners import run_cmd
 
@@ -166,10 +167,20 @@ def measure_egress(socks_port: Optional[int], run: RunCmd) -> Optional[str]:
 # Оркестрация
 # ---------------------------------------------------------------------------
 
-def collect_channels(socks_profiles: List[str], include_awg: bool) -> List[Channel]:
+def collect_channels(socks_profiles: List[str], include_awg: bool,
+                     include_cdn: bool = False) -> List[Channel]:
+    """Каналы для замера.
+
+    CDN-профили (`xray-cdn-ws`) по умолчанию пропускаются: через Cloudflare
+    не отдаётся bulk ни с одного источника, замер только тратит время и
+    показывает «нет данных». Включаются явно `include_cdn=True`
+    (`vpn speed --include-cdn`).
+    """
     channels = []
     for name in socks_profiles:
         record = profiles.get(name)
+        if not include_cdn and str(record["protocol"]) == PROTOCOL_XRAY_WS:
+            continue
         channels.append(Channel(
             name=name,
             kind="socks",
@@ -281,11 +292,18 @@ def _awg_stop() -> None:
 
 def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
               flows: int = DEFAULT_FLOWS, timeout: float = DEFAULT_TIMEOUT,
-              include_awg: bool = True, run: RunCmd = run_cmd,
+              include_awg: bool = True, include_cdn: bool = False,
+              run: RunCmd = run_cmd,
               on_event: Optional[OnEvent] = None) -> dict:
-    """Прогнать все каналы последовательно; вернуть отчёт dict."""
+    """Прогнать все каналы последовательно; вернуть отчёт dict.
+
+    include_cdn=False (по умолчанию) — CDN-профили не меряются (CF не отдаёт
+    bulk); в отчёт попадает список пропущенных `skipped`.
+    """
     emit: OnEvent = on_event or (lambda _e: None)
-    channels = collect_channels(socks_profiles, include_awg)
+    channels = collect_channels(socks_profiles, include_awg, include_cdn)
+    measured = {ch.name for ch in channels}
+    skipped = [n for n in socks_profiles if n not in measured]
     started = datetime.now(timezone.utc).isoformat()
     for index, ch in enumerate(channels):
         emit({"type": "channel_start", "index": index, "total": len(channels),
@@ -301,6 +319,7 @@ def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
         "finished": datetime.now(timezone.utc).isoformat(),
         "params": {"samples": samples, "flows": flows, "timeout": timeout},
         "channels": [ch.as_dict() for ch in channels],
+        "skipped": skipped,
     }
     report["verdict"] = verdict(report["channels"])
     return report

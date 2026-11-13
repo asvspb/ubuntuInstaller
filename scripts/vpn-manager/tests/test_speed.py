@@ -7,7 +7,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vpnm import speed  # noqa: E402
+from vpnm import profiles, speed  # noqa: E402
+from vpnm.links import parse_link  # noqa: E402
 
 
 def test_parse_curl_speed_valid():
@@ -140,3 +141,48 @@ class TestMeasureChannel:
                               run=lambda cmd: (0, "", ""), on_event=lambda e: None)
         assert started == {"start": 1, "stop": 1}
         assert ch.speed_mbps == pytest.approx(60.0)
+
+
+# --- CDN-профили по умолчанию пропускаются ------------------------------------
+
+VLESS_REALITY = (
+    "vless://11111111-2222-3333-4444-555555555555@203.0.113.10:443"
+    "?security=reality&sni=example-test.invalid&pbk=FIXTURE_PBK&sid=01#phone"
+)
+VLESS_CDN = (
+    "vless://11111111-2222-3333-4444-666666666666@cdn.example.invalid:2053"
+    "?encryption=none&security=tls&sni=cdn.example.invalid&type=ws"
+    "&host=cdn.example.invalid&path=%2Fcdnws#cdn-home"
+)
+
+
+@pytest.fixture()
+def store(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, "STORE_PATH", tmp_path / "profiles.json")
+    profiles.add(parse_link(VLESS_REALITY), raw_link=VLESS_REALITY,
+                 name="phone", socks_port=2080)
+    profiles.add(parse_link(VLESS_CDN), raw_link=VLESS_CDN,
+                 name="cdn-home", socks_port=2081)
+    return tmp_path
+
+
+class TestCdnSkipped:
+    """CDN через CF не отдаёт bulk — по умолчанию не меряем."""
+
+    def test_collect_skips_cdn_by_default(self, store):
+        channels = speed.collect_channels(["phone", "cdn-home"], include_awg=False)
+        assert [c.name for c in channels] == ["phone"]
+
+    def test_collect_includes_cdn_on_request(self, store):
+        channels = speed.collect_channels(
+            ["phone", "cdn-home"], include_awg=False, include_cdn=True)
+        assert [c.name for c in channels] == ["phone", "cdn-home"]
+
+    def test_run_reports_skipped(self, store, monkeypatch):
+        monkeypatch.setattr(
+            speed, "measure_channel",
+            lambda ch, samples, flows, timeout, run, on_event: ch)
+        report = speed.run_speed(["phone", "cdn-home"], include_awg=False,
+                                 run=lambda cmd: (0, "", ""))
+        assert report["skipped"] == ["cdn-home"]
+        assert [c["name"] for c in report["channels"]] == ["phone"]

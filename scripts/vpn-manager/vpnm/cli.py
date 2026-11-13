@@ -1078,6 +1078,9 @@ def speed_cmd(
                                       help="Таймаут одного bulk-замера, с"),
         no_awg: bool = typer.Option(False, "--no-awg",
                                     help="Не мерить AmneziaWG-split"),
+        include_cdn: bool = typer.Option(
+            False, "--include-cdn",
+            help="Мерить и CDN-профили (по умолчанию пропускаются: CF не отдаёт bulk)"),
         only: Optional[str] = typer.Option(
             None, "--profiles",
             help="Только эти профили (через запятую); по умолчанию все"),
@@ -1110,8 +1113,21 @@ def speed_cmd(
         _err("нет профилей для замера")
         raise typer.Exit(code=2)
 
+    # CDN-профили по умолчанию не меряются (CF не отдаёт bulk) — не показываем
+    # их и в live-таблице, чтобы не путать «ожиданием».
+    from .links import PROTOCOL_XRAY_WS
+
+    skipped = [] if include_cdn else [
+        n for n in names
+        if str(profiles.get(n)["protocol"]) == PROTOCOL_XRAY_WS
+    ]
+    measured = [n for n in names if n not in skipped]
+    if not measured and no_awg:
+        _err("нечего мерить: все профили — CDN (добавьте --include-cdn)")
+        raise typer.Exit(code=2)
+
     snapshots: dict = {}
-    state = {"index": 0, "total": len(names) + (0 if no_awg else 1),
+    state = {"index": 0, "total": len(measured) + (0 if no_awg else 1),
              "started": _dt.now()}
 
     def build_table():
@@ -1125,7 +1141,7 @@ def speed_cmd(
         table.add_column("скорость, Мбит/с", justify="right")
         table.add_column("эндпоинт")
         table.add_column("примечание")
-        for name in [*names, *([] if no_awg else ["awg"])]:
+        for name in [*measured, *([] if no_awg else ["awg"])]:
             st = snapshots.get(name) or {"name": name, "protocol": "—",
                                          "status": "ожидание"}
             lat = st.get("latency_s")
@@ -1189,7 +1205,8 @@ def speed_cmd(
     try:
         report = speed_mod.run_speed(
             names, samples=samples, flows=flows, timeout=timeout,
-            include_awg=not no_awg, on_event=on_event)
+            include_awg=not no_awg, include_cdn=include_cdn,
+            on_event=on_event)
     except profiles.ProfileStoreError as exc:
         if renderer is not None:
             renderer.stop()
@@ -1211,6 +1228,10 @@ def speed_cmd(
                 _ok(f"стабильнее всех: {v['most_stable']}")
             for note in v.get("notes") or []:
                 _warn(note)
+            if report.get("skipped"):
+                _warn("пропущены CDN-профили (bulk через CF не измеряется): "
+                      + ", ".join(str(n) for n in report["skipped"])
+                      + "; включить: --include-cdn")
         except ImportError:
             for ch in report["channels"]:
                 typer.echo(f"{ch['name']}	{ch.get('speed_mbps')}	"
