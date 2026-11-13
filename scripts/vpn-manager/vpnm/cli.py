@@ -1108,6 +1108,9 @@ def speed_cmd(
                                     help="Замеров на канал (latency и bulk)"),
         flows: int = typer.Option(1, "--flows", min=1, max=8,
                                   help="Параллельных потоков в одном bulk-замере"),
+        ttfb_samples: int = typer.Option(
+            3, "--ttfb-samples", min=1, max=7,
+            help="TTFB-замеров на канал (серийно; работает даже без bulk)"),
         timeout: float = typer.Option(35.0, "--timeout",
                                       help="Таймаут одного bulk-замера, с"),
         no_awg: bool = typer.Option(False, "--no-awg",
@@ -1172,6 +1175,7 @@ def speed_cmd(
         table.add_column("протокол")
         table.add_column("статус")
         table.add_column("latency, с", justify="right")
+        table.add_column("ttfb p50/p95, мс", justify="right")
         table.add_column("скорость, Мбит/с", justify="right")
         table.add_column("эндпоинт")
         table.add_column("примечание")
@@ -1188,14 +1192,23 @@ def speed_cmd(
                 speed_cell = Text(f"{spd:.1f}", style="yellow")
             else:
                 speed_cell = Text(f"{spd:.1f}", style="red")
+            p50, p95 = st.get("ttfb_p50_ms"), st.get("ttfb_p95_ms")
+            if p50 is None:
+                ttfb_cell = Text("—", style="dim")
+            else:
+                style = "green" if p50 <= 700 else ("yellow" if p50 <= 1500
+                                                    else "red")
+                ttfb_cell = Text(f"{p50:.0f}/{p95:.0f}", style=style)
             status = str(st.get("status") or "")
             status_style = {"готово": "green", "ошибка": "red",
-                            "нет данных": "yellow"}.get(status, "cyan")
+                            "нет данных": "yellow",
+                            "только задержка": "yellow"}.get(status, "cyan")
             table.add_row(
                 str(st.get("name") or name),
                 str(st.get("protocol") or "—"),
                 Text(status, style=status_style),
                 "—" if lat is None else f"{lat:.2f}",
+                ttfb_cell,
                 speed_cell,
                 str(st.get("endpoint") or ""),
                 str(st.get("error") or st.get("note") or ""),
@@ -1231,16 +1244,17 @@ def speed_cmd(
                 typer.echo(f"  {ev.get('channel')}: {kind}")
             elif snapshots:
                 last = snapshots.get(str(ev.get("channel")))
-                if last and kind in ("latency", "speed"):
+                if last and kind in ("latency", "ttfb", "speed"):
                     typer.echo(
                         f"  {last['name']}: latency={last['latency_s']} "
+                        f"ttfb={last.get('ttfb_p50_ms')}мс "
                         f"speed={last['speed_mbps']}")
 
     try:
         report = speed_mod.run_speed(
             names, samples=samples, flows=flows, timeout=timeout,
             include_awg=not no_awg, include_cdn=include_cdn,
-            on_event=on_event)
+            on_event=on_event, ttfb_samples=ttfb_samples)
     except profiles.ProfileStoreError as exc:
         if renderer is not None:
             renderer.stop()

@@ -72,6 +72,130 @@ def test_measure_latency_parses_last_line():
     assert speed.measure_latency(None, 10, run) == pytest.approx(0.123456)
 
 
+# --- TTFB (WP-2, SPEC-20261113) -------------------------------------------------
+
+def test_measure_ttfb_parses_starttransfer():
+    run = FakeRun({"example.com": (0, "1.234\n", "")})
+    assert speed.measure_ttfb(None, 10, run) == pytest.approx(1.234)
+
+
+def test_measure_ttfb_none_on_failure():
+    run = FakeRun({"example.com": (28, "", "timeout")})
+    assert speed.measure_ttfb(None, 10, run) is None
+    assert speed.measure_ttfb(None, 10, lambda cmd: (0, "0.0\n", "")) is None
+
+
+def test_measure_ttfb_uses_socks_hostname():
+    calls = []
+    run = FakeRun({"example.com": (0, "0.5\n", "")})
+    orig = run.__call__
+
+    def spy(cmd):
+        calls.append(cmd)
+        return orig(cmd)
+
+    speed.measure_ttfb(2081, 10, spy)
+    assert "--socks5-hostname" in calls[0]
+    assert "127.0.0.1:2081" in calls[0]
+
+
+def test_percentile_nearest_rank():
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+    assert speed.percentile(sorted(values), 0.50) == pytest.approx(4.0)
+    assert speed.percentile(sorted(values), 0.95) == pytest.approx(7.0)
+    assert speed.percentile([2.0], 0.95) == pytest.approx(2.0)
+
+
+class TestTtfbChannel:
+    """TTFB-этап в measure_channel: события, p50/p95, серийность, статусы."""
+
+    def _channel(self):
+        return speed.Channel(name="cdn-home", kind="socks",
+                             protocol="xray-cdn-ws", socks_port=2081)
+
+    def test_ttfb_events_and_percentiles(self, monkeypatch):
+        events = []
+        monkeypatch.setattr(speed.runners, "up", lambda name: None)
+        monkeypatch.setattr(speed.runners, "down", lambda name: None)
+        monkeypatch.setattr(speed, "measure_egress", lambda port, run: None)
+        monkeypatch.setattr(speed, "measure_latency", lambda port, t, run: 0.3)
+        ttfb_values = iter([1.2, 0.4, 0.8])
+        monkeypatch.setattr(speed, "measure_ttfb",
+                            lambda port, t, run: next(ttfb_values))
+        monkeypatch.setattr(speed, "measure_bulk",
+                            lambda port, flows, t, run: (30.0, "ovh10"))
+        monkeypatch.setattr(speed, "wait_socks", lambda port, timeout=30: True)
+        monkeypatch.setattr(speed, "SAMPLE_PAUSE", 0)
+
+        ch = self._channel()
+        speed.measure_channel(ch, samples=1, flows=1, timeout=5,
+                              run=lambda cmd: (0, "", ""),
+                              on_event=events.append, ttfb_samples=3)
+        kinds = [e["type"] for e in events]
+        assert kinds.count("ttfb") == 3
+        # серийно: ttfb-события идут по одному, между ними пауза (И26 —
+        # SAMPLE_PAUSE=0 в тесте, но события не параллельны по построению)
+        assert ch.ttfb_samples == [1.2, 0.4, 0.8]
+        assert ch.ttfb_p50_ms == pytest.approx(800)   # медиана 1.2/0.4/0.8
+        assert ch.ttfb_p95_ms == pytest.approx(1200)  # ближайший-ранг p95
+        assert ch.status == "готово"
+
+    def test_ttfb_timeout_leaves_null_not_error(self, monkeypatch):
+        """TTFB не измерился (timeout) → p50/p95 null, статус не меняется."""
+        monkeypatch.setattr(speed.runners, "up", lambda name: None)
+        monkeypatch.setattr(speed.runners, "down", lambda name: None)
+        monkeypatch.setattr(speed, "measure_egress", lambda port, run: None)
+        monkeypatch.setattr(speed, "measure_latency", lambda port, t, run: 0.3)
+        monkeypatch.setattr(speed, "measure_ttfb", lambda port, t, run: None)
+        monkeypatch.setattr(speed, "measure_bulk",
+                            lambda port, flows, t, run: (30.0, "ovh10"))
+        monkeypatch.setattr(speed, "wait_socks", lambda port, timeout=30: True)
+        monkeypatch.setattr(speed, "SAMPLE_PAUSE", 0)
+
+        ch = self._channel()
+        speed.measure_channel(ch, samples=1, flows=1, timeout=5,
+                              run=lambda cmd: (0, "", ""), on_event=lambda e: None)
+        assert ch.ttfb_p50_ms is None and ch.ttfb_p95_ms is None
+        assert ch.status == "готово"
+
+    def test_bulk_zero_but_ttfb_present_latency_only_status(self, monkeypatch):
+        """bulk 0 байт при живом TTFB → «только задержка», не «нет данных»."""
+        monkeypatch.setattr(speed.runners, "up", lambda name: None)
+        monkeypatch.setattr(speed.runners, "down", lambda name: None)
+        monkeypatch.setattr(speed, "measure_egress", lambda port, run: None)
+        monkeypatch.setattr(speed, "measure_latency", lambda port, t, run: 0.3)
+        monkeypatch.setattr(speed, "measure_ttfb", lambda port, t, run: 0.9)
+        monkeypatch.setattr(speed, "measure_bulk",
+                            lambda port, flows, t, run: (None, ""))
+        monkeypatch.setattr(speed, "wait_socks", lambda port, timeout=30: True)
+        monkeypatch.setattr(speed, "SAMPLE_PAUSE", 0)
+
+        ch = self._channel()
+        events: list = []
+        speed.measure_channel(ch, samples=1, flows=1, timeout=5,
+                              run=lambda cmd: (0, "", ""),
+                              on_event=events.append)
+        assert ch.status == "только задержка"
+        assert ch.ttfb_p50_ms == pytest.approx(900)
+        assert not ch.error
+        d = ch.as_dict()
+        assert d["ttfb_samples"] == [0.9, 0.9, 0.9]  # дефолт 3 TTFB-замера
+
+    def test_run_speed_passes_ttfb_samples_and_reports_param(self, monkeypatch):
+        captured = {}
+
+        def fake_measure(ch, samples, flows, timeout, run, on_event,
+                         ttfb_samples=speed.DEFAULT_TTFB_SAMPLES):
+            captured["ttfb_samples"] = ttfb_samples
+            return ch
+
+        monkeypatch.setattr(speed, "measure_channel", fake_measure)
+        report = speed.run_speed(["phone"], include_awg=False, ttfb_samples=5,
+                                 run=lambda cmd: (0, "", ""))
+        assert captured["ttfb_samples"] == 5
+        assert report["params"]["ttfb_samples"] == 5
+
+
 def test_measure_egress_returns_ip():
     run = FakeRun({"api.ipify.org": (0, "203.0.113.7\n", "")})
     assert speed.measure_egress(None, run) == "203.0.113.7"
@@ -181,7 +305,8 @@ class TestCdnSkipped:
     def test_run_reports_skipped(self, store, monkeypatch):
         monkeypatch.setattr(
             speed, "measure_channel",
-            lambda ch, samples, flows, timeout, run, on_event: ch)
+            lambda ch, samples, flows, timeout, run, on_event,
+            ttfb_samples=speed.DEFAULT_TTFB_SAMPLES: ch)
         report = speed.run_speed(["phone", "cdn-home"], include_awg=False,
                                  run=lambda cmd: (0, "", ""))
         assert report["skipped"] == ["cdn-home"]

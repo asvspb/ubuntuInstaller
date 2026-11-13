@@ -34,6 +34,10 @@ from .probe import SAMPLE_PAUSE
 from .runners import run_cmd
 
 LATENCY_URL = "https://www.google.com/generate_204"
+# TTFB меряем на лёгкой реальной странице: time_starttransfer включает
+# полный стек (TCP+TLS+запрос), но не зависит от bulk-шейпинга провайдера —
+# работает даже когда bulk-эндпоинты не отдают байты (CF-канал, 2026-11-13).
+TTFB_URL = "https://example.com/"
 # Порядок важен: OVH первым — он не шейпится из РФ так, как Cloudflare.
 ENDPOINTS: List[Tuple[str, str]] = [
     ("ovh10", "https://proof.ovh.net/files/10Mb.dat"),
@@ -41,6 +45,7 @@ ENDPOINTS: List[Tuple[str, str]] = [
     ("gh-readme", "https://raw.githubusercontent.com/asvspb/my-first-vds/main/README.md"),
 ]
 DEFAULT_SAMPLES = 2
+DEFAULT_TTFB_SAMPLES = 3
 DEFAULT_FLOWS = 1
 DEFAULT_TIMEOUT = 35.0
 REPORT_PATH = Path.home() / ".local" / "share" / "vpn-manager" / "last-speed.json"
@@ -61,6 +66,9 @@ class Channel:
     status: str = "ожидание"
     latency_s: Optional[float] = None
     latency_samples: List[Optional[float]] = field(default_factory=list)
+    ttfb_p50_ms: Optional[float] = None
+    ttfb_p95_ms: Optional[float] = None
+    ttfb_samples: List[Optional[float]] = field(default_factory=list)
     speed_mbps: Optional[float] = None
     speed_samples: List[Optional[float]] = field(default_factory=list)
     endpoint: str = ""
@@ -77,6 +85,9 @@ class Channel:
             "status": self.status,
             "latency_s": self.latency_s,
             "latency_samples": self.latency_samples,
+            "ttfb_p50_ms": self.ttfb_p50_ms,
+            "ttfb_p95_ms": self.ttfb_p95_ms,
+            "ttfb_samples": self.ttfb_samples,
             "speed_mbps": self.speed_mbps,
             "speed_samples": self.speed_samples,
             "endpoint": self.endpoint,
@@ -154,6 +165,37 @@ def measure_latency(socks_port: Optional[int], timeout: float,
         return None
 
 
+def measure_ttfb(socks_port: Optional[int], timeout: float,
+                 run: RunCmd) -> Optional[float]:
+    """TTFB через socks: curl %{time_starttransfer}, секунды; None при сбое.
+
+    В отличие от bulk работает даже когда ни один bulk-эндпоинт не отдаёт
+    байты (CF-канал): лёгкая страница example.com не зависит от шейпинга.
+    """
+    cmd = ["curl", "-sL", "-o", "/dev/null", "--max-time", str(int(timeout)),
+           "-w", "%{time_starttransfer}"]
+    if socks_port:
+        cmd += ["--socks5-hostname", f"127.0.0.1:{socks_port}"]
+    cmd.append(TTFB_URL)
+    rc, out, _ = run(cmd)
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        value = float(out.splitlines()[-1])
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def percentile(sorted_values: List[float], q: float) -> float:
+    """Ближайший-ранг перцентиль (nearest-rank) по отсортированному списку."""
+    if not sorted_values:
+        raise ValueError("percentile of empty list")
+    index = max(0, min(len(sorted_values) - 1,
+                       max(0, int(round(q * len(sorted_values) + 0.5)) - 1)))
+    return sorted_values[index]
+
+
 def measure_egress(socks_port: Optional[int], run: RunCmd) -> Optional[str]:
     cmd = ["curl", "-s", "--max-time", "10"]
     if socks_port:
@@ -214,8 +256,9 @@ def _stop_socks(name: str) -> None:
 
 
 def measure_channel(ch: Channel, samples: int, flows: int, timeout: float,
-                    run: RunCmd, on_event: OnEvent) -> Channel:
-    """Замерить один канал: latency xN, egress, bulk xN; события — на каждый шаг."""
+                    run: RunCmd, on_event: OnEvent,
+                    ttfb_samples: int = DEFAULT_TTFB_SAMPLES) -> Channel:
+    """Замерить один канал: latency xN, egress, TTFB xN, bulk xN (серийно, И26)."""
     def emit(kind: str, **kw: object) -> None:
         on_event({"type": kind, "channel": ch.name, "state": ch.as_dict(), **kw})
 
@@ -243,6 +286,20 @@ def measure_channel(ch: Channel, samples: int, flows: int, timeout: float,
             ch.latency_s = round(statistics.median(ok), 3) if ok else None
             emit("latency", value=value)
 
+        ch.status = "ttfb"
+        emit("status")
+        for i in range(ttfb_samples):
+            if i:
+                time.sleep(SAMPLE_PAUSE)
+            value = measure_ttfb(ch.socks_port, timeout, run)
+            ch.ttfb_samples.append(value)
+            ok = [v for v in ch.ttfb_samples if v is not None]
+            if ok:
+                ordered = sorted(ok)
+                ch.ttfb_p50_ms = round(percentile(ordered, 0.50) * 1000, 0)
+                ch.ttfb_p95_ms = round(percentile(ordered, 0.95) * 1000, 0)
+            emit("ttfb", value=value)
+
         ch.status = "скорость"
         emit("status")
         for i in range(samples):
@@ -257,8 +314,14 @@ def measure_channel(ch: Channel, samples: int, flows: int, timeout: float,
             emit("speed", value=mbps, endpoint=label)
 
         if ch.speed_mbps is None:
-            ch.status = "нет данных"
-            ch.error = "bulk не отдал байты ни на одном эндпоинте"
+            if ch.ttfb_p50_ms is not None:
+                # bulk не отдался, но TTFB есть: канал жив, только bulk зарезан
+                ch.status = "только задержка"
+                ch.note = ("bulk не отдал байты (зарезан), но TTFB измерен: "
+                           f"p50 {ch.ttfb_p50_ms:.0f} мс")
+            else:
+                ch.status = "нет данных"
+                ch.error = "bulk не отдал байты ни на одном эндпоинте"
         else:
             ch.status = "готово"
     except Exception as exc:  # noqa: BLE001 - отчёт важнее падения
@@ -294,7 +357,8 @@ def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
               flows: int = DEFAULT_FLOWS, timeout: float = DEFAULT_TIMEOUT,
               include_awg: bool = True, include_cdn: bool = False,
               run: RunCmd = run_cmd,
-              on_event: Optional[OnEvent] = None) -> dict:
+              on_event: Optional[OnEvent] = None,
+              ttfb_samples: int = DEFAULT_TTFB_SAMPLES) -> dict:
     """Прогнать все каналы последовательно; вернуть отчёт dict.
 
     include_cdn=False (по умолчанию) — CDN-профили не меряются (CF не отдаёт
@@ -308,7 +372,8 @@ def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
     for index, ch in enumerate(channels):
         emit({"type": "channel_start", "index": index, "total": len(channels),
               "channel": ch.name, "state": ch.as_dict()})
-        measure_channel(ch, samples, flows, timeout, run, emit)
+        measure_channel(ch, samples, flows, timeout, run, emit,
+                        ttfb_samples=ttfb_samples)
         emit({"type": "channel_done", "index": index, "total": len(channels),
               "channel": ch.name, "state": ch.as_dict()})
         if ch.kind == "socks":
@@ -317,7 +382,8 @@ def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
     report = {
         "started": started,
         "finished": datetime.now(timezone.utc).isoformat(),
-        "params": {"samples": samples, "flows": flows, "timeout": timeout},
+        "params": {"samples": samples, "flows": flows, "timeout": timeout,
+                   "ttfb_samples": ttfb_samples},
         "channels": [ch.as_dict() for ch in channels],
         "skipped": skipped,
     }
