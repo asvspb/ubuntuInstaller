@@ -67,10 +67,18 @@ vds/
 
 ```bash
 bash ~/Dev/ubuntuInstaller/scripts/11_vds-deploy.sh   # one-shot: всё сразу
+
+# Полный набор протоколов + домен — через env (неинтерактивно):
+VDS_PROTOCOLS=reality,hysteria2,obfs,hop,xhttp,cdn,awg \
+VDS_DOMAIN=vpn.example.ru VDS_EMAIL=admin@example.ru \
+    bash ~/Dev/ubuntuInstaller/scripts/11_vds-deploy.sh
 ```
 
 One-shot деплой: SSH-ключ → rsync репо (`VDS_REPO`) → `install.sh` на сервере →
-протоколы → авто-детект GitHub (при блокировке — зеркало) → демо-клиенты →
+`vds gateway init --apply` (VDS_PROTOCOLS, по умолчанию `reality,hysteria2`;
+при заданном домене — ACME/use-domain; доменные шаги ACME/XHTTP/CDN при DNS,
+не указывающем на сервер, пропускаются с warning) → авто-детект GitHub
+(при блокировке — зеркало) → демо-клиенты phone/mob/laptop → healthcheck-таймер →
 печать share-links. Полная инструкция и чеклист — `docs/DEPLOY.md` в репозитории
 `vds`.
 
@@ -109,6 +117,8 @@ vds cleanup                      # Очистка (логи, кэши, стар�
 ### Gateway: состояние и ссылки
 
 ```bash
+vds gateway init                 # Идемпотентное развёртывание с нуля (dry-run: план + проверки)
+vds gateway init --apply         # reality+hysteria2+healthcheck; --protocols obfs,hop,xhttp,cdn,awg — всё
 vds gateway status               # state.json, клиенты, протоколы
 vds gateway links                # Share-links всех клиентов (--protocol xray|hysteria2|amneziawg)
 vds gateway links --include-obfs # + obfs-ссылки hysteria2 (`<name>@obfs`, порт obfs-инстанса)

@@ -6,10 +6,11 @@
 #  Запускается на ЛОКАЛЬНОЙ машине. Копирует SSH-ключ, синхронизирует репо
 #  vds (VDS_REPO, по умолчанию ~/Dev/my-coding/vds) на сервер (rsync с
 #  обязательными excludes, включая gateway/state.json —
-#  runtime-файл живого сервера), устанавливает Xray + Hysteria2,
-#  при необходимости включает GitHub-mirror, выпускает LE-сертификат
-#  и XHTTP-транспорт (если задан домен), создаёт демо-клиентов
-#  и печатает share-links для импорта в клиентские приложения.
+#  runtime-файл живого сервера), затем одной идемпотентной командой
+#  `vds gateway init --apply` поднимает выбранные протоколы
+#  (VDS_PROTOCOLS, по умолчанию reality,hysteria2; опционально
+#  obfs/hop/xhttp/cdn/awg), при заданном домене выпускает LE-сертификат,
+#  создаёт демо-клиентов, ставит healthcheck-таймер и печатает share-links.
 #
 #  Идемпотентен: повторный запуск не ломает состояние
 #  («уже установлен» / «сертификат уже выдан» / «клиент уже есть» — ок).
@@ -60,18 +61,36 @@ echo -e "${BOLD}${CYAN}=== VDS Deploy (one-shot) ===${NC}"
 echo ""
 
 # ── 0. Параметры ──────────────────────────────────────────────────────────────
-read -rp "IP-адрес сервера: " SERVER_IP </dev/tty
+# Все параметры можно задать env'ом (для неинтерактивного запуска):
+#   VDS_PROTOCOLS=reality,hysteria2[,obfs,hop,xhttp,cdn,awg]
+#   VDS_DOMAIN=vpn.example.ru  VDS_EMAIL=admin@example.ru
+#   VDS_IP=…  VDS_USER=root
+SERVER_IP="${VDS_IP:-}"
+if [[ -z "$SERVER_IP" ]]; then
+    read -rp "IP-адрес сервера: " SERVER_IP </dev/tty
+fi
 [[ -z "$SERVER_IP" ]] && err "IP не может быть пустым"
 
 read -rp "Пользователь (по умолчанию root): " SERVER_USER </dev/tty
 SERVER_USER="${SERVER_USER:-root}"
 
-read -rp "Домен (Enter = без домена, без ACME/XHTTP): " SERVER_DOMAIN </dev/tty
-SERVER_EMAIL=""
-if [[ -n "$SERVER_DOMAIN" ]]; then
+SERVER_DOMAIN="${VDS_DOMAIN:-}"
+if [[ -z "$SERVER_DOMAIN" ]]; then
+    read -rp "Домен (Enter = без домена, без ACME/XHTTP): " SERVER_DOMAIN </dev/tty
+fi
+SERVER_EMAIL="${VDS_EMAIL:-}"
+if [[ -n "$SERVER_DOMAIN" && -z "$SERVER_EMAIL" ]]; then
     read -rp "Email для Let's Encrypt: " SERVER_EMAIL </dev/tty
     [[ -z "$SERVER_EMAIL" ]] && err "Для домена нужен email LE"
 fi
+if [[ -z "$SERVER_DOMAIN" && -n "$SERVER_EMAIL" ]]; then
+    warn "VDS_EMAIL задан без VDS_DOMAIN — email игнорируется (ACME не выпускается)."
+    SERVER_EMAIL=""
+fi
+
+# Протоколы для `vds gateway init` (SPEC-20261114): по умолчанию — прежний
+# результат деплоя (Reality + Hysteria2).
+VDS_PROTOCOLS="${VDS_PROTOCOLS:-reality,hysteria2}"
 
 REMOTE="${SERVER_USER}@${SERVER_IP}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
@@ -80,7 +99,7 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
     || err "Локальный репо не найден: $LOCAL_REPO (задайте VDS_REPO=/путь/к/vds; скачивание с GitHub в этом скрипте не предусмотрено)"
 
 echo ""
-log "План: ${REMOTE}:${INSTALL_DIR} | домен: ${SERVER_DOMAIN:-нет} | протоколы: Xray + Hysteria2"
+log "План: ${REMOTE}:${INSTALL_DIR} | домен: ${SERVER_DOMAIN:-нет} | протоколы: ${VDS_PROTOCOLS}"
 echo ""
 
 # ── 1. SSH-ключ ───────────────────────────────────────────────────────────────
@@ -174,71 +193,22 @@ REMOTE_MIRROR_SETUP
 fi
 echo ""
 
-# ── 6. Установка протоколов ───────────────────────────────────────────────────
-log "Шаг 6/9: установка Xray (Reality, TCP 443) ..."
-ssh "${SSH_OPTS[@]}" "$REMOTE" \
-    "vds xray install" \
-    || fail_step 6 "vds xray install" \
-       "ssh ${REMOTE} 'vds xray install'"
-log "Шаг 6/9: установка Hysteria2 (QUIC, UDP 443) ..."
-ssh "${SSH_OPTS[@]}" "$REMOTE" \
-    "vds hysteria2 install" \
-    || fail_step 6 "vds hysteria2 install" \
-       "ssh ${REMOTE} 'vds hysteria2 install'"
-for unit in vds-xray vds-hysteria2; do
-    state="$(ssh "${SSH_OPTS[@]}" "$REMOTE" "systemctl is-active ${unit}.service" || true)"
-    [[ "$state" == "active" ]] \
-        || fail_step 6 "systemctl is-active ${unit}" \
-           "ssh ${REMOTE} 'systemctl status ${unit}.service; journalctl -u ${unit}.service -n 50'"
-done
-log "Шаг 6/9: vds-xray и vds-hysteria2 активны."
-echo ""
-
-# ── 7. Домен: ACME + XHTTP ────────────────────────────────────────────────────
+# ── 6-8. Установка протоколов: vds gateway init (SPEC-20261114) ──────────────
+# Один идемпотентный вызов: Reality + Hysteria2 (+ выбранные в VDS_PROTOCOLS
+# транспорты), ACME/use-domain при домене, демо-клиенты, healthcheck-таймер.
+# Без домена ACME/XHTTP/CDN пропускаются init'ом с warning (установленное
+# работает). Fail-fast с командой ручного доката печатает сам init.
+INIT_ARGS=("gateway" "init" "--apply" "--protocols" "${VDS_PROTOCOLS}")
 if [[ -n "$SERVER_DOMAIN" ]]; then
-    log "Шаг 7/9: LE-сертификат для ${SERVER_DOMAIN} ..."
-    ssh "${SSH_OPTS[@]}" "$REMOTE" \
-        "vds acme issue --domain ${SERVER_DOMAIN} --email ${SERVER_EMAIL}" \
-        || fail_step 7 "vds acme issue" \
-           "ssh ${REMOTE} 'vds acme issue --domain ${SERVER_DOMAIN} --email ${SERVER_EMAIL}' (проверьте A-запись и открытый порт 80)"
-    log "Шаг 7/9: XHTTP-транспорт (port 8443) ..."
-    ssh "${SSH_OPTS[@]}" "$REMOTE" \
-        "vds xray add-transport xhttp --domain ${SERVER_DOMAIN} --mode port --apply --yes" \
-        || fail_step 7 "vds xray add-transport xhttp" \
-           "ssh ${REMOTE} 'vds xray add-transport xhttp --domain ${SERVER_DOMAIN} --mode port --apply --yes'"
-    ssh "${SSH_OPTS[@]}" "$REMOTE" \
-        "vds xray use-domain --domain ${SERVER_DOMAIN}" \
-        || fail_step 7 "vds xray use-domain" \
-           "ssh ${REMOTE} 'vds xray use-domain --domain ${SERVER_DOMAIN}'"
-    log "Шаг 7/9: домен ${SERVER_DOMAIN} подключён (ACME + XHTTP:8443)."
-else
-    log "Шаг 7/9: домен не задан — ACME/XHTTP пропущены."
+    INIT_ARGS+=("--domain" "${SERVER_DOMAIN}" "--email" "${SERVER_EMAIL}")
 fi
-echo ""
+INIT_ARGS+=("--demo-clients")
 
-# ── 8. Демо-клиенты ───────────────────────────────────────────────────────────
-log "Шаг 8/9: демо-клиенты phone (Xray) и mob (Hysteria2) ..."
-ssh "${SSH_OPTS[@]}" "$REMOTE" \
-    "vds gateway status" \
-    || fail_step 8 "vds gateway status" \
-       "ssh ${REMOTE} 'vds gateway status'"
-
-ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE_CLIENTS' \
-    || fail_step 8 "add-client" \
-       "ssh ${REMOTE} 'vds xray add-client phone; vds hysteria2 add-client mob'"
-set -e
-if vds gateway status | grep -E "phone \(xray"; then
-    echo "клиент phone уже есть — пропуск"
-else
-    vds xray add-client phone
-fi
-if vds gateway status | grep -E "mob \(hysteria2"; then
-    echo "клиент mob уже есть — пропуск"
-else
-    vds hysteria2 add-client mob
-fi
-REMOTE_CLIENTS
-log "Шаг 8/9: демо-клиенты готовы."
+log "Шаги 6-8/9: vds gateway init (${VDS_PROTOCOLS}, домен: ${SERVER_DOMAIN:-нет}) ..."
+ssh "${SSH_OPTS[@]}" "$REMOTE" "$(printf '%q ' "${INIT_ARGS[@]}")" \
+    || fail_step 6 "vds gateway init" \
+       "ssh ${REMOTE} '${INIT_ARGS[*]}' (init печатает шаг и команду доката)"
+log "Шаги 6-8/9: gateway поднят (юниты/порты — в итоговой карте init)."
 echo ""
 
 # ── 9. Ссылки для импорта ─────────────────────────────────────────────────────
@@ -246,7 +216,9 @@ log "Шаг 9/9: получение share-links ..."
 echo ""
 echo -e "${BOLD}${CYAN}=== Ссылки для импорта в клиентские приложения ===${NC}"
 echo ""
-ssh "${SSH_OPTS[@]}" "$REMOTE" "vds gateway links" \
+LINKS_ARGS=("gateway" "links")
+[[ "$VDS_PROTOCOLS" == *obfs* ]] && LINKS_ARGS+=("--include-obfs")
+ssh "${SSH_OPTS[@]}" "$REMOTE" "$(printf '%q ' "${LINKS_ARGS[@]}")" \
     || fail_step 9 "vds gateway links" \
        "ssh ${REMOTE} 'vds gateway links'"
 echo ""
