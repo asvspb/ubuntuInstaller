@@ -133,9 +133,10 @@ def _write_config_via_sudo(profile_name: str, link: ProfileLink,
 def _stop_awg_scheme(runner: RunCmd) -> Tuple[bool, str]:
     """Mutual exclusion: снять AWG-схему (туннель + split), если активна."""
     from . import amneziawg as awg
-    rc, _o, _e = runner(
-        ["systemctl", "is-active", f"{awg.AWG_UNIT_PREFIX}*.service"])
-    if rc != 0:
+    # list-units, а не is-active с glob: systemctl не раскрывает '*' в
+    # аргументе-списке (runner без shell), из-за чего активная AWG-схема
+    # не детектилась и xsplit вставал поверх AWG (два tun/mark).
+    if not awg.local_instance(runner):
         return True, "AWG-схема не активна"
     ok_t, msg_t = awg.tunnel_control("off", run=runner)
     if not ok_t:
@@ -242,7 +243,9 @@ def status(run: Optional[RunCmd] = None) -> Dict[str, Any]:
     }
     rc, out_txt, _err = runner(["ip", "link", "show", DEV])
     out["iface_up"] = rc == 0
-    rc, out_txt, _err = runner(["nft", "list", "table", f"inet {NFT_TABLE}"])
+    # nft требует root: без sudo -n правило считалось бы отсутствующим
+    rc, out_txt, _err = runner(
+        ["sudo", "-n", "nft", "list", "table", f"inet {NFT_TABLE}"])
     out["nft_table"] = rc == 0 and "Error" not in out_txt
     rc, out_txt, _err = runner(["ip", "rule", "show"])
     out["ip_rule"] = rc == 0 and f"fwmark {MARK_HEX}" in out_txt

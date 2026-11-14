@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import vpnm.amneziawg as amneziawg  # noqa: E402
 import vpnm.channels as channels  # noqa: E402
 import vpnm.profiles as profiles  # noqa: E402
 import vpnm.xsplit as xsplit  # noqa: E402
@@ -235,6 +236,8 @@ class TestApply:
         script = tmp_path / "17_xray-split.sh"
         script.write_text("#!/bin/bash\nexit 0\n")
         monkeypatch.setattr(xsplit, "xray_split_script", lambda: script)
+        monkeypatch.setattr(
+            amneziawg, "local_instance", lambda run=None: "laptop")
         stopped = []
 
         def run(cmd):
@@ -263,13 +266,13 @@ class TestApply:
         script = tmp_path / "17_xray-split.sh"
         script.write_text("#!/bin/bash\nexit 0\n")
         monkeypatch.setattr(xsplit, "xray_split_script", lambda: script)
+        monkeypatch.setattr(
+            amneziawg, "local_instance", lambda run=None: "laptop")
 
         def run(cmd):
             joined = " ".join(cmd)
             if "sudo -n true" in joined or "install" in joined:
                 return 0, "", ""
-            if "systemctl is-active vpn-awg-split@" in joined:
-                return 0, "active", ""
             if "systemctl stop vpn-awg-split@" in joined:
                 return 1, "", "no sudo"
             return 0, "", ""

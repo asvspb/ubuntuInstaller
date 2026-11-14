@@ -37,6 +37,7 @@ err()     { echo -e "${C_RED}[ERR]${C_RESET} $*" >&2; }
 
 # --- Параметры -----------------------------------------------------------------
 DEV="xray0"
+TUN_ADDR="10.66.0.1/30"   # Xray tun сам адрес не ставит (README proxy/tun)
 MARK_HEX="0x23000"
 ROUTE_TABLE="23000"
 NFT_TABLE="xray_split"
@@ -86,21 +87,39 @@ install_xray_bin() {
     fi
     info "установка Xray ${XRAY_TUN_VERSION} в ${BIN_DIR} (tun-инбаунд; v25.x tun не знает)"
     mkdir -p "$BIN_DIR"
-    local url="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_TUN_VERSION}/Xray-linux-64.zip"
+    local asset
+    case "$(uname -m)" in
+        x86_64) asset="Xray-linux-64.zip" ;;
+        aarch64|arm64) asset="Xray-linux-arm64-v8a.zip" ;;
+        *) err "архитектура $(uname -m) не поддержана (x86_64/arm64)"; exit 1 ;;
+    esac
+    local url="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_TUN_VERSION}/${asset}"
     local tmp; tmp="$(mktemp -d)"
     local downloaded=""
     for mirror in "" "https://ghproxy.net/" "https://gh-proxy.com/"; do
-        if curl -fsSL --retry 3 --retry-delay 2 --max-time 300 "${mirror}${url}" -o "$tmp/x.zip" && [ -s "$tmp/x.zip" ]; then
+        if curl -fsSL --retry 3 --retry-delay 2 --max-time 300 "${mirror}${url}" -o "$tmp/x.zip" \
+           && curl -fsSL --retry 3 --retry-delay 2 --max-time 60 "${mirror}${url}.dgst" -o "$tmp/x.dgst" \
+           && [ -s "$tmp/x.zip" ] && [ -s "$tmp/x.dgst" ]; then
             downloaded=1; break
         fi
     done
     [ -n "$downloaded" ] || { err "скачивание Xray не удалось (все зеркала)"; rm -rf "$tmp"; exit 1; }
+    local expected actual
+    # .dgst апстрима: строки `SHA2-256= <hex>` (не ':'), поддерживаем оба
+    expected="$(grep -E '^SHA2-256[[:space:]]*[=:]' "$tmp/x.dgst" | head -1 \
+        | sed -E 's/^SHA2-256[[:space:]]*[=:][[:space:]]*//' | tr -d '[:space:]')"
+    [ -n "$expected" ] || { err "в .dgst нет SHA2-256 — отказ (непроверенный бинарь)"; rm -rf "$tmp"; exit 1; }
+    actual="$(sha256sum "$tmp/x.zip" | awk '{print $1}')"
+    [ "$expected" = "$actual" ] || { err "SHA256 не совпал: ожидался $expected, получен $actual"; rm -rf "$tmp"; exit 1; }
+    success "SHA256 Xray совпал (.dgst)"
     # unzip может отсутствовать — python3 zipfile есть везде
     python3 - "$tmp/x.zip" "$tmp" <<'PY'
 import sys, zipfile
 zipfile.ZipFile(sys.argv[1]).extract("xray", sys.argv[2])
 PY
-    [ -x "$tmp/xray" ] || { err "бинарь xray не найден в архиве"; rm -rf "$tmp"; exit 1; }
+    # zip не сохраняет exec-бит: проверяем файл, права ставим сами
+    [ -f "$tmp/xray" ] || { err "бинарь xray не найден в архиве"; rm -rf "$tmp"; exit 1; }
+    chmod 0755 "$tmp/xray"
     install -m 0755 "$tmp/xray" "$XRAY_BIN"
     rm -rf "$tmp"
     "$XRAY_BIN" version | head -1 | grep -q "$XRAY_TUN_VERSION" \
@@ -119,7 +138,15 @@ install_cleanup() {
 set -e
 case "\$1" in
     --apply)
+        # ExecStartPost может обогнать создание tun: ждём iface до 10 с.
+        for _ in \$(seq 1 20); do
+            ip link show "${DEV}" >/dev/null 2>&1 && break
+            sleep 0.5
+        done
         ip link show "${DEV}" >/dev/null 2>&1 || exit 0
+        # Xray tun не назначает адреса (proxy/tun README): без IPv4 на iface
+        # пакеты уходят с чужим src и ответы не возвращаются.
+        ip addr replace ${TUN_ADDR} dev "${DEV}"
         sysctl -qw net.ipv4.conf.all.rp_filter=0
         sysctl -qw "net.ipv4.conf.${DEV}.rp_filter=0" 2>/dev/null || true
         ip rule add pref ${ROUTE_TABLE} fwmark ${MARK_HEX} table ${ROUTE_TABLE} 2>/dev/null || true
@@ -229,6 +256,13 @@ CONF="${CONF_DIR}/xray-split-${PROFILE}.json"
 
 info "профиль: ${PROFILE} (конфиг ${CONF})"
 install_xray_bin
+# Повторный apply: юнит уже держит tun — xray -test не сможет создать
+# устройство («device or resource busy»). Останавливаем перед валидацией.
+systemctl stop "${UNIT_NAME}${PROFILE}.service" 2>/dev/null || true
+for _ in $(seq 1 20); do
+    ip link show "$DEV" >/dev/null 2>&1 || break
+    sleep 0.5
+done
 "$XRAY_BIN" -test -c "$CONF" >/dev/null 2>&1 \
     || { err "конфиг ${CONF} не проходит xray -test — проверьте 'sudo ${XRAY_BIN} -test -c ${CONF}'"; exit 1; }
 success "конфиг валиден (xray -test)"
