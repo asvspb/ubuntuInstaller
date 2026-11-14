@@ -19,7 +19,9 @@ from .links import (
     PROTOCOL_XRAY_REALITY,
     PROTOCOL_XRAY_XHTTP,
     PROTOCOL_XRAY_WS,
+    LinkError,
     ProfileLink,
+    parse_link,
 )
 
 CONFIG_DIR = Path(os.environ.get("VPN_MANAGER_CONFIG_DIR",
@@ -146,3 +148,123 @@ def resolve_cdn(path: Optional[Path] = None) -> Optional[str]:
         if "cdn" in str(profile.get("name", "")).lower():
             return str(profile.get("name"))
     return str(ws[0].get("name")) if ws else None
+
+
+# --- сохранение/передача профилей ------------------------------------------
+
+BUNDLE_FORMAT = "vpnm-profiles"
+BUNDLE_VERSION = 1
+
+
+def default_bundle_path() -> Path:
+    """Путь по умолчанию: ~/vpn-profiles-YYYYMMDD-HHMMSS.json."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path.home() / f"vpn-profiles-{stamp}.json"
+
+
+def export_bundle(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Payload для бэкапа/переноса: все профили (ссылки = секреты)."""
+    return {
+        "format": BUNDLE_FORMAT,
+        "version": BUNDLE_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "profiles": _load(path),
+    }
+
+
+def save_bundle(payload: Dict[str, Any], path: Path) -> None:
+    """Атомарная запись бандла, всегда 0600 (внутри share-ссылки)."""
+    _atomic_write_0600(
+        path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def load_bundle(path: Path) -> Dict[str, Any]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProfileStoreError(f"bundle {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ProfileStoreError("bundle: ожидался JSON-объект")
+    return raw
+
+
+def import_bundle(payload: Dict[str, Any], replace: bool = False,
+                  dry_run: bool = False,
+                  path: Optional[Path] = None) -> Dict[str, List[str]]:
+    """Слить бандл в store; существующие имена — skip или replace.
+
+    Ссылки валидируются до записи (битый профиль отменяет весь импорт).
+    Возвращает имена по категориям added/replaced/skipped.
+    """
+    if payload.get("format") != BUNDLE_FORMAT:
+        raise ProfileStoreError(
+            f"bundle: неизвестный формат {payload.get('format')!r}")
+    try:
+        version = int(payload.get("version", 0))
+    except (TypeError, ValueError):
+        version = 0
+    if version != BUNDLE_VERSION:
+        raise ProfileStoreError(
+            f"bundle: версия {payload.get('version')!r} не поддерживается "
+            f"(нужна {BUNDLE_VERSION})")
+    records = payload.get("profiles")
+    if not isinstance(records, list) or not records:
+        raise ProfileStoreError("bundle: нет профилей")
+
+    existing = _load(path)
+    by_name = {str(p.get("name")): p for p in existing}
+    added: List[str] = []
+    replaced: List[str] = []
+    skipped: List[str] = []
+    appended: List[Dict[str, Any]] = []
+    seen = set()
+    for raw in records:
+        if not isinstance(raw, dict):
+            raise ProfileStoreError("bundle: профиль должен быть объектом")
+        name = str(raw.get("name") or "").strip()
+        link_text = str(raw.get("link") or "").strip()
+        if not name:
+            raise ProfileStoreError("bundle: профиль без имени")
+        if not link_text:
+            raise ProfileStoreError(f"bundle: профиль '{name}' без ссылки")
+        if name in seen:
+            raise ProfileStoreError(f"bundle: дубль имени '{name}'")
+        seen.add(name)
+        try:
+            parsed = parse_link(link_text)
+        except LinkError as exc:
+            raise ProfileStoreError(
+                f"bundle: профиль '{name}': {exc}") from exc
+        try:
+            port = int(raw.get("socks_port")
+                       or DEFAULT_SOCKS_PORT[parsed.protocol])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProfileStoreError(
+                f"bundle: профиль '{name}': некорректный socks_port") from exc
+        if not 1 <= port <= 65535:
+            raise ProfileStoreError(
+                f"bundle: профиль '{name}': socks_port {port} вне 1..65535")
+        record = {
+            "name": name,
+            "protocol": parsed.protocol,
+            "link": link_text,
+            "socks_port": port,
+            "created": str(raw.get("created")
+                           or datetime.now(timezone.utc).isoformat(
+                               timespec="seconds")),
+        }
+        if name in by_name:
+            if not replace:
+                skipped.append(name)
+                continue
+            replaced.append(name)
+            by_name[name] = record
+        else:
+            added.append(name)
+            by_name[name] = record
+            appended.append(record)
+
+    if not dry_run:
+        merged = [by_name[str(p.get("name"))] for p in existing] + appended
+        _save(merged, path)
+    return {"added": added, "replaced": replaced, "skipped": skipped}

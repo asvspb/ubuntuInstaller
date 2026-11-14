@@ -72,7 +72,9 @@ vpn install --linger
 | `vpn` | TUI-меню (Подключить / Отключить / Переключить / Статус / Профили / Системный прокси / Doctor) |
 | `vpn profile import <link>` | Импорт share-ссылки (`--name`, `--replace`) |
 | `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
-| `vpn profile list` / `remove <name>` / `show <name>` | Управление профилями |
+| `vpn profile list` / `remove <name>` / `show <name> [--link]` | Управление профилями; `--link` — исходная share-ссылка (секрет) |
+| `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
+| `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
 | `vpn start [reality\|xhttp\|awg]` / `vpn reset` | Основная схема: по умолчанию **Reality-split**, `xhttp` — XHTTP-split, `awg` — AWG+доменный split / полный сброс в состояние «как после перезагрузки» |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
@@ -107,6 +109,36 @@ vpn reset              # выключить всё
 Вкладку после запуска можно закрыть: схема живёт в systemd-юните, действует
 на всю систему (не только на эту вкладку) и держится до `vpn reset` или
 перезагрузки ОС.
+
+### VPN только для одной вкладки/браузера
+
+`vpn start`, `vpn scheme proxy` и split-схемы включают VPN для **всего**
+трафика. Точечно:
+
+```bash
+vpn reset                    # чистое состояние
+vpn up phone                 # socks 127.0.0.1:2080; sysproxy НЕ включается
+vpncli on                    # только текущая вкладка терминала (env)
+vpncli status                # состояние + exit IP
+vpncli off
+
+# отдельное окно/профиль Chrome целиком через VPN:
+google-chrome --user-data-dir="$HOME/.config/chrome-vpn" \
+  --proxy-server="socks5://127.0.0.1:2080"
+```
+
+- **вкладка терминала** — `vpncli on` (влияет только на эту сессию);
+- **вкладка браузера** — только расширением (SwitchyOmega/FoxyProxy):
+  профиль SOCKS5 `127.0.0.1:2080`, переключение per-site/per-tab;
+- **отдельный Chrome** — `--user-data-dir` + `--proxy-server` (весь профиль,
+  основной Chrome остаётся напрямую);
+- `vpn scheme private <profile>` — то же самое, но с печатью адреса и
+  подсказок, sysproxy не трогается;
+- после `vpn reset` сначала `vpn up <profile>`: в чистом состоянии sysproxy
+  выключен, поэтому обычный браузер останется прямым.
+
+Ограничения: WebRTC может утекать реальный IP в per-tab режиме; QUIC через
+SOCKS5 не ходит (Chrome сам откатывается на TCP).
 
 Shell-guard `_check_vpn_active()` в `$USER/.zshrc` / `$USER/.bashrc` (блокирует запуск
 Antigravity без активного VPN) признаёт, помимо ZeroTier/WireGuard/vpnm, AmneziaWG
@@ -320,6 +352,32 @@ behavioral-«заморозка» (blackhole ~120 с) триггерится с�
 одному SNI; параллельные пробы сами создают инцидент. Инвариант: **один SNI
 = один инбаунд, пробы серийно и разнесённо во времени**. При ручной приёмке —
 не запускать `openssl`/`ssh`/`curl` к тому же SNI параллельно.
+
+## Сохранение и передача профилей
+
+Бандл — один JSON со всеми профилями (share-ссылки). Конфиги отдельно не
+хранятся: они генерируются заново из ссылок, поэтому бандла достаточно для
+переноса на другую машину.
+
+```bash
+vpn profile export                      # ~/vpn-profiles-<дата>.json, 0600
+vpn profile export -o /tmp/vpn.json     # свой путь (--force для перезаписи)
+vpn profile export --stdout | age -p > vpn-profiles.age   # шифрование
+
+scp ~/vpn-profiles-*.json user@new-laptop:~
+vpn profile restore ~/vpn-profiles-*.json --dry-run       # план
+vpn profile restore ~/vpn-profiles-*.json                 # merge + подтверждение
+vpn profile restore ~/vpn-profiles-*.json --replace -y    # перезаписать совпадения
+age -d vpn-profiles.age | vpn profile restore - -y        # из stdin
+```
+
+- файл содержит секреты (UUID/пароли), всегда 0600 — не коммитить и не
+  пересылать открытым текстом;
+- `restore` валидирует **все** ссылки до записи: битый профиль отменяет импорт;
+- по умолчанию совпадающие имена пропускаются; `--replace` перезаписывает;
+- `--dry-run` показывает план без изменения store;
+- после импорта: `vpn profile list` → `vpn up <profile>`;
+- одна ссылка для телефона: `vpn profile show <profile> --link` (секрет).
 
 ## Интеграция с VDS-сервером (profile pull)
 

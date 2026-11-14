@@ -184,6 +184,8 @@
 - Xray VLESS Reality / XHTTP и Hysteria2: импорт share-ссылок, генерация конфигов
 - Systemd user units (`vpnm-<name>.service`): up / down / switch, активный профиль в state.json
 - `vpn profile pull` — импорт ссылок с VDS-сервера по ssh (`vds gateway links`)
+- `vpn profile export/restore` — бандл профилей (JSON, 0600) для бэкапа
+  и переноса на другой ноутбук; `show --link` — одна share-ссылка
 - `vpn sysproxy on|off|status` — GNOME системный прокси → локальный SOCKS-порт
 - `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель, zapret
 - `vpn zapret on|off|status` — «канал 0»: zapret (nfqws DPI-desync) на прямых соединениях

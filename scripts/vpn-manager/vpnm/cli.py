@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+from pathlib import Path
 from typing import Any, Optional, Tuple
 
 import typer
@@ -152,11 +154,25 @@ app = VpnTyper(
   # 2080 -> Reality/XHTTP; 2083 -> Hysteria2. Chrome применяет
   # системный прокси ТОЛЬКО при старте — после смены перезапустить.
 
+VPN для одной вкладки/браузера (остальное — напрямую):
+
+  vpn up <profile>           # socks 127.0.0.1:208x; sysproxy НЕ включается
+  vpncli on                  # только текущая вкладка терминала (env)
+  vpn scheme private <profile>  # socks + готовая команда для Chrome
+
+  Вкладка браузера — только расширением (SwitchyOmega/FoxyProxy, SOCKS5
+  127.0.0.1:2080). Отдельный Chrome целиком — 'vpn scheme private <profile>'
+  печатает --user-data-dir/--proxy-server. 'vpn start'/'scheme proxy' —
+  это VPN для всего трафика.
+
 Профили и сервер:
 
   vpn profile pull -H root@asv1   # подтянуть share-линки с VDS (asv1)
   vpn profile list                # сохранённые профили (без секретов)
   vpn profile show <profile>      # детали + конфиг (ПЕЧАТАЕТ СЕКРЕТЫ)
+  vpn profile show <profile> --link  # одна share-ссылка (секрет)
+  vpn profile export -o b.json    # бандл всех профилей (0600, секреты)
+  vpn profile restore b.json      # перенос на другой ноутбук (--dry-run)
   vpn amneziawg status            # локальный туннель + сервер
   vpn amneziawg add-client <name> # создать клиента на сервере и забрать конфиг
 
@@ -382,13 +398,21 @@ def profile_remove(name: str, force: bool = typer.Option(
 
 
 @profile_app.command("show")
-def profile_show(name: str) -> None:
+def profile_show(name: str,
+                 show_link: bool = typer.Option(
+                     False, "--link",
+                     help="Печать исходную share-ссылку (СЕКРЕТ)")) -> None:
     """Детали профиля + сгенерированный конфиг (ПЕЧАТАЕТ СЕКРЕТЫ)."""
     try:
         record = profiles.get(name)
     except profiles.ProfileStoreError as exc:
         _err(str(exc))
         raise typer.Exit(code=2)
+    if show_link:
+        typer.echo("warning: ссылка содержит секреты (UUID/пароль) — "
+                   "не вставляйте в чаты/тикеты", err=True)
+        typer.echo(str(record["link"]))
+        return
     try:
         parsed = parse_link(record["link"])
     except LinkError as exc:
@@ -400,6 +424,110 @@ def profile_show(name: str) -> None:
         {k: v for k, v in record.items() if k != "link"}, indent=2))
     typer.echo("---")
     typer.echo(config_text)
+
+
+@profile_app.command("export")
+def profile_export(
+        out: Optional[str] = typer.Option(
+            None, "--out", "-o",
+            help="Файл бандла (по умолчанию ~/vpn-profiles-<дата>.json)"),
+        stdout: bool = typer.Option(
+            False, "--stdout",
+            help="JSON в stdout — для шифрования (gpg/age), не для терминала"),
+        force: bool = typer.Option(
+            False, "--force", "-f", help="Перезаписать существующий файл")) -> None:
+    """Сохранить все профили в бандл (бэкап/перенос; содержит секреты).
+
+    Бандл — JSON со share-ссылками: из него восстанавливаются и профили, и
+    конфиги (они генерируются заново). Файл всегда 0600.
+    """
+    payload = profiles.export_bundle()
+    if not payload["profiles"]:
+        _err("профилей нет — нечего экспортировать")
+        raise typer.Exit(code=1)
+    if stdout:
+        typer.echo("warning: в stdout share-ссылки с секретами — "
+                   "направьте вывод в gpg/age, не в лог", err=True)
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    target = Path(out) if out else profiles.default_bundle_path()
+    if target.exists() and not force:
+        _err(f"файл уже существует: {target} (--force для перезаписи)")
+        raise typer.Exit(code=2)
+    try:
+        profiles.save_bundle(payload, target)
+    except OSError as exc:
+        _err(f"не записал {target}: {exc}")
+        raise typer.Exit(code=2)
+    _ok(f"экспортировано профилей: {len(payload['profiles'])} → {target} "
+        "(0600, содержит секреты; передавайте scp/age, не почтой)")
+
+
+@profile_app.command("restore")
+def profile_restore(
+        file: str = typer.Argument(
+            ..., metavar="FILE|-",
+            help="JSON-бандл от 'vpn profile export'; '-' — stdin"),
+        replace: bool = typer.Option(
+            False, "--replace", help="Перезаписать совпадающие имена"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Показать план, ничего не менять"),
+        yes: bool = typer.Option(
+            False, "--yes", "-y", help="Без подтверждения")) -> None:
+    """Влить бандл: новые профили добавить, совпадающие — skip/--replace."""
+    if file == "-":
+        try:
+            payload = json.loads(sys.stdin.read())
+        except json.JSONDecodeError as exc:
+            _err(f"stdin: некорректный JSON: {exc}")
+            raise typer.Exit(code=2)
+    else:
+        path = Path(file)
+        if not path.exists():
+            _err(f"файл не найден: {path}")
+            raise typer.Exit(code=2)
+        try:
+            mode = path.stat().st_mode & 0o777
+            if mode & 0o077:
+                _warn(f"{path} доступен другим (0o{mode:03o}) — "
+                      "перенесите в 0600: chmod 600")
+            payload = profiles.load_bundle(path)
+        except (OSError, profiles.ProfileStoreError) as exc:
+            _err(str(exc))
+            raise typer.Exit(code=2)
+    try:
+        preview = profiles.import_bundle(payload, replace=replace,
+                                         dry_run=True)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    added, replaced = preview["added"], preview["replaced"]
+    if added:
+        typer.echo("добавить: " + ", ".join(added))
+    if replaced:
+        typer.echo("заменить: " + ", ".join(replaced))
+    if preview["skipped"]:
+        typer.echo("пропустить (уже есть): " + ", ".join(preview["skipped"]))
+    if dry_run:
+        typer.echo("dry-run: store не изменён")
+        return
+    if not added and not replaced:
+        _ok("нечего импортировать — все профили уже есть")
+        return
+    if not yes and not typer.confirm(
+            f"Импортировать {len(added) + len(replaced)} профилей?",
+            default=True):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+    try:
+        result = profiles.import_bundle(payload, replace=replace)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    _ok(f"импорт завершён: добавлено {len(result['added'])}, "
+        f"заменено {len(result['replaced'])}, "
+        f"пропущено {len(result['skipped'])}; "
+        "запуск — 'vpn up <profile>' (см. 'vpn profile list')")
 
 
 # --- lifecycle (WP-C) --------------------------------------------------------
@@ -430,7 +558,14 @@ def _sync_sysproxy_off_after() -> None:
 
 @app.command()
 def up(name: str) -> None:
-    """Запустить профиль: vpn up <profile> (socks-порт см. в vpn profile list)."""
+    """Запустить профиль: vpn up <profile> (socks-порт см. в vpn profile list).
+
+    Поднимает только локальный socks-клиент: маршруты и системный прокси не
+    меняются (sysproxy включается отдельно, 'vpn sysproxy on'). Для VPN в
+    одной вкладке терминала — 'vpncli on'; в браузере — расширение
+    (SwitchyOmega/FoxyProxy) или отдельный Chrome с --proxy-server
+    (см. 'vpn --help', блок про одну вкладку).
+    """
     from . import runners
     try:
         config_path = runners.up(name)
@@ -489,10 +624,11 @@ def scheme_cmd(preset: str = typer.Argument(
     vpn scheme proxy <profile>   —vpnm как ОБЩИЙ системный прокси: поднять
                                    профиль по заданному протоколу + sysproxy on
     vpn scheme private <profile> — vpnm как ЧАСТНЫЙ прокси: поднять профиль,
-                                   системный прокси НЕ трогать; печать адреса
-                                   socks для прокси-приложений браузера
-                                   (расширения/профили/vpncli) — весь остальной
-                                   трафик остаётся в текущей схеме
+                                   системный прокси НЕ трогать; печатает
+                                   socks-адрес и варианты: расширение браузера
+                                   (SwitchyOmega/FoxyProxy), отдельный Chrome
+                                   --proxy-server, вкладка терминала 'vpncli on';
+                                   остальной трафик остаётся в текущей схеме
 
     Все пресеты идемпотентны; 'vpn reset' — общий выключатель.
     """
@@ -567,8 +703,8 @@ def scheme_cmd(preset: str = typer.Argument(
                        "127.0.0.1:%d точечно:" % port)
             typer.echo("  • расширение-прокси в Chrome (SwitchyOmega и т.п.) "
                        "→ socks5 127.0.0.1:%d" % port)
-            typer.echo("  • отдельный Chrome-профиль: google-chrome "
-                       "--profile-directory=X "
+            typer.echo("  • отдельный Chrome: google-chrome "
+                       "--user-data-dir=$HOME/.config/chrome-vpn "
                        "--proxy-server='socks5://127.0.0.1:%d'" % port)
             typer.echo("  • вкладка терминала: vpncli on %d" % port)
             typer.echo("  • curl/инструменты: --socks5-hostname "
