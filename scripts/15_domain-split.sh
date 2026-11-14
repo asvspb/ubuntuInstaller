@@ -40,6 +40,11 @@ warn()    { echo -e "${C_YELLOW}[WARN]${C_RESET} $*"; }
 err()     { echo -e "${C_RED}[ERR]${C_RESET} $*" >&2; }
 
 # --- Параметры (редактируйте под себя) -----------------------------------------
+# Параметризация (SPEC-20261114-xhttp-split WP-1): одна механика обслуживает
+# AWG-split (дефолты прежние) и XHTTP-split (17_xray-split.sh вызывает с
+# --dev xray0 --mark 0x23000 --table 23000 --nft-table xray_split).
+# Дефолты без флагов не изменились — backward-compat.
+SPLIT_MODE="awg"            # awg | xray (влияет только на AWG-специфичные секции)
 DOMAINS_FILE="/opt/awg-split/domains.txt"
 DNSMASQ_CONF="/etc/dnsmasq.d/awg-split.conf"
 NFT_TABLE="awg_split"
@@ -55,6 +60,32 @@ RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же фа�
 PUBLIC_DNS_CONF="/etc/systemd/resolved.conf.d/public-dns.conf"  # глобальный DNS=1.1.1.1 8.8.8.8 — обходит dnsmasq, нейтрализуем
 # Юнит AWG: templated (14_awg-split.sh) или точечный — автодетект ниже.
 AWG_UNIT_PREF=(vpn-awg-split@laptop.service vpn-awg-split.service)
+
+# Реконструкция флагов для sudo re-exec: exec теряет сдвинутые positional
+# params, поэтому параметры передаются явно (_FLAGS).
+_FLAGS=""
+# --- Разбор флагов (до sudo re-exec: аргументы передаются exec'ом) ---------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dev)       AWG_IFACE="$2"; shift 2 ;;
+        --mark)      MARK_HEX="$2"; shift 2 ;;
+        --table)     ROUTE_TABLE="$2"; RULE_PREF="$2"; shift 2 ;;
+        --nft-table) NFT_TABLE="$2"; shift 2 ;;
+        --mode)      SPLIT_MODE="$2"; shift 2 ;;
+        *) break ;;  # --status/--off и прочие разборы ниже
+    esac
+done
+# Режим: AWG-специфичные секции (awg-конфиг, masquerade, автодетект юнита)
+# выполняются только для awg*-интерфейса; для xray-туннеля (dev=xray0) они
+# не нужны — xray сам держит сокеты с хостовым src-адресом.
+case "${AWG_IFACE}" in awg*) : ;; *) SPLIT_MODE="xray" ;; esac
+# DNSMASQ_CONF: дефолт — прежний путь (backward-compat, существующие
+# установки живут в awg-split.conf); для другой nft-таблицы (xray_split) —
+# отдельный файл по имени таблицы.
+if [ "$NFT_TABLE" != "awg_split" ]; then
+    DNSMASQ_CONF="/etc/dnsmasq.d/${NFT_TABLE}.conf"
+fi
+_FLAGS="--dev ${AWG_IFACE} --mark ${MARK_HEX} --table ${ROUTE_TABLE} --nft-table ${NFT_TABLE}"
 
 # Дефолтный список доменов. Редактируйте в $DOMAINS_FILE после установки.
 DEFAULT_DOMAINS=(
@@ -146,12 +177,12 @@ MERGE_EXTRA_DOMAINS=(
 # --- 0. Root -------------------------------------------------------------------
 if [ "$1" = "--status" ]; then
     # status можно смотреть и без root (nft покажет только с root — сами запросим)
-    if [ "$(id -u)" -ne 0 ]; then exec sudo bash "$0" "$@"; fi
+    if [ "$(id -u)" -ne 0 ]; then exec sudo bash "$0" ${_FLAGS} "$@"; fi
 elif [ "$(id -u)" -ne 0 ]; then
     if ! sudo -n true 2>/dev/null; then
         warn "нет passwordless sudo — сейчас будет запрошен пароль"
     fi
-    exec sudo bash "$0" "$@"
+    exec sudo bash "$0" ${_FLAGS} "$@"
 fi
 
 for tool in systemctl nft ip dig install awk; do
@@ -164,6 +195,7 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
     [ -n "$SUDO_USER_HOME" ] && AWG_CONF="${AWG_CONF/$HOME/$SUDO_USER_HOME}"
     AWG_CONF="${AWG_CONF/#\/root\//$SUDO_USER_HOME/}"
 fi
+if [ "$SPLIT_MODE" = "awg" ]; then
 # --- Автодетект iface и конфига AWG (юнит может быть vpn-awg-split@<любой>) -------
 # конфиг берём из ExecStart активного юнита; iface = базовое имя конфига
 # (правило wg-quick/awg-quick), проверяем по 'awg show interfaces'.
@@ -215,6 +247,12 @@ awg_restart() {
     warn "AWG-юнит не найден/не перезапустился — конфиг ${AWG_CONF} примените вручную: awg-quick down/up"
     return 0
 }
+else
+    # xray-режим: AWG-конфиг/юнит не нужны; iface задаётся --dev и должен
+    # существовать к моменту запуска (его поднимает vpn-xray-split@).
+    info "режим: xray-split (iface ${AWG_IFACE}, mark ${MARK_HEX}, table ${ROUTE_TABLE}, nft ${NFT_TABLE})"
+    TUNNEL_NET=""
+fi
 
 # --- helpers ---------------------------------------------------------------------
 # домены из файла (без комментариев/пустых), по одному на строку
@@ -234,7 +272,12 @@ if [ "$1" = "--status" ]; then
     echo "ip rule:         $(ip rule show | grep -c "fwmark $MARK_HEX" || true) шт (fwmark $MARK_HEX)"
     echo "route t$ROUTE_TABLE: $(ip route show table "$ROUTE_TABLE" 2>/dev/null || echo 'пусто')"
     echo "интерфейс:       $(ip link show "$AWG_IFACE" >/dev/null 2>&1 && echo "$AWG_IFACE up" || echo "$AWG_IFACE нет")"
-    echo "AWG-юнит:        ${AWG_UNIT:-не найден}"
+    if [ "$SPLIT_MODE" = "awg" ]; then
+        echo "AWG-юнит:        ${AWG_UNIT:-не найден}"
+    else
+        echo "режим:           xray-split (dev ${AWG_IFACE}, mark ${MARK_HEX}, table ${ROUTE_TABLE}, nft ${NFT_TABLE})"
+        echo "xsplit-юнит:     $(systemctl is-active vpn-xray-split@*.service 2>/dev/null | head -1 || echo unknown)"
+    fi
     echo "проверка DNS:    $(dig "@127.0.0.1" www.youtube.com +short 2>/dev/null | head -1 || echo 'нет ответа')"
     exit 0
 fi
@@ -269,7 +312,11 @@ if [ "$1" = "--off" ]; then
     echo -e "${C_GREEN}=============================================================${C_RESET}"
     echo -e "${C_GREEN}[OK]${C_RESET} доменный split демонтирован."
     echo "Осталось вручную (по желанию):"
-    echo "  - вернуть AWG-конфиг ${AWG_CONF} к split-AllowedIPs (backup: ${AWG_CONF}.bak.*)"
+    if [ "$SPLIT_MODE" = "awg" ]; then
+        echo "  - вернуть AWG-конфиг ${AWG_CONF} к split-AllowedIPs (backup: ${AWG_CONF}.bak.*)"
+    else
+        echo "  - xsplit-юнит: sudo systemctl disable --now vpn-xray-split@<профиль> (17_xray-split.sh --off)"
+    fi
     echo "  - stop сервисов: sudo systemctl disable --now dnsmasq (если нужен только сплит)"
     echo "  - список доменов сохранён: $DOMAINS_FILE"
     echo -e "${C_GREEN}=============================================================${C_RESET}"
@@ -499,7 +546,11 @@ success "dnsmasq-конфиг записан (${DOMAIN_COUNT} маршрутов
 # --- 5. nft-таблица inet/awg_split + ip rule/route -----------------------------------------
 info "5. nft/fwmark-маршрутизация (mark ${MARK_HEX} → table ${ROUTE_TABLE} dev ${AWG_IFACE})"
 if ! ip link show "$AWG_IFACE" >/dev/null 2>&1; then
-    err "интерфейс ${AWG_IFACE} не существует — сначала поднимите AWG: bash scripts/14_awg-split.sh"
+    if [ "$SPLIT_MODE" = "awg" ]; then
+        err "интерфейс ${AWG_IFACE} не существует — сначала поднимите AWG: bash scripts/14_awg-split.sh"
+    else
+        err "интерфейс ${AWG_IFACE} не существует — сначала поднимите xsplit-юнит: sudo systemctl start vpn-xray-split@<профиль>"
+    fi
     exit 1
 fi
 
@@ -512,6 +563,19 @@ success "rp_filter отключён (all + ${AWG_IFACE})"
 
 # идемпотентно: recreate таблицы (nft ruleset для одной таблицы)
 nft delete table "inet $NFT_TABLE" 2>/dev/null || true
+# masquerade нужен только AWG: ядро гонит пакеты через awg0-split, сохраняя
+# LAN-src; для xray-tun xray сам держит сокеты с хостовым src — правила нет.
+if [ "$SPLIT_MODE" = "awg" ]; then
+    MASQ_CHAIN="    chain postroute {
+        type nat hook postrouting priority srcnat; policy accept;
+        # fwmark-перенаправление меняет интерфейс, но НЕ source address сокета
+        # (выбран по main-таблице = LAN IP). Сервер не маршрутизирует обратно
+        # на LAN-адрес → masquerade в туннельный адрес (фикс 2026-11-11).
+        oifname \"${AWG_IFACE}\" ip saddr != ${TUNNEL_NET} meta mark ${MARK_HEX} masquerade
+    }"
+else
+    MASQ_CHAIN=""
+fi
 nft -f - <<NFT
 table inet ${NFT_TABLE} {
     set ${NFT_SET} {
@@ -524,17 +588,12 @@ table inet ${NFT_TABLE} {
         flags interval
         auto-merge
     }
-    chain postroute {
-        type nat hook postrouting priority srcnat; policy accept;
-        # fwmark-перенаправление меняет интерфейс, но НЕ source address сокета
-        # (выбран по main-таблице = LAN IP). Сервер не маршрутизирует обратно
-        # на LAN-адрес → masquerade в туннельный адрес (фикс 2026-11-11).
-        oifname "${AWG_IFACE}" ip saddr != ${TUNNEL_NET} meta mark ${MARK_HEX} masquerade
-    }
+${MASQ_CHAIN}
     chain out {
         type route hook output priority mangle; policy accept;
         # UDP-пакеты самого AWG (fwmark 0xca6c от awg-quick) — не трогаем,
-        # иначе endpoint-трафик зациклится в туннель
+        # иначе endpoint-трафик зациклится в туннель; в xray-режиме таких
+        # пакетов не бывает — правило пустое и безвредное
         meta mark 0xca6c return
         # исключения (GLM-кластер и т.п.) — всегда напрямую, даже в TLD-зоне
         ip daddr @excluded return
@@ -559,7 +618,8 @@ if ! ip route show table "$ROUTE_TABLE" 2>/dev/null | grep -q "^default dev ${AW
 fi
 success "ip rule pref ${RULE_PREF} fwmark ${MARK_HEX} → table ${ROUTE_TABLE} (default dev ${AWG_IFACE})"
 
-# --- 6. AWG-конфиг: Table=off + AllowedIPs 0.0.0.0/0 ------------------------------------------
+# --- 6. AWG-конфиг (только режим AWG; xray-tun конфига awg-quick не требует) ---
+if [ "$SPLIT_MODE" = "awg" ]; then
 info "6. AWG-конфиг ${AWG_CONF}: Table=off + AllowedIPs=0.0.0.0/0, ::/0 (cryptokey-routing)"
 if [ ! -f "$AWG_CONF" ]; then
     err "конфиг ${AWG_CONF} не найден — сначала bash scripts/14_awg-split.sh"
@@ -601,6 +661,7 @@ if [ "$CONF_DIRTY" -eq 1 ]; then
         success "awg-quick подтвердил fwmark 0xca6c (ip rule на месте)"
     fi
 fi
+fi # SPLIT_MODE=awg
 
 # --- 7. systemd-resolved: DNS → 127.0.0.1 (dnsmasq), Domains=~. ---------------------------------
 info "7. systemd-resolved: системный DNS → dnsmasq (127.0.0.1:53)"
