@@ -73,6 +73,8 @@ vpn install --linger
 | `vpn profile import <link>` | Импорт share-ссылки (`--name`, `--replace`) |
 | `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
 | `vpn profile list` / `remove <name>` / `show <name> [--link]` | Управление профилями; `--link` — исходная share-ссылка (секрет) |
+| `vpn profile config <name> [--native]` | Конфиг текстом: share-ссылка или сгенерированный JSON/YAML (секрет) |
+| `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`) |
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
@@ -378,6 +380,19 @@ age -d vpn-profiles.age | vpn profile restore - -y        # из stdin
 - `--dry-run` показывает план без изменения store;
 - после импорта: `vpn profile list` → `vpn up <profile>`;
 - одна ссылка для телефона: `vpn profile show <profile> --link` (секрет).
+
+### QR и конфиг текстом (как `wg`)
+
+```bash
+vpn profile config phone            # share-ссылка (vless://…) текстом
+vpn profile config phone --native   # JSON (xray) / YAML (hysteria2)
+vpn profile qr phone                # QR в терминале → сканировать телефоном
+vpn profile qr phone --native       # QR самого конфига (плотный)
+```
+
+QR строит системный `qrencode` (`sudo apt install qrencode`); share-ссылка
+передаётся ему через stdin, поэтому секрет не попадает в argv/логи.
+Сканируется v2rayNG, Hiddify, Streisand и другими Xray-клиентами.
 
 ## Интеграция с VDS-сервером (profile pull)
 

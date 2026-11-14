@@ -171,6 +171,8 @@ VPN для одной вкладки/браузера (остальное — н
   vpn profile list                # сохранённые профили (без секретов)
   vpn profile show <profile>      # детали + конфиг (ПЕЧАТАЕТ СЕКРЕТЫ)
   vpn profile show <profile> --link  # одна share-ссылка (секрет)
+  vpn profile config <profile>    # конфиг текстом (--native — JSON/YAML)
+  vpn profile qr <profile>        # QR в терминале для телефона
   vpn profile export -o b.json    # бандл всех профилей (0600, секреты)
   vpn profile restore b.json      # перенос на другой ноутбук (--dry-run)
   vpn amneziawg status            # локальный туннель + сервер
@@ -424,6 +426,64 @@ def profile_show(name: str,
         {k: v for k, v in record.items() if k != "link"}, indent=2))
     typer.echo("---")
     typer.echo(config_text)
+
+
+def _profile_config_text(name: str, native: bool) -> str:
+    """Share-ссылка (по умолчанию) или сгенерированный конфиг профиля."""
+    record = profiles.get(name)
+    if not native:
+        return str(record["link"])
+    from .xclient import generate
+    return generate(parse_link(str(record["link"])),
+                    int(record["socks_port"]))
+
+
+@profile_app.command("config")
+def profile_config(name: str,
+                   native: bool = typer.Option(
+                       False, "--native",
+                       help="Сгенерированный JSON/YAML вместо share-ссылки")) -> None:
+    """Конфиг профиля текстом для копирования (содержит секреты).
+
+    По умолчанию — share-ссылка (`vless://…` / `hysteria2://…`), её
+    импортируют клиенты (v2rayNG, Hiddify, Streisand). `--native` —
+    сгенерированный конфиг xray/hysteria для ручного копирования.
+    """
+    try:
+        text = _profile_config_text(name, native)
+    except (profiles.ProfileStoreError, LinkError, ValueError) as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    typer.echo("warning: конфиг содержит секреты (UUID/пароль) — "
+               "не вставляйте в чаты/тикеты", err=True)
+    typer.echo(text)
+
+
+@profile_app.command("qr")
+def profile_qr(name: str,
+               native: bool = typer.Option(
+                   False, "--native",
+                   help="QR сгенерированного конфига (плотный) вместо ссылки")) -> None:
+    """QR профиля в терминале: сканировать телефоном (v2rayNG/Hiddify).
+
+    По умолчанию кодируется share-ссылка; требуется `qrencode`
+    (`sudo apt install qrencode`), секрет идёт через stdin, не в argv.
+    """
+    try:
+        text = _profile_config_text(name, native)
+    except (profiles.ProfileStoreError, LinkError, ValueError) as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    if native:
+        _warn("QR JSON-конфига плотный — сканеры могут не взять; "
+              "для телефона обычно нужна share-ссылка")
+    from .qr import QrError, render
+    try:
+        art = render(text)
+    except QrError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    typer.echo(art)
 
 
 @profile_app.command("export")
