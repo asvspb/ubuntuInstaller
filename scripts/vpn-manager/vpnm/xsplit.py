@@ -23,15 +23,19 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from . import profiles
-from .links import ProfileLink, parse_link, PROTOCOL_XRAY_XHTTP
+from .links import (ProfileLink, parse_link, PROTOCOL_XRAY_REALITY,
+                    PROTOCOL_XRAY_XHTTP)
 from .runners import RunCmd, run_cmd
 from .xclient import xray_tun_config
 
 XRAY_SPLIT_UNIT_PREFIX = "vpn-xray-split@"
+# tun-схема транспорто-независима: Reality (443) и XHTTP (8443).
+ALLOWED_PROTOCOLS = (PROTOCOL_XRAY_REALITY, PROTOCOL_XRAY_XHTTP)
 CONF_DIR = "/etc/vpn-manager"
 CONF_PREFIX = "xray-split-"
 XRAY_SPLIT_SCRIPT_ENV = "VPNM_XRAY_SPLIT_SCRIPT"
@@ -64,25 +68,35 @@ def xray_split_script() -> Optional[Path]:
 
 
 def resolve_profile(name: Optional[str] = None,
-                    path: Optional[Path] = None) -> str:
-    """Имя xray-xhttp профиля: явное (с валидацией) или первый из store.
+                    path: Optional[Path] = None,
+                    default_protocol: Optional[str] = None) -> str:
+    """Профиль для tun-split: явный или первый подходящий из store.
 
-    Raises XSplitError, если профиля нет/протокол не xray-xhttp.
+    Подходят Reality и XHTTP (оба — xray-транспорты). `default_protocol`
+    ограничивает автовыбор (алиас `xhttp-split` → только xray-xhttp).
+    Raises XSplitError, если профиля нет/протокол не поддержан.
     """
     store = profiles.list_profiles(path)
     if name:
         record = profiles.get(name, path)
-        if str(record.get("protocol")) != PROTOCOL_XRAY_XHTTP:
+        protocol = str(record.get("protocol"))
+        if protocol not in ALLOWED_PROTOCOLS:
             raise XSplitError(
-                f"профиль '{name}' — протокол {record.get('protocol')}, "
-                f"xsplit строится только от {PROTOCOL_XRAY_XHTTP} "
-                "(ссылка вида vless://…#network=xhttp)")
+                f"профиль '{name}' — протокол {protocol}, xray-split "
+                f"строится только от {'/'.join(ALLOWED_PROTOCOLS)}")
         return name
-    candidates = [str(p.get("name")) for p in store
-                  if str(p.get("protocol")) == PROTOCOL_XRAY_XHTTP]
+    candidates = [
+        str(p.get("name")) for p in store
+        if str(p.get("protocol")) in ALLOWED_PROTOCOLS
+        and (default_protocol is None
+             or str(p.get("protocol")) == default_protocol)
+    ]
     if not candidates:
+        hint = "reality/xhttp"
+        if default_protocol:
+            hint = default_protocol
         raise XSplitError(
-            "xray-xhttp профиля нет — импортируйте XHTTP-ссылку "
+            f"профиля {hint} нет — импортируйте ссылку "
             "('vpn profile pull -H <host>' или 'vpn profile import')")
     return candidates[0]
 
@@ -150,6 +164,22 @@ def _ensure_doh(runner: RunCmd) -> Tuple[bool, str]:
     return doh_mod.enable(runner)
 
 
+def _wait_doh(runner: RunCmd, attempts: int = 10,
+              delay: float = 1.0) -> Tuple[bool, str]:
+    """Дождаться, пока dnsmasq/DoH начнёт резолвить (флап cloudflared).
+
+    `17`/15 сами проверяют dig, но на живом ноутбуке апстрим иногда не готов
+    с первого раза; без ретрая split поднимался с мёртвым DNS.
+    """
+    for _ in range(attempts):
+        rc, out, _err = runner(
+            ["dig", "+short", "@127.0.0.1", "www.youtube.com"])
+        if rc == 0 and out.strip():
+            return True, "DoH-цепочка готова"
+        time.sleep(delay)
+    return False, f"dnsmasq/DoH не резолвит за {attempts} с"
+
+
 def _stop_awg_scheme(runner: RunCmd) -> Tuple[bool, str]:
     """Mutual exclusion: снять AWG-схему (туннель + split), если активна."""
     from . import amneziawg as awg
@@ -169,7 +199,8 @@ def _stop_awg_scheme(runner: RunCmd) -> Tuple[bool, str]:
 
 
 def apply(profile: Optional[str] = None,
-          run: Optional[RunCmd] = None) -> Tuple[bool, str]:
+          run: Optional[RunCmd] = None,
+          default_protocol: Optional[str] = None) -> Tuple[bool, str]:
     """Поднять системный XHTTP-split. Возвращает (ok, сообщение).
 
     Порядок: sudo-проба → профиль → конфиг через sudo → стоп AWG-схемы →
@@ -183,7 +214,7 @@ def apply(profile: Optional[str] = None,
         return False, ("нет passwordless sudo — выполните вручную: "
                        + _manual_hint(script, "--profile <профиль>"))
     try:
-        name = resolve_profile(profile)
+        name = resolve_profile(profile, default_protocol=default_protocol)
     except XSplitError as exc:
         return False, str(exc)
     try:
@@ -201,6 +232,9 @@ def apply(profile: Optional[str] = None,
     ok_doh, msg_doh = _ensure_doh(runner)
     if not ok_doh:
         return False, f"DoH-цепочка не включена ({msg_doh}) — xsplit без неё ломает DNS"
+    ok_ready, msg_ready = _wait_doh(runner)
+    if not ok_ready:
+        return False, f"{msg_ready} — повторите 'vpn scheme xray-split' после 'vpn doh status'"
     rc, out, err = runner(
         ["sudo", "-n", "bash", str(script), "--profile", name])
     if rc == 0:

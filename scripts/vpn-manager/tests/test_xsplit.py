@@ -138,7 +138,7 @@ class TestXrayTunConfig:
 
 class TestResolveProfile:
     def test_no_profiles(self, store):
-        with pytest.raises(xsplit.XSplitError, match="xray-xhttp профиля нет"):
+        with pytest.raises(xsplit.XSplitError, match="reality/xhttp"):
             xsplit.resolve_profile(path=store)
 
     def test_first_xhttp_profile(self, store):
@@ -164,6 +164,12 @@ class TestResolveProfile:
 
 
 class TestApply:
+    @pytest.fixture(autouse=True)
+    def _stub_doh(self, monkeypatch):
+        # DoH/резолвинг — внешняя среда; в unit-тестах фиксируем готовность.
+        monkeypatch.setattr(xsplit, "_ensure_doh", lambda run: (True, "ok"))
+        monkeypatch.setattr(xsplit, "_wait_doh", lambda run, **kw: (True, "ok"))
+
     def test_no_script(self, store, tmp_path, monkeypatch):
         add_profile(store, xhttp_link(), "web")
         monkeypatch.setattr(xsplit, "xray_split_script", lambda: None)
@@ -419,3 +425,42 @@ class TestScriptSyntax:
         proc = subprocess.run(["bash", "-n", str(fifteen)],
                               capture_output=True, text=True)
         assert proc.returncode == 0, proc.stderr
+
+
+class TestRealitySupport:
+    REALITY_LINK = (
+        "vless://11111111-2222-3333-4444-777777777777@203.0.113.10:443"
+        "?security=reality&sni=example-test.invalid&pbk=FIXTURE_PBK&sid=01"
+        "&flow=xtls-rprx-vision&fp=chrome#phone"
+    )
+
+    def _add(self, store):
+        from vpnm.links import parse_link
+
+        profiles.add(parse_link(self.REALITY_LINK), self.REALITY_LINK,
+                     name="phone", path=store)
+
+    def test_reality_profile_allowed(self, store):
+        self._add(store)
+        assert xsplit.resolve_profile("phone", path=store) == "phone"
+
+    def test_no_explicit_defaults_to_reality_if_only_reality(self, store):
+        self._add(store)
+        assert xsplit.resolve_profile(path=store) == "phone"
+
+    def test_xhttp_alias_filter_skips_reality(self, store):
+        self._add(store)
+        add_profile(store, xhttp_link(), "web")
+        assert xsplit.resolve_profile(
+            path=store, default_protocol="xray-xhttp") == "web"
+
+    def test_reality_tun_config_has_reality(self, store):
+        from vpnm.xclient import xray_tun_config
+        from vpnm.links import parse_link
+
+        self._add(store)
+        link = parse_link(self.REALITY_LINK)
+        cfg = xray_tun_config(link)
+        assert "\"security\": \"reality\"" in cfg
+        assert "\"flow\": \"xtls-rprx-vision\"" in cfg
+        assert "\"mark\": 51820" in cfg or "\"mark\": 0" in cfg

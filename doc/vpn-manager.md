@@ -674,41 +674,50 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 После правок кода модуля переустанавливайте пакет: `pipx install --force scripts/vpn-manager` — установленный `vpn` не подхватывает изменения автоматически (не editable-инсталляция).
 
 
-## Канал 1б: XHTTP-split (xray tun, SPEC-20261114)
+## Канал 1б: xray-split (tun, Reality/XHTTP, SPEC-20261114)
 
-Системный зонный split на XHTTP-транспорте — та же механика, что у AWG
-(dnsmasq → nft set → fwmark → table → dev), но `dev = xray0`: tun-инбаунд
-xray-клиента (v26.1.23+ — первый релиз с tun; socks-профили vpnm остаются на
-пине 25.1.1, у split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
+Системный зонный split на xray-транспорте (Reality **или** XHTTP) — та же
+механика, что у AWG (dnsmasq → nft set → fwmark → table → dev), но
+`dev = xray0`: tun-инбаунд xray-клиента (v26.1.23+; сервер asv1 тоже обновлён
+до 26.1.23 — ADR-010; socks-профили vpnm могут оставаться на 25.1.1, у
+split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
 
 ```bash
-vpn scheme xhttp-split [профиль]   # поднять (root; профиль — xray-xhttp из store)
+vpn scheme xray-split [профиль]    # Reality/XHTTP профиль из store (root)
+vpn scheme xhttp-split [профиль]   # алиас: автовыбор только xray-xhttp
 vpn scheme awg                     # назад: снимает xsplit (взаимно исключительны)
 vpn scheme reset                   # снять всё
 sudo bash scripts/17_xray-split.sh --status | --off
 ```
 
 - конфиг: `/etc/vpn-manager/xray-split-<профиль>.json` (0600) генерирует vpnm
-  из share-link; секрет (UUID) не попадает в argv/логи (tmp 0600 + sudo install);
+  из share-link (Reality: flow=xtls-rprx-vision; XHTTP: path); секрет (UUID)
+  не попадает в argv/логи (tmp 0600 + sudo install);
+- защита от петли: `sockopt.mark=0xca6c` на outbound — nft возвращает этот
+  mark, иначе домен сервера в зоне `com` уводил бы xray в собственный tun;
 - split-правила: `15_domain-split.sh --dev xray0 --mark 0x23000 --table 23000
   --nft-table xray_split`; домены/исключения — те же `domains.txt`/`exclude.txt`;
 - kill-switch: `ExecStopPost=vds-xsplit-cleanup` — остановка/падение юнита
   снимает ip rule/table, интернета-дыры не будет (трафик уходит напрямую);
 - самохил: `ExecStartPost=vds-xsplit-cleanup --apply` — после рестартов юнита
   правила восстанавливаются сами;
+- DoH: схема сама включает цепочку (`_ensure_doh`) и ждёт готовности резолвера
+  перед стартом split — иначе dnsmasq уходит в мёртвый 5053;
 - монитор: строка `xray-split` в `vpn monitor` (unit/iface/mark/table + прямая
   проба 204 через tun).
 
 **Ограничения (SPEC §8):**
-- клиенты — только Xray-core (v2rayN, xray-cli); мобильным — Reality/CDN;
+- клиенты — только Xray-core (vpnm/tun на ноутбуке; мобильным — обычные
+  share-ссылки Reality/CDN);
 - UDP-over-TCP: звонки/игры хуже (xray туннелирует UDP поверх TCP) — для UDP
   остаётся AWG (`vpn scheme awg`);
-- провайдерский троттлинг tcp/8443 схемой не лечится — при просадке откат на
-  AWG/Reality.
+- провайдерский троттлинг порта схемой не лечится; Reality-split идёт через
+  tcp/443, XHTTP-split — через tcp/8443.
 
 ## Планы: split для других транспортов
 
-Сейчас системный зонный split есть у AWG (канал 1) и XHTTP (канал 1б).
+Сейчас системный зонный split есть у AWG (канал 1) и xray-транспортов —
+Reality/XHTTP (канал 1б).
 Разбор «может ли Reality / Hysteria2 / CDN стать основным со split» (что
 мешает, оценки, порядок внедрения, почему Docker не решает) — в vds:
 [docs/SPLIT-TRANSPORTS.md](https://github.com/asvspb/my-first-vds/blob/main/docs/SPLIT-TRANSPORTS.md).
