@@ -25,7 +25,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import profiles
 from .links import (ProfileLink, parse_link, PROTOCOL_XRAY_REALITY,
@@ -273,6 +273,29 @@ def unit_name(profile: str) -> str:
     return f"{XRAY_SPLIT_UNIT_PREFIX}{profile}.service"
 
 
+def _list_configs(runner: RunCmd) -> List[str]:
+    """Имена split-конфигов, даже если каталог читает только root.
+
+    `/etc/vpn-manager` — 0700 root; обычный glob у пользователя молча
+    возвращает [] (PermissionError глотается), поэтому при пустом результате
+    спрашиваем `sudo -n ls`. Иначе монитор показывал «не настроен», хотя
+    конфиги лежали и схема поднималась одной командой.
+    """
+    try:
+        found = [p.name for p in
+                 Path(CONF_DIR).glob(f"{CONF_PREFIX}*.json")]
+    except (PermissionError, OSError):
+        found = []
+    if found:
+        return sorted(found)
+    rc, out, _err = runner(["sudo", "-n", "ls", "-1", CONF_DIR])
+    if rc != 0:
+        return []
+    return sorted(
+        name for name in out.split()
+        if name.startswith(CONF_PREFIX) and name.endswith(".json"))
+
+
 def active_profile(runner: RunCmd) -> Optional[str]:
     """Имя профиля активного юнита vpn-xray-split@<p>, или None."""
     rc, out, _err = runner(
@@ -290,11 +313,9 @@ def active_profile(runner: RunCmd) -> Optional[str]:
 def status(run: Optional[RunCmd] = None) -> Dict[str, Any]:
     """Снимок xray-split для канала монитора: unit/iface/nft/rule/проба."""
     runner: RunCmd = run or run_cmd
-    conf_dir = Path(CONF_DIR)
-    confs = list(conf_dir.glob(f"{CONF_PREFIX}*.json"))
     out: Dict[str, Any] = {
         "profile": active_profile(runner),
-        "configs": [c.name for c in confs],
+        "configs": _list_configs(runner),
         "iface_up": False,
         "nft_table": False,
         "ip_rule": False,

@@ -713,6 +713,8 @@ sudo bash scripts/17_xray-split.sh --status | --off
 - конфиг: `/etc/vpn-manager/xray-split-<профиль>.json` (0600) генерирует vpnm
   из share-link (Reality: flow=xtls-rprx-vision; XHTTP: path); секрет (UUID)
   не попадает в argv/логи (tmp 0600 + sudo install);
+  конфиг остаётся после `--off`/`vpn reset` — это «резерв одной командой»
+  (каталог 0700 root, поэтому статус в мониторе читается через `sudo -n ls`);
 - защита от петли: `sockopt.mark=0xca6c` на outbound — nft возвращает этот
   mark, иначе домен сервера в зоне `com` уводил бы xray в собственный tun;
 - split-правила: `15_domain-split.sh --dev xray0 --mark 0x23000 --table 23000

@@ -464,3 +464,37 @@ class TestRealitySupport:
         assert "\"security\": \"reality\"" in cfg
         assert "\"flow\": \"xtls-rprx-vision\"" in cfg
         assert "\"mark\": 51820" in cfg or "\"mark\": 0" in cfg
+
+
+class TestListConfigs:
+    """Монитор под обычным пользователем: /etc/vpn-manager — 0700 root."""
+
+    def test_reads_dir_when_accessible(self, tmp_path, monkeypatch):
+        (tmp_path / "xray-split-a.json").write_text("{}")
+        (tmp_path / "other.json").write_text("{}")
+        monkeypatch.setattr(xsplit, "CONF_DIR", str(tmp_path))
+        assert xsplit._list_configs(make_run()) == ["xray-split-a.json"]
+
+    def test_sudo_fallback_when_dir_hidden(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(xsplit, "CONF_DIR", str(tmp_path / "hidden"))
+        calls = []
+
+        def runner(cmd):
+            calls.append(cmd)
+            return 0, "xray-split-phone.json\nxray-split-web.json\n", ""
+
+        assert xsplit._list_configs(runner) == [
+            "xray-split-phone.json", "xray-split-web.json"]
+        assert calls == [["sudo", "-n", "ls", "-1", str(tmp_path / "hidden")]]
+
+    def test_no_sudo_permission(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(xsplit, "CONF_DIR", str(tmp_path / "hidden"))
+        msg = "sudo: a password is required"
+        assert xsplit._list_configs(lambda cmd: (1, "", msg)) == []
+
+    def test_status_reports_configs(self, tmp_path, monkeypatch):
+        (tmp_path / "xray-split-b.json").write_text("{}")
+        monkeypatch.setattr(xsplit, "CONF_DIR", str(tmp_path))
+        st = xsplit.status(run=make_run(**
+            {"systemctl list-units vpn-xray-split@": (0, "", "")}))
+        assert st["configs"] == ["xray-split-b.json"]
