@@ -520,6 +520,7 @@ def scheme_cmd(preset: str = typer.Argument(
         _ok("схема xray-split активна: split-зоны через tun xray0 → "
             "Reality/XHTTP, GLM/RU напрямую (kill-switch: остановка юнита "
             "снимает правила); откат — 'vpn scheme awg'/'vpn scheme reset'")
+        _browser_restart_hint()
         return
 
     if preset == "cdn":
@@ -600,6 +601,13 @@ def _apply_awg_scheme() -> Tuple[bool, str]:
     return True, "AWG-туннель + доменный split"
 
 
+def _browser_restart_hint() -> None:
+    """Chrome держит TCP/QUIC-соединения и DNS-кэш: после включения split
+    они продолжают идти напрямую и «ломают» youtube/gemini."""
+    typer.echo("если браузер уже открыт — перезапустите его: старые "
+               "TCP/QUIC-соединения идут мимо split")
+
+
 @app.command()
 def start(scheme: str = typer.Argument(
         "reality", help="'reality' (по умолчанию) | 'xhttp' | 'awg'")) -> None:
@@ -624,6 +632,7 @@ def start(scheme: str = typer.Argument(
             raise typer.Exit(code=1)
         _ok("основная схема активна: Reality-split через tun xray0 (TCP 443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
+        _browser_restart_hint()
         return
     if name in ("xhttp", "xhttp-split"):
         from . import xsplit as xsplit_mod
@@ -633,6 +642,7 @@ def start(scheme: str = typer.Argument(
             raise typer.Exit(code=1)
         _ok("основная схема активна: XHTTP-split через tun xray0 (TCP 8443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
+        _browser_restart_hint()
         return
     if name == "awg":
         ok, msg = _apply_awg_scheme()

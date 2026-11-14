@@ -476,6 +476,7 @@ _check_vpn_active() {
     local wg_active=0
     local vpnm_active=0
     local awg_active=0
+    local xsplit_active=0
 
     # Проверка ZeroTier (по статусу CLI или активным интерфейсам zt*)
     if sudo -n zerotier-cli status 2>/dev/null | grep -q "ONLINE" || ip -br link show 2>/dev/null | grep -qE "^zt.*(UP|UNKNOWN)"; then
@@ -500,6 +501,15 @@ _check_vpn_active() {
         done
     fi
 
+    # Проверка xray-split (tun xray0, Reality/XHTTP): системный юнит
+    # running + интерфейс up + ip rule fwmark 0x23000. Одного юнита мало:
+    # ExecStopPost снимает правила при падении.
+    if systemctl list-units 'vpn-xray-split@*.service' --state=running --no-pager 2>/dev/null | grep -q 'vpn-xray-split@' \
+        && ip -br link show xray0 2>/dev/null | grep -qE "xray0.*(UP|UNKNOWN)" \
+        && ip rule show 2>/dev/null | grep -q "fwmark 0x23000"; then
+        xsplit_active=1
+    fi
+
     # Проверка AmneziaWG: интерфейс awg-туннеля up (awg0 от awg-quick,
     # amnezia0/awg-подобные от AmneziaVPN-приложения) или нативный awg show.
     # vpnm НЕ поднимает AWG (клиент разворачивает .conf сам), поэтому юнит
@@ -508,10 +518,10 @@ _check_vpn_active() {
         awg_active=1
     fi
 
-    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ] && [ "$vpnm_active" -eq 0 ] && [ "$awg_active" -eq 0 ]; then
-        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m VPN не активен (ZeroTier, WireGuard, vpn-manager, AmneziaWG)." >&2
+    if [ "$zt_active" -eq 0 ] && [ "$wg_active" -eq 0 ] && [ "$vpnm_active" -eq 0 ] && [ "$awg_active" -eq 0 ] && [ "$xsplit_active" -eq 0 ]; then
+        echo -e "\033[1;31m[БЛОКИРОВКА БЕЗОПАСНОСТИ]\033[0m VPN не активен (ZeroTier, WireGuard, vpn-manager, AmneziaWG, xray-split)." >&2
         echo -e "Запуск Antigravity отменен для предотвращения утечки прямого IP." >&2
-        echo -e "Варианты: \033[1;32mztup\033[0m | WireGuard | \033[1;32mvpn probe\033[0m (socks-туннель к asv1) | AmneziaVPN (импортировать конфиг)" >&2
+        echo -e "Варианты: \033[1;32mztup\033[0m | WireGuard | \033[1;32mvpn start\033[0m (Reality-split) | \033[1;32mvpn probe\033[0m (socks-туннель к asv1) | AmneziaVPN (импортировать конфиг)" >&2
         return 1
     fi
 

@@ -109,8 +109,9 @@ vpn reset              # выключить всё
 перезагрузки ОС.
 
 Shell-guard `_check_vpn_active()` в `$USER/.zshrc` / `$USER/.bashrc` (блокирует запуск
-Antigravity без активного VPN) признаёт, помимо ZeroTier/WireGuard/vpnm, и AmneziaWG:
-интерфейс `awg*`/`amnezia*` в состоянии UP/UNKNOWN или вывод `awg show`.
+Antigravity без активного VPN) признаёт, помимо ZeroTier/WireGuard/vpnm, AmneziaWG
+(интерфейс `awg*`/`amnezia*` UP/UNKNOWN или вывод `awg show`) и xray-split
+(юнит `vpn-xray-split@*` running + `xray0` up + ip rule `fwmark 0x23000`).
 
 ## `vpn speed` — живой замер скорости (2026-11-13)
 
@@ -747,7 +748,11 @@ sudo bash scripts/17_xray-split.sh --status | --off
 - DoH: схема сама включает цепочку (`_ensure_doh`) и ждёт готовности резолвера
   перед стартом split — иначе dnsmasq уходит в мёртвый 5053;
 - монитор: строка `xray-split` в `vpn monitor` (unit/iface/mark/table + прямая
-  проба 204 через tun).
+  проба 204 через tun);
+- **браузер после включения**: Chrome/Firefox держат старые TCP/QUIC-соединения
+  и DNS-кэш — они продолжают идти напрямую и «ломают» youtube/gemini. После
+  первого `vpn start` перезапустите браузер (новые вкладки не всегда помогают
+  из-за переиспользования QUIC-сессии). `vpn start` печатает эту подсказку.
 
 **Ограничения (SPEC §8):**
 - клиенты — только Xray-core (vpnm/tun на ноутбуке; мобильным — обычные
