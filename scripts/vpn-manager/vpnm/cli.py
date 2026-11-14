@@ -436,13 +436,20 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
 
 @app.command("scheme")
 def scheme_cmd(preset: str = typer.Argument(
-        ..., help="'awg' | 'cdn' | 'proxy <profile>' | 'private <profile>'"),
+        ..., help="'awg' | 'xhttp-split' | 'cdn' | 'proxy <profile>' | "
+                  "'private <profile>'"),
         profile: Optional[str] = typer.Argument(
-            None, help="для 'proxy'/'private': имя профиля")) -> None:
+            None, help="для 'proxy'/'private'/'xhttp-split': имя профиля")) -> None:
     """Предустановленные конфигурации (зеркала 'vpn reset').
 
     vpn scheme awg               — основная схема: AWG-туннель + доменный
-                                   split (то же, что 'vpn start')
+                                   split (то же, что 'vpn start'); снимает
+                                   xhttp-split, если был поднят
+    vpn scheme xhttp-split [профиль] — системный XHTTP-split: tun xray0
+                                   (xray 26.x) → VLESS+XHTTP tcp/8443,
+                                   домены из /opt/awg-split/domains.txt через
+                                   tun, RU/GLM напрямую; снимает AWG-схему
+                                   (взаимно исключительны, SPEC-20261114)
     vpn scheme cdn               — канал выживания: CDN-профиль (ws) +
                                    системный прокси на его socks (браузер —
                                    весь через CF); имя профиля определяется
@@ -463,6 +470,10 @@ def scheme_cmd(preset: str = typer.Argument(
     preset = preset.strip().lower()
 
     if preset == "awg":
+        from . import xsplit as xsplit_mod
+        if xsplit_mod.active_profile(runners.run_cmd):
+            ok_x, msg_x = xsplit_mod.stop()
+            (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
         ok_t, msg_t = awg.tunnel_control("on")
         (_ok if ok_t else _err)(f"AWG: {msg_t}")
         if not ok_t:
@@ -474,6 +485,17 @@ def scheme_cmd(preset: str = typer.Argument(
             raise typer.Exit(code=1)
         _ok("схема awg активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую")
+        return
+
+    if preset == "xhttp-split":
+        from . import xsplit as xsplit_mod
+        ok, msg = xsplit_mod.apply(profile)
+        (_ok if ok else _err)(f"xhttp-split: {msg}")
+        if not ok:
+            raise typer.Exit(code=1)
+        _ok("схема xhttp-split активна: split-зоны через tun xray0 → "
+            "VLESS+XHTTP, GLM/RU напрямую (kill-switch: остановка юнита "
+            "снимает правила); откат — 'vpn scheme awg'/'vpn scheme reset'")
         return
 
     if preset == "cdn":
@@ -530,8 +552,8 @@ def scheme_cmd(preset: str = typer.Argument(
                        "(AWG-split/direct). Выключение профиля: 'vpn down'.")
         return
 
-    _err("unknown preset: expected 'awg' | 'cdn' | 'proxy <profile>' | "
-         "'private <profile>'")
+    _err("unknown preset: expected 'awg' | 'xhttp-split' | 'cdn' | "
+         "'proxy <profile>' | 'private <profile>'")
     raise typer.Exit(code=2)
 
 
@@ -591,6 +613,11 @@ def reset() -> None:
     else:
         typer.echo("vpnm: нет активного профиля")
 
+    from . import xsplit as xsplit_mod
+    ok_x, msg_x = xsplit_mod.stop()
+    (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
+    if not ok_x:
+        failures.append("xsplit")
     ok_s, msg_s = awg.domain_split_apply("off")
     (_ok if ok_s else _warn)(f"split: {msg_s}")
     if not ok_s:

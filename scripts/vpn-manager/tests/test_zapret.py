@@ -98,9 +98,9 @@ def test_monitor_matrix_has_six_channels(nfqws_dir, tmp_path, monkeypatch):
     outcome = channels.run_monitor(run=make_run(
         **{"which zerotier-cli": (1, "", "")}))
     names = [c["channel"] for c in outcome["channels"]]
-    assert names == ["vpnm", "cdn", "zerotier", "amneziawg", "zapret",
-                     "dns-doh"]
-    assert outcome["total"] == 6
+    assert names == ["vpnm", "cdn", "zerotier", "amneziawg", "xray-split",
+                     "zapret", "dns-doh"]
+    assert outcome["total"] == 7
 
 
 # --- doctor.check_zapret ------------------------------------------------------------

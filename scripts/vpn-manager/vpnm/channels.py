@@ -352,6 +352,48 @@ def check_awg(run: Optional[RunCmd] = None) -> Channel:
                    + "), интерфейс не поднят")
 
 
+def check_xraysplit(run: Optional[RunCmd] = None) -> Channel:
+    """Канал XHTTP-split (SPEC-20261114): системный tun xray0.
+
+    Нет юнита и конфигов → not_installed (нейтрально, как AWG-слот); конфиги
+    есть, но юнит остановлен → warn (резерв одной командой 'vpn scheme
+    xhttp-split'); юнит active → nft/rule/iface + прямая проба 204 через
+    tun (без socks — трафик идёт через xray0 по mark 0x23000).
+    """
+    from . import xsplit as xsplit_mod  # lazy: avoids module-level cycles
+    runner: RunCmd = run or run_cmd
+    st = xsplit_mod.status(runner)
+    profile = st["profile"]
+    if not profile:
+        if not st["configs"]:
+            return _result("xray-split", STATUS_NOT_INSTALLED,
+                           "артефактов нет (юнит/конфиги) — SPEC-20261114")
+        return _result("xray-split", STATUS_WARN,
+                       f"конфиги есть ({', '.join(st['configs'])}), юнит "
+                       "остановлен — резерв: 'vpn scheme xhttp-split'")
+    parts = ["профиль '%s'" % profile, "unit active"]
+    if st["iface_up"]:
+        parts.append("iface %s up" % xsplit_mod.DEV)
+    if st["ip_rule"] and st["nft_table"]:
+        parts.append("split активен (mark %s, table %s)"
+                     % (xsplit_mod.MARK_HEX, xsplit_mod.ROUTE_TABLE))
+    elif not st["ip_rule"]:
+        parts.append("ip rule НЕ на месте (правила сняты?)")
+    rc, out, _err = runner(
+        ["curl", "--noproxy", "*", "--max-time", "10", "-s", "-o", "/dev/null",
+         "-w", "%{http_code} %{time_total}",
+         "https://www.youtube.com/generate_204"])
+    if rc == 0 and out.strip().startswith("204"):
+        st["probe_ok"] = True
+        parts.append("egress через tun: %ss" % out.strip())
+        if st["iface_up"] and st["ip_rule"] and st["nft_table"]:
+            return _result("xray-split", STATUS_OK, "; ".join(parts))
+        return _result("xray-split", STATUS_WARN, "; ".join(parts))
+    return _result("xray-split", STATUS_FAIL,
+                   "юнит active, но egress через tun не прошёл "
+                   "(http=%s)" % (out.strip() or "none"))
+
+
 # --- zapret (channel 0) ------------------------------------------------------------
 
 
@@ -534,7 +576,7 @@ def awg_tunnel_latency(
 def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
     return [check_vpnm(run=run), check_cdn(run=run),
             check_zerotier(run=run),
-            check_awg(run=run), check_zapret(run=run),
+            check_awg(run=run), check_xraysplit(run=run), check_zapret(run=run),
             check_dnsdoh(run=run)]
 
 
@@ -546,6 +588,7 @@ def run_monitor(run: Optional[RunCmd] = None,
         check_cdn(run=run),
         check_zerotier(run=run, peer_ip=peer_ip),
         check_awg(run=run),
+        check_xraysplit(run=run),
         check_zapret(run=run),
         check_dnsdoh(run=run),
     ]
