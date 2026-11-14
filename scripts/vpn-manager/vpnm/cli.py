@@ -56,15 +56,25 @@ app = VpnTyper(
 трафик провайдера. Любой VPN включается вручную и живёт до выключения
 или ребута; автостарт всех VPN-юнитов отключён.
 
+Активация VPN — из вкладки терминала:
+
+  vpn start                  # Reality-split (по умолчанию): tun xray0,
+                             # TCP 443; 'vpn start xhttp' — XHTTP (8443),
+                             # 'vpn start awg' — AWG + доменный split
+  vpn up <profile>           # один socks-профиль (Reality/XHTTP/Hy2/CDN)
+  vpn sysproxy on            # socks-профиль → системный прокси браузера
+  vpn status                 # что включено + внешний IP
+  vpn reset                  # выключить всё (чистый старт)
+
+  Вкладку можно закрыть сразу после запуска: VPN живёт в systemd-юните,
+  действует на всю систему (не только на эту вкладку) и держится до
+  'vpn reset' или перезагрузки ОС.
+
 Типовая сессия — включить VPN:
 
   vpn probe                  # замерить задержки профилей и включить
                              # самый быстрый (+ системный прокси сам
                              # последует за активным профилем)
-
-  vpn start                  # основная схема: Reality-split (tun xray0,
-                             # TCP 443) по умолчанию; 'vpn start xhttp' —
-                             # XHTTP-split, 'vpn start awg' — AWG+split
 
   # либо по шагам:
   vpn up <profile>           # запустить профиль (socks на 127.0.0.1:208x)

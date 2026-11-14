@@ -92,6 +92,22 @@ vpn install --linger
 
 `vpn` также доступен как `python3 -m vpnm`.
 
+### Активация — из вкладки терминала
+
+Схемы и профили включаются обычной командой в любой вкладке терминала:
+
+```bash
+vpn start              # Reality-split (по умолчанию)
+vpn start xhttp        # XHTTP-split
+vpn start awg          # AWG + доменный split
+vpn up <profile>       # socks-профиль (Reality/XHTTP/Hy2/CDN)
+vpn reset              # выключить всё
+```
+
+Вкладку после запуска можно закрыть: схема живёт в systemd-юните, действует
+на всю систему (не только на эту вкладку) и держится до `vpn reset` или
+перезагрузки ОС.
+
 Shell-guard `_check_vpn_active()` в `$USER/.zshrc` / `$USER/.bashrc` (блокирует запуск
 Antigravity без активного VPN) признаёт, помимо ZeroTier/WireGuard/vpnm, и AmneziaWG:
 интерфейс `awg*`/`amnezia*` в состоянии UP/UNKNOWN или вывод `awg show`.
