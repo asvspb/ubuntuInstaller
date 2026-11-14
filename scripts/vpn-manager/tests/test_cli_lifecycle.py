@@ -139,8 +139,8 @@ def test_cli_reset_reports_partial_failure(monkeypatch):
     assert "split" in result.output
 
 
-def test_cli_start_order_tunnel_then_split(monkeypatch):
-    """vpn start: туннель ДО split (nft нужен поднятый iface), идемпотентен."""
+def test_cli_start_awg_order_tunnel_then_split(monkeypatch):
+    """vpn start awg: туннель ДО split (nft нужен iface), идемпотентен."""
     from vpnm import amneziawg as awg
     from vpnm.cli import app as cli_app
     from typer.testing import CliRunner
@@ -149,11 +149,11 @@ def test_cli_start_order_tunnel_then_split(monkeypatch):
                         lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
     monkeypatch.setattr(awg, "domain_split_apply",
                         lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
-    result = CliRunner().invoke(cli_app, ["start"])
+    result = CliRunner().invoke(cli_app, ["start", "awg"])
     assert result.exit_code == 0, result.output
     assert calls == [("tun", "on"), ("split", "on")]
     assert "основная схема активна" in result.output
-    result2 = CliRunner().invoke(cli_app, ["start"])
+    result2 = CliRunner().invoke(cli_app, ["start", "awg"])
     assert result2.exit_code == 0, result2.output
 
 
@@ -166,7 +166,7 @@ def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
                         lambda a, run=None: calls.append(("tun", a)) or (False, "no tunnel"))
     monkeypatch.setattr(awg, "domain_split_apply",
                         lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
-    result = CliRunner().invoke(cli_app, ["start"])
+    result = CliRunner().invoke(cli_app, ["start", "awg"])
     assert result.exit_code == 1
     assert calls == [("tun", "on")]  # split не пытаемся без iface
 
@@ -257,3 +257,55 @@ def test_cli_scheme_cdn_without_profile_fails(monkeypatch):
     assert result.exit_code == 2
     assert "CDN-профиля нет" in result.output
     assert called == []
+
+
+def test_cli_start_default_is_reality(monkeypatch):
+    from vpnm import xsplit
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+
+    def fake_apply(profile=None, run=None, default_protocol=None):
+        calls.append((profile, default_protocol))
+        return True, "reality ok"
+
+    monkeypatch.setattr(xsplit, "apply", fake_apply)
+    result = CliRunner().invoke(cli_app, ["start"])
+    assert result.exit_code == 0, result.output
+    assert calls == [(None, "xray-reality")]
+    assert "Reality-split" in result.output
+
+
+def test_cli_start_xhttp(monkeypatch):
+    from vpnm import xsplit
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    calls: list = []
+
+    def fake_apply(profile=None, run=None, default_protocol=None):
+        calls.append((profile, default_protocol))
+        return True, "xhttp ok"
+
+    monkeypatch.setattr(xsplit, "apply", fake_apply)
+    result = CliRunner().invoke(cli_app, ["start", "xhttp"])
+    assert result.exit_code == 0, result.output
+    assert calls == [(None, "xray-xhttp")]
+    assert "XHTTP-split" in result.output
+
+
+def test_cli_start_reality_failure_exits(monkeypatch):
+    from vpnm import xsplit
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    monkeypatch.setattr(xsplit, "apply",
+                        lambda **kw: (False, "нет профиля"))
+    result = CliRunner().invoke(cli_app, ["start"])
+    assert result.exit_code == 1
+
+
+def test_cli_start_unknown_scheme():
+    from vpnm.cli import app as cli_app
+    from typer.testing import CliRunner
+    result = CliRunner().invoke(cli_app, ["start", "wireguard"])
+    assert result.exit_code == 2
+    assert "expected 'reality'" in result.output

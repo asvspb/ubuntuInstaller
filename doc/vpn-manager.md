@@ -74,7 +74,7 @@ vpn install --linger
 | `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
 | `vpn profile list` / `remove <name>` / `show <name>` | Управление профилями |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
-| `vpn start` / `vpn reset` | Основная схема (AWG+доменный split) / полный сброс в состояние «как после перезагрузки» |
+| `vpn start [reality\|xhttp\|awg]` / `vpn reset` | Основная схема: по умолчанию **Reality-split**, `xhttp` — XHTTP-split, `awg` — AWG+доменный split / полный сброс в состояние «как после перезагрузки» |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
@@ -214,7 +214,7 @@ vpn speed --out /tmp/speed.json           # свой путь отчёта
 
 - **Серийно (И26)**: каналы меряются по одному; паузы между замерами — это
   защита от behavioral-«заморозки» TSPU, а не «медлительность».
-- **AWG** поднимается (`vpn start`) и снимается (`vpn reset`) автоматически,
+- **AWG** поднимается (`vpn start awg`) и снимается (`vpn reset`) автоматически,
   если не был активен; состояние системы после прогона — как до него.
 - **Egress-проверка**: `api.ipify.org` через каждый туннель → должен быть IP
   сервера; иначе замер невалиден (трафик шёл напрямую).
@@ -704,6 +704,9 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
 
 ```bash
+vpn start                          # быстрый вход: Reality-split (по умолч.)
+vpn start xhttp                    # XHTTP-split
+vpn start awg                      # AWG + доменный split
 vpn scheme xray-split <profile>    # Reality/XHTTP; <profile> — имя из
                                    # 'vpn profile list' (без имени — первый)
 vpn scheme xhttp-split [профиль]   # алиас: автовыбор только xray-xhttp

@@ -344,7 +344,8 @@ def _awg_start() -> None:
     vpn = _vpn_binary()
     if not vpn:
         raise RuntimeError("команда vpn не найдена в PATH")
-    subprocess.run([vpn, "start"], capture_output=True, text=True, timeout=180)
+    subprocess.run([vpn, "start", "awg"], capture_output=True,
+                   text=True, timeout=180)
 
 
 def _awg_stop() -> None:

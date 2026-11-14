@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import typer
 
@@ -62,8 +62,9 @@ app = VpnTyper(
                              # самый быстрый (+ системный прокси сам
                              # последует за активным профилем)
 
-  vpn start                  # основная схема: AWG-туннель + доменный split
-                             # (эквивалент 'vpn scheme awg')
+  vpn start                  # основная схема: Reality-split (tun xray0,
+                             # TCP 443) по умолчанию; 'vpn start xhttp' —
+                             # XHTTP-split, 'vpn start awg' — AWG+split
 
   # либо по шагам:
   vpn up <profile>           # запустить профиль (socks на 127.0.0.1:208x)
@@ -95,8 +96,8 @@ app = VpnTyper(
 
 Предустановленные конфигурации (зеркала 'vpn reset'):
 
-  vpn scheme awg              # основная схема: AWG + доменный split
-                              # (= 'vpn start'); снимает xray-split
+  vpn scheme awg              # AWG + доменный split (= 'vpn start awg');
+                              # снимает xray-split
   vpn scheme xray-split <profile>
                               # split через tun xray0: Reality (443) или
                               # XHTTP (8443). <profile> — имя из
@@ -459,9 +460,9 @@ def scheme_cmd(preset: str = typer.Argument(
                        "proxy/private — любой профиль")) -> None:
     """Предустановленные конфигурации (зеркала 'vpn reset').
 
-    vpn scheme awg               — основная схема: AWG-туннель + доменный
-                                   split (то же, что 'vpn start'); снимает
-                                   xray-split, если был поднят
+    vpn scheme awg               — AWG-туннель + доменный split (то же,
+                                   что 'vpn start awg'); снимает xray-split,
+                                   если был поднят
     vpn scheme xray-split [профиль] — системный split для xray-транспорта:
                                    tun xray0 (xray 26.x) → Reality (443) или
                                    XHTTP (8443); профиль — имя из
@@ -485,24 +486,14 @@ def scheme_cmd(preset: str = typer.Argument(
 
     Все пресеты идемпотентны; 'vpn reset' — общий выключатель.
     """
-    from . import amneziawg as awg
     from . import runners
     from . import sysproxy
     preset = preset.strip().lower()
 
     if preset == "awg":
-        from . import xsplit as xsplit_mod
-        if xsplit_mod.active_profile(runners.run_cmd):
-            ok_x, msg_x = xsplit_mod.stop()
-            (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
-        ok_t, msg_t = awg.tunnel_control("on")
-        (_ok if ok_t else _err)(f"AWG: {msg_t}")
-        if not ok_t:
-            _err("split не применяется без туннеля — повторите 'vpn scheme awg'")
-            raise typer.Exit(code=1)
-        ok_s, msg_s = awg.domain_split_apply("on")
-        (_ok if ok_s else _warn)(f"split: {msg_s}")
-        if not ok_s:
+        ok, msg = _apply_awg_scheme()
+        if not ok:
+            _err(f"{msg} — повторите 'vpn scheme awg'")
             raise typer.Exit(code=1)
         _ok("схема awg активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую")
@@ -580,35 +571,70 @@ def scheme_cmd(preset: str = typer.Argument(
     raise typer.Exit(code=2)
 
 
-@app.command()
-def start() -> None:
-    """Поднять основную рабочую схему: AWG-туннель + доменный split.
-
-    Зеркало 'vpn reset': туннель vpn-awg-split@laptop + маршрутизация зон
-    из /opt/awg-split/domains.txt (ходовые TLD + youtube/telegram) через
-    туннель, GLM-кластер и RU — напрямую; DNS-цепочка (dnsmasq+DoH с
-    fallback 77.88.8.8) поднимается автоматически. Системный прокси не
-    включается — схема работает на уровне маршрутов. Идемпотентно.
-    """
+def _apply_awg_scheme() -> Tuple[bool, str]:
+    """AWG-туннель + доменный split; снимает xray-split (взаимоисключимы)."""
     from . import amneziawg as awg
-    failures: list = []
+    from . import runners
+    from . import xsplit as xsplit_mod
+    if xsplit_mod.active_profile(runners.run_cmd):
+        ok_x, msg_x = xsplit_mod.stop()
+        (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
     ok_t, msg_t = awg.tunnel_control("on")
     (_ok if ok_t else _err)(f"AWG: {msg_t}")
     if not ok_t:
-        failures.append("AWG-туннель")
-        _err("split не применяется без туннеля — поднимите туннель и "
-             "повторите 'vpn start'")
-        raise typer.Exit(code=1)
+        return False, "туннель не поднялся (split без iface не применяется)"
     ok_s, msg_s = awg.domain_split_apply("on")
     (_ok if ok_s else _warn)(f"split: {msg_s}")
     if not ok_s:
-        failures.append("доменный split")
-    if failures:
-        _warn("схема поднята частично: " + ", ".join(failures)
-              + " — повторите 'vpn start' или выполните подсказки выше")
-        raise typer.Exit(code=1)
-    _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
-        "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
+        return False, "доменный split не применён"
+    return True, "AWG-туннель + доменный split"
+
+
+@app.command()
+def start(scheme: str = typer.Argument(
+        "reality", help="'reality' (по умолчанию) | 'xhttp' | 'awg'")) -> None:
+    """Поднять основную схему: Reality-split / XHTTP-split / AWG.
+
+    vpn start          — Reality-split (по умолчанию): tun xray0 →
+                         VLESS Reality (TCP 443), домены через туннель,
+                         GLM/RU напрямую
+    vpn start xhttp    — XHTTP-split: tun xray0 → VLESS XHTTP (TCP 8443)
+    vpn start awg      — AWG-туннель + доменный split (зеркало 'vpn reset')
+
+    Reality/XHTTP берут первый подходящий профиль из 'vpn profile list'
+    (конкретный — 'vpn scheme xray-split <profile>') и снимают AWG-схему;
+    'vpn start awg' снимает xray-split — схемы взаимоисключимы. Идемпотентно.
+    """
+    name = scheme.strip().lower()
+    if name in ("reality", "xray", "xray-split"):
+        from . import xsplit as xsplit_mod
+        ok, msg = xsplit_mod.apply(default_protocol="xray-reality")
+        (_ok if ok else _err)(f"reality: {msg}")
+        if not ok:
+            raise typer.Exit(code=1)
+        _ok("основная схема активна: Reality-split через tun xray0 (TCP 443), "
+            "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
+        return
+    if name in ("xhttp", "xhttp-split"):
+        from . import xsplit as xsplit_mod
+        ok, msg = xsplit_mod.apply(default_protocol="xray-xhttp")
+        (_ok if ok else _err)(f"xhttp: {msg}")
+        if not ok:
+            raise typer.Exit(code=1)
+        _ok("основная схема активна: XHTTP-split через tun xray0 (TCP 8443), "
+            "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
+        return
+    if name == "awg":
+        ok, msg = _apply_awg_scheme()
+        if not ok:
+            _warn(f"{msg} — повторите 'vpn start awg' или выполните "
+                  "подсказки выше")
+            raise typer.Exit(code=1)
+        _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
+            "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
+        return
+    _err("unknown scheme: expected 'reality' | 'xhttp' | 'awg'")
+    raise typer.Exit(code=2)
 
 
 @app.command()
