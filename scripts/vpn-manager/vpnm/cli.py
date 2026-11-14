@@ -48,8 +48,9 @@ class VpnTyper(typer.Typer):
 
 app = VpnTyper(
     help="vpn-manager: клиентские VPN-профили (Xray Reality/XHTTP, "
-         "Hysteria2) через локальный SOCKS + каналы (AmneziaWG, zapret, "
-         "ZeroTier). Без аргументов — интерактивное TUI-меню.",
+         "Hysteria2) через локальный SOCKS + системные split-схемы "
+         "(AWG, xray-split) и каналы (zapret, CDN, ZeroTier). "
+         "Без аргументов — интерактивное TUI-меню.",
     epilog="""
 Политика ноутбука (2026-11-11): при загрузке системы — только чистый
 трафик провайдера. Любой VPN включается вручную и живёт до выключения
@@ -90,7 +91,10 @@ app = VpnTyper(
 Предустановленные конфигурации (зеркала 'vpn reset'):
 
   vpn scheme awg              # основная схема: AWG + доменный split
-                              # (= 'vpn start')
+                              # (= 'vpn start'); снимает xray-split
+  vpn scheme xray-split [имя] # split через tun xray0: Reality (443) или
+                              # XHTTP (8443); без имени — первый профиль;
+                              # домены через туннель, RU/GLM напрямую
   vpn scheme cdn              # канал выживания: CDN-профиль (ws) + системный
                               # прокси (профиль определяется автоматически)
   vpn scheme proxy <profile>  # vpnm как ОБЩИЙ системный прокси по
@@ -101,8 +105,9 @@ app = VpnTyper(
 
 Диагностика:
 
-  vpn monitor                # матрица каналов: vpnm / zapret / zerotier /
-                             # amneziawg / dns-doh (+ zapret: on|off)
+  vpn monitor                # матрица каналов: vpnm / cdn / zerotier /
+                             # amneziawg / xray-split / zapret / dns-doh
+                             # (статусы: ✔ / ○ готов / — нет / ✖ ошибка)
   vpn status                 # активный профиль, unit, внешний IP (через socks)
   vpn doctor                 # бинарники, порты, ssh-хост, DNS — всё разом
   vpn repair                 # снимок состояния в лог + вернуть трафик
@@ -113,9 +118,9 @@ app = VpnTyper(
 
   vpn up cdn-home            # socks 127.0.0.1:2081; sysproxy последует;
                              # браузеру нужен перезапуск после смены порта
-  vpn monitor                # строка 'cdn': ok=через CF жив; warn=резерв
-                             # ('vpn up cdn-home'); ok в amneziawg показывает
-                             # схему split: N зон через туннель, GLM/RU напрямую
+  vpn monitor                # строка 'cdn': работает=через CF жив; не
+                             # включён=резерв ('vpn up cdn-home'); amneziawg
+                             # показывает split: N зон, GLM/RU напрямую
 
 Куда смотрит браузер (одной строкой):
 
@@ -439,12 +444,13 @@ def scheme_cmd(preset: str = typer.Argument(
         ..., help="'awg' | 'xray-split' | 'xhttp-split' | 'cdn' | "
                   "'proxy <profile>' | 'private <profile>'"),
         profile: Optional[str] = typer.Argument(
-            None, help="для 'proxy'/'private'/'xhttp-split': имя профиля")) -> None:
+            None, help="для 'xray-split'/'xhttp-split'/'proxy'/'private': "
+                       "имя профиля")) -> None:
     """Предустановленные конфигурации (зеркала 'vpn reset').
 
     vpn scheme awg               — основная схема: AWG-туннель + доменный
                                    split (то же, что 'vpn start'); снимает
-                                   xhttp-split, если был поднят
+                                   xray-split, если был поднят
     vpn scheme xray-split [профиль] — системный split для xray-транспорта:
                                    tun xray0 (xray 26.x) → Reality (443) или
                                    XHTTP (8443) из выбранного профиля;
@@ -1026,11 +1032,14 @@ def monitor(as_json: bool = typer.Option(
             None, "--zt-ping",
             help="Ping an explicit ZeroTier peer IP and include the result "
                  "in the zerotier channel detail")) -> None:
-    """Матрица каналов: vpnm / cdn / amneziawg / zapret / zerotier / dns-doh.
+    """Матрица состояний всех каналов (7).
 
-    Строка amneziawg показывает схему AWG-split (N зон через туннель,
-    GLM/RU напрямую); строка cdn — канал выживания за Cloudflare
-    (ok=работает, warn=резерв 'vpn up <cdn-профиль>'). --json для скриптов."""
+    Каналы: vpnm, cdn, zerotier, amneziawg, xray-split, zapret, dns-doh.
+    В таблице смысл, а не код: ✔ работает / ○ готов, не включён / — не
+    настроен / ✖ ошибка; сырые ok/warn/not_installed/fail остаются в
+    --json. Строка xray-split: unit/iface/правила + проба 204 через tun
+    (Reality или XHTTP); amneziawg — AWG-split (N зон через туннель,
+    GLM/RU напрямую); cdn — канал выживания за Cloudflare."""
     from . import channels as channels_mod
     outcome = channels_mod.run_monitor(peer_ip=zt_ping)
     if as_json:

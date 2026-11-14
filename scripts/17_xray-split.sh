@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 17_xray-split.sh — системный XHTTP-split: xray tun (xray0) + доменный split
+# 17_xray-split.sh — системный xray-split: tun xray0 (Reality/XHTTP) + split
 # (SPEC-20261114-xhttp-split WP-2)
 #
 # Механика та же, что у AWG (dnsmasq → nft set → fwmark → table → dev), но
@@ -249,10 +249,10 @@ elif [ -n "$1" ]; then
     exit 1
 fi
 [ -n "$PROFILE" ] || PROFILE="$(basename "$(latest_config)" | sed 's/^xray-split-//; s/\.json$//')"
-[ -n "$PROFILE" ] || { err "профиль не задан и конфигов нет — сначала 'vpn scheme xhttp-split' (vpnm генерирует конфиг)"; exit 1; }
+[ -n "$PROFILE" ] || { err "профиль не задан и конфигов нет — сначала 'vpn scheme xray-split' (vpnm генерирует конфиг)"; exit 1; }
 
 CONF="${CONF_DIR}/xray-split-${PROFILE}.json"
-[ -f "$CONF" ] || { err "конфиг ${CONF} не найден — сначала 'vpn scheme xhttp-split' (vpnm генерирует через sudo)"; exit 1; }
+[ -f "$CONF" ] || { err "конфиг ${CONF} не найден — сначала 'vpn scheme xray-split' (vpnm генерирует через sudo)"; exit 1; }
 
 info "профиль: ${PROFILE} (конфиг ${CONF})"
 install_xray_bin

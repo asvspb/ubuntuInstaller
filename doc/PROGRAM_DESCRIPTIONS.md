@@ -188,7 +188,12 @@
 - `vpn doctor` — диагностика: бинари, порты, конфликт с v2rayA, ssh, DNS через туннель, zapret
 - `vpn zapret on|off|status` — «канал 0»: zapret (nfqws DPI-desync) на прямых соединениях
   (youtube/discord без VPN, без смены IP); установка — `scripts/12_zapret.sh`
-- `vpn monitor` — матрица каналов (vpnm / ZeroTier / AmneziaWG / zapret / dns-doh, healthy N/5)
+- `vpn scheme xray-split [профиль]` — системный split через tun `xray0`
+  (Reality 443 или XHTTP 8443): домены из `/opt/awg-split/domains.txt` в
+  туннель, RU/GLM напрямую; `xhttp-split` — алиас, взаимоисключим с AWG
+- `vpn monitor` — матрица каналов (vpnm / cdn / ZeroTier / AmneziaWG /
+  xray-split / zapret / dns-doh, healthy N/7); в таблице человекочитаемые
+  статусы (✔ / ○ готов / — не настроен / ✖ ошибка), коды — в `--json`
 - TUI-меню (`vpn` без аргументов) на questionary
 
 ### `scripts/13_dns-doh.sh`
