@@ -74,7 +74,8 @@ vpn install --linger
 | `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
 | `vpn profile list` / `remove <name>` / `show <name>` | Управление профилями |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
-| `vpn scheme awg\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / CDN / общий прокси / частный прокси |
+| `vpn start` / `vpn reset` | Основная схема (AWG+доменный split) / полный сброс в состояние «как после перезагрузки» |
+| `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
 | `vpn status` | Активный профиль, состояние unit, внешний IP через SOCKS |
