@@ -704,7 +704,8 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
 
 ```bash
-vpn scheme xray-split [профиль]    # Reality/XHTTP профиль из store (root)
+vpn scheme xray-split <profile>    # Reality/XHTTP; <profile> — имя из
+                                   # 'vpn profile list' (без имени — первый)
 vpn scheme xhttp-split [профиль]   # алиас: автовыбор только xray-xhttp
 vpn scheme awg                     # назад: снимает xsplit (взаимно исключительны)
 vpn scheme reset                   # снять всё

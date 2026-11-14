@@ -97,8 +97,11 @@ app = VpnTyper(
 
   vpn scheme awg              # основная схема: AWG + доменный split
                               # (= 'vpn start'); снимает xray-split
-  vpn scheme xray-split [имя] # split через tun xray0: Reality (443) или
-                              # XHTTP (8443); без имени — первый профиль;
+  vpn scheme xray-split <profile>
+                              # split через tun xray0: Reality (443) или
+                              # XHTTP (8443). <profile> — имя из
+                              # 'vpn profile list' (напр. 'phone',
+                              # 'xhttp-web'); без имени — первый подходящий;
                               # домены через туннель, RU/GLM напрямую
   vpn scheme cdn              # канал выживания: CDN-профиль (ws) + системный
                               # прокси (профиль определяется автоматически)
@@ -451,8 +454,9 @@ def scheme_cmd(preset: str = typer.Argument(
         ..., help="'awg' | 'xray-split' | 'xhttp-split' | 'cdn' | "
                   "'proxy <profile>' | 'private <profile>'"),
         profile: Optional[str] = typer.Argument(
-            None, help="для 'xray-split'/'xhttp-split'/'proxy'/'private': "
-                       "имя профиля")) -> None:
+            None, help="имя из 'vpn profile list': для xray-split — "
+                       "Reality/XHTTP-профиль (без имени — первый), для "
+                       "proxy/private — любой профиль")) -> None:
     """Предустановленные конфигурации (зеркала 'vpn reset').
 
     vpn scheme awg               — основная схема: AWG-туннель + доменный
@@ -460,7 +464,9 @@ def scheme_cmd(preset: str = typer.Argument(
                                    xray-split, если был поднят
     vpn scheme xray-split [профиль] — системный split для xray-транспорта:
                                    tun xray0 (xray 26.x) → Reality (443) или
-                                   XHTTP (8443) из выбранного профиля;
+                                   XHTTP (8443); профиль — имя из
+                                   'vpn profile list' (например 'phone' или
+                                   'xhttp-web'), без имени — первый;
                                    домены из /opt/awg-split/domains.txt через
                                    tun, RU/GLM напрямую; снимает AWG-схему
                                    (взаимно исключительны, SPEC-20261114).
