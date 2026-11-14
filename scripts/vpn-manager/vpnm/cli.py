@@ -96,8 +96,8 @@ app = VpnTyper(
 
 Предустановленные конфигурации (зеркала 'vpn reset'):
 
-  vpn scheme awg              # AWG + доменный split (= 'vpn start awg');
-                              # снимает xray-split
+  vpn scheme awg              # AWG-схема: туннель + доменный split
+                              # (= 'vpn start awg'); снимает xray-split
   vpn scheme xray-split <profile>
                               # split через tun xray0: Reality (443) или
                               # XHTTP (8443). <profile> — имя из
@@ -641,10 +641,10 @@ def start(scheme: str = typer.Argument(
 def reset() -> None:
     """Вернуть всё к состоянию «как после перезагрузки ОС» (чистый старт).
 
-    Останавливает активный socks-профиль (+sysproxy), демонтирует доменный
-    split и останавливает AWG-туннель, гасит DoH-цепочку — DNS возвращается
-    к провайдеру (DHCP). Boot-guard остаётся включённым (защита загрузки).
-    Идемпотентно: повторный запуск ничего не ломает.
+    Останавливает активный socks-профиль (+sysproxy), демонтирует
+    xray-split и доменный split, останавливает AWG-туннель, гасит DoH-цепочку
+    — DNS возвращается к провайдеру (DHCP). Boot-guard остаётся включённым
+    (защита загрузки). Идемпотентно: повторный запуск ничего не ломает.
     """
     from . import amneziawg as awg
     from . import doh as doh_mod
