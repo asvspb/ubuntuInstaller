@@ -1053,20 +1053,33 @@ def _print_channels_table(outcome: dict,
         from rich.console import Console
         from rich.table import Table
     except ImportError:
+        labels = {"ok": "OK", "warn": "выключен",
+                  "not_installed": "не настроен", "fail": "ошибка"}
         for row in rows:
-            typer.echo(f"{row['channel']}\t{row['status']}\t{row['detail']}")
+            typer.echo(f"{row['channel']}\t"
+                       f"{labels.get(str(row['status']), row['status'])}\t"
+                       f"{row['detail']}")
         return
+    # Показываем человеку смысл, а не внутренний код (SPEC: warn/not_installed
+    # читались как «сломано», хотя это «есть, но выключено/не настроено»).
+    status_labels = {
+        "ok": "✔ работает",
+        "warn": "○ готов, не включён",
+        "not_installed": "— не настроен",
+        "fail": "✖ ошибка",
+    }
     status_colors = {"ok": "green", "warn": "yellow",
-                     "not_installed": "yellow", "fail": "red"}
+                     "not_installed": "dim", "fail": "red"}
     table = Table(title=title)
-    table.add_column("channel")
-    table.add_column("status")
-    table.add_column("detail")
+    table.add_column("канал")
+    table.add_column("состояние")
+    table.add_column("детали")
     for row in rows:
+        raw = str(row["status"])
+        label = status_labels.get(raw, raw)
         table.add_row(
             str(row["channel"]),
-            f"[{status_colors.get(str(row['status']), 'white')}]"
-            f"{row['status']}[/]",
+            f"[{status_colors.get(raw, 'white')}]{label}[/]",
             str(row["detail"]))
     Console().print(table)
 

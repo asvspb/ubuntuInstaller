@@ -517,3 +517,10 @@ def test_awg_no_domain_split_note(env, monkeypatch):
     result = channels.check_awg(run=make_run(**{"ip -o link": (0, out, "")}))
     assert result["status"] == channels.STATUS_OK
     assert "(domain-split)" not in result["detail"]
+
+
+def test_vpnm_profiles_but_none_active_is_warn(env):
+    add_profile("p1", 2080)
+    result = channels.check_vpnm(run=make_run())
+    assert result["status"] == channels.STATUS_WARN
+    assert "ни один не включён" in result["detail"]

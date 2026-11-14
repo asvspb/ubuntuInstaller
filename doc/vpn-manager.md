@@ -85,7 +85,7 @@ vpn install --linger
 | `vpn amneziawg status\|add-client\|remove-client\|tunnel` | AWG: локальный туннель и клиенты на сервере |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
-| `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / amneziawg / zapret / ZeroTier / dns-doh (N/6) |
+| `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / ZeroTier / amneziawg / xray-split / zapret / dns-doh (N/7) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 | `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
@@ -424,24 +424,44 @@ vpn autostart status  # состояние автозапуска + список
 
 ## Мониторинг каналов (`vpn monitor`)
 
-Матрица доступности каналов (rich-таблица; `--json` — та же матрица):
+Матрица доступности каналов (rich-таблица; `--json` — те же данные с сырыми
+кодами статусов для скриптов):
 
-| Канал | Что проверяет | Статусы |
-|-------|---------------|---------|
-| `vpnm` | активный профиль + egress-probe через SOCKS | ok / fail / not_installed |
+| Канал | Что проверяет | Статусы (коды) |
+|-------|---------------|----------------|
+| `vpnm` | активный профиль + egress-probe через SOCKS | ok / warn (профили есть, ни один не включён) / fail / not_installed |
+| `cdn` | CDN-профиль + egress через Cloudflare | ok / warn (профиль остановлен) / fail / not_installed |
 | `zerotier` | сервис, `zerotier-cli status`, joined-сети | ok / warn / fail / not_installed (в архиве) |
 | `amneziawg` | артефакты (бинарь/конфиги/интерфейс) — слот | not_installed / ok (iface up) / warn |
+| `xray-split` | unit/iface/config split-scheme + прямая проба 204 через `xray0` | ok / warn (конфиги есть, юнит остановлен) / fail / not_installed |
 | `zapret` | канал 0: сервис активен → **прямой** canary на youtube generate_204 | ok / warn / fail / not_installed |
-| `dns-doh` | канал 0.5: сервис `cloudflared-proxy-dns` активен + `dig @127.0.0.1 -p 5053 www.youtube.com +short` непуст | ok / fail / not_installed |
+| `dns-doh` | канал 0.5: сервис `cloudflared-proxy-dns` активен + `dig @127.0.0.1 -p 5053 www.youtube.com +short` непуст | ok / warn / fail / not_installed |
 
-В конце — `healthy channels: N/5` (exit 1, если ни один канал не ok).
-Строка `zapret`: `not_installed` — нейтрально (канал 0 не ставили);
-`ok` — «direct DPI-bypass жив»; `fail` — сервис активен, но canary не прошла
-(стратегия сломалась — blockcheck заново); `warn` — установлен, но не запущен.
-Строка `dns-doh`: `not_installed` — нейтрально (локальный DoH не ставили);
-`ok` — «DoH-резолвер жив (локальный cloudflared)»; `fail` — сервис активен,
-но dig пуст (upstream недоступен/перехвачен), либо сервис установлен, но не
-запущен (системный DNS молча деградирует до plaintext-перехвата).
+В конце — `healthy channels: N/7` (exit 1, если ни один канал не ok).
+
+### Как читать статусы
+
+В таблице показывается смысл, а не внутренний код — `warn` и `not_installed`
+раньше читались как «сломано», хотя означают «есть, но выключено» и «ещё не
+настраивали»:
+
+| В таблице | Код | Смысл и что делать |
+|-----------|-----|--------------------|
+| ✔ работает | `ok` | канал включён и проверка прошла |
+| ○ готов, не включён | `warn` | всё установлено/настроено, но не активно: обычно `vpn up <profile>`, `vpn scheme awg\|xray-split` или `systemctl start <unit>` |
+| — не настроен | `not_installed` | канала просто нет — нейтрально, не ошибка |
+| ✖ ошибка | `fail` | включён, но проверка не прошла — смотреть колонку «детали» |
+
+Сырые коды остаются в `vpn monitor --json` (для скриптов и мониторинга).
+
+Строка `zapret`: «— не настроен» — нейтрально (канал 0 не ставили);
+«✔ работает» — direct DPI-bypass жив; «✖ ошибка» — сервис активен, но canary
+не прошла (стратегия сломалась — blockcheck заново); «○ готов, не включён» —
+установлен, но не запущен.
+Строка `dns-doh`: «— не настроен» — нейтрально (локальный DoH не ставили);
+«✔ работает» — DoH-резолвер жив (локальный cloudflared); «✖ ошибка» — сервис
+активен, но dig пуст (upstream недоступен/перехвачен), либо сервис установлен,
+но не запущен (системный DNS молча деградирует до plaintext-перехвата).
 
 ## Канал 0: zapret (DPI-desync без VPN)
 

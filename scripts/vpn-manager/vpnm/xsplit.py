@@ -1,4 +1,4 @@
-"""System XHTTP split (xray tun → VLESS+XHTTP) — SPEC-20261114-xhttp-split.
+"""System xray split (tun → VLESS Reality/XHTTP) — SPEC-20261114-xhttp-split.
 
 Same zone-split mechanics as AWG (dnsmasq → nft set → fwmark → table → dev),
 but ``dev = xray0`` — the tun inbound of an xray client built from an

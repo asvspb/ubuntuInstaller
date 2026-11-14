@@ -358,7 +358,7 @@ class TestChannel:
             "probe_ok": None})
         result = channels.check_xraysplit(run=make_run())
         assert result["status"] == channels.STATUS_WARN
-        assert "vpn scheme xhttp-split" in result["detail"]
+        assert "vpn scheme xray-split" in result["detail"]
 
     def test_ok_with_204(self, monkeypatch):
         monkeypatch.setattr(xsplit, "status", lambda run=None: {

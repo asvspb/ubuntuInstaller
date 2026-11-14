@@ -86,8 +86,16 @@ def check_vpnm(run: Optional[RunCmd] = None) -> Channel:
     """Active profile + a single egress probe through its SOCKS port."""
     active = runners.get_active()
     if not active:
+        # «Не настроен» и «есть, но выключен» — разные вещи для пользователя.
+        existing = profiles.list_profiles()
+        if existing:
+            return _result(
+                "vpnm", STATUS_WARN,
+                f"профили есть ({len(existing)}), но ни один не включён — "
+                "'vpn up <name>' (см. 'vpn profile list')")
         return _result("vpnm", STATUS_NOT_INSTALLED,
-                       "нет активного профиля (vpn up <name>)")
+                       "профилей нет — 'vpn profile pull' или "
+                       "'vpn profile import <link>'")
     try:
         record = profiles.get(active)
     except profiles.ProfileStoreError as exc:
@@ -370,7 +378,7 @@ def check_xraysplit(run: Optional[RunCmd] = None) -> Channel:
                            "артефактов нет (юнит/конфиги) — SPEC-20261114")
         return _result("xray-split", STATUS_WARN,
                        f"конфиги есть ({', '.join(st['configs'])}), юнит "
-                       "остановлен — резерв: 'vpn scheme xhttp-split'")
+                       "остановлен — резерв: 'vpn scheme xray-split'")
     parts = ["профиль '%s'" % profile, "unit active"]
     if st["iface_up"]:
         parts.append("iface %s up" % xsplit_mod.DEV)
