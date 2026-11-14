@@ -79,12 +79,12 @@ done
 # выполняются только для awg*-интерфейса; для xray-туннеля (dev=xray0) они
 # не нужны — xray сам держит сокеты с хостовым src-адресом.
 case "${AWG_IFACE}" in awg*) : ;; *) SPLIT_MODE="xray" ;; esac
-# DNSMASQ_CONF: дефолт — прежний путь (backward-compat, существующие
-# установки живут в awg-split.conf); для другой nft-таблицы (xray_split) —
-# отдельный файл по имени таблицы.
-if [ "$NFT_TABLE" != "awg_split" ]; then
-    DNSMASQ_CONF="/etc/dnsmasq.d/${NFT_TABLE}.conf"
-fi
+# DNSMASQ_CONF всегда один: /etc/dnsmasq.d отдаётся демону целиком, и два
+# файла с базовыми директивами (listen-address/port/server) дают
+# «illegal repeated keyword» и dnsmasq не стартует. Схемы (AWG/xray)
+# взаимоисключающие — один активный split-конфиг перезаписывается.
+# Старый отдельный xray_split.conf удаляем (артефакт ранних сборок).
+rm -f /etc/dnsmasq.d/xray_split.conf 2>/dev/null || true
 _FLAGS="--dev ${AWG_IFACE} --mark ${MARK_HEX} --table ${ROUTE_TABLE} --nft-table ${NFT_TABLE}"
 
 # Дефолтный список доменов. Редактируйте в $DOMAINS_FILE после установки.

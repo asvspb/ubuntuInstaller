@@ -109,6 +109,15 @@ def _write_config_via_sudo(profile_name: str, link: ProfileLink,
     """
     payload = xray_tun_config(link, tun_name=DEV)
     dst = f"{CONF_DIR}/{CONF_PREFIX}{profile_name}.json"
+    # /etc/vpn-manager может отсутствовать на свежей машине (17 читает, но
+    # не создаёт каталог): создаём до install, иначе install падает ENOENT.
+    rc_dir, _o, err_dir = runner(
+        ["sudo", "-n", "install", "-d", "-m", "0700", CONF_DIR])
+    if rc_dir != 0:
+        detail = (err_dir or "").strip().splitlines()
+        return False, (f"каталог {CONF_DIR} не создан "
+                       f"({detail[-1] if detail else f'exit {rc_dir}'}); "
+                       f"вручную: sudo install -d -m 0700 {CONF_DIR}")
     fd, tmp_name = tempfile.mkstemp(prefix=f"xray-split-{profile_name}.",
                                     suffix=".json.tmp")
     try:
@@ -128,6 +137,17 @@ def _write_config_via_sudo(profile_name: str, link: ProfileLink,
                        f"({detail[-1] if detail else f'exit {rc}'}); "
                        f"вручную: sudo install -m 0600 <config> {dst}")
     return True, dst
+
+
+def _ensure_doh(runner: RunCmd) -> Tuple[bool, str]:
+    """DoH-цепочка обязательна: dnsmasq смотрит в 127.0.0.1:5053.
+
+    Без неё split поднимается, но резолвинг не-split доменов уходит в мёртвый
+    upstream (найдено на ноутбуке 2026-11-14: curl example.com timeout при
+    рабочем ya.ru). Идемпотентно, как `vpn doh on`.
+    """
+    from . import doh as doh_mod
+    return doh_mod.enable(runner)
 
 
 def _stop_awg_scheme(runner: RunCmd) -> Tuple[bool, str]:
@@ -176,6 +196,11 @@ def apply(profile: Optional[str] = None,
     ok_awg, msg_awg = _stop_awg_scheme(runner)
     if not ok_awg:
         return False, msg_awg
+    # DoH включаем ПОСЛЕ снятия AWG: 15_domain-split.sh --off (внутри
+    # _stop_awg_scheme) гасит dnsmasq/DoH, и включение до него терялось.
+    ok_doh, msg_doh = _ensure_doh(runner)
+    if not ok_doh:
+        return False, f"DoH-цепочка не включена ({msg_doh}) — xsplit без неё ломает DNS"
     rc, out, err = runner(
         ["sudo", "-n", "bash", str(script), "--profile", name])
     if rc == 0:

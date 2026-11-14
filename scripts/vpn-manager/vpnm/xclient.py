@@ -152,8 +152,13 @@ def xray_tun_config(link: ProfileLink, tun_name: str = "xray0",
         "protocol": "tun",
         "settings": {"name": tun_name, "mtu": int(mtu)},
     }
-    outbounds: list = [_xray_outbound(link, tag="proxy"),
-                       {"protocol": "freedom", "tag": "direct"}]
+    proxy = _xray_outbound(link, tag="proxy")
+    # Свои сокеты xray (подключение к серверу) помечаем 0xca6c: nft-цепочка
+    # split уже делает `meta mark 0xca6c return`. Без этого, если домен
+    # сервера попадает в TLD-зону (com), его IP оказывается в nft-set, и
+    # xray уходит в собственный tun — бесконечная петля/таймауты.
+    proxy.setdefault("streamSettings", {})["sockopt"] = {"mark": 0xCA6C}
+    outbounds: list = [proxy, {"protocol": "freedom", "tag": "direct"}]
     routing = {"domainStrategy": "AsIs",
                "rules": [{"type": "field",
                           "inboundTag": ["tun"],
