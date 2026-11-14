@@ -78,7 +78,7 @@ vpn install --linger
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
-| `vpn start [reality\|xhttp\|awg]` / `vpn reset` | Основная схема: по умолчанию **Reality-split**, `xhttp` — XHTTP-split, `awg` — AWG+доменный split / полный сброс в состояние «как после перезагрузки» |
+| `vpn start [awg\|reality\|xhttp]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `reality` — Reality-split, `xhttp` — XHTTP-split / полный сброс в состояние «как после перезагрузки» |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
@@ -101,9 +101,9 @@ vpn install --linger
 Схемы и профили включаются обычной командой в любой вкладке терминала:
 
 ```bash
-vpn start              # Reality-split (по умолчанию)
-vpn start xhttp        # XHTTP-split
-vpn start awg          # AWG + доменный split
+vpn start              # AWG + доменный split (по умолчанию)
+vpn start reality      # Reality-split (tun xray0, TCP 443)
+vpn start xhttp        # XHTTP-split (tun xray0, TCP 8443)
 vpn up <profile>       # socks-профиль (Reality/XHTTP/Hy2/CDN)
 vpn reset              # выключить всё
 ```
@@ -265,7 +265,7 @@ vpn speed --out /tmp/speed.json           # свой путь отчёта
 
 - **Серийно (И26)**: каналы меряются по одному; паузы между замерами — это
   защита от behavioral-«заморозки» TSPU, а не «медлительность».
-- **AWG** поднимается (`vpn start awg`) и снимается (`vpn reset`) автоматически,
+- **AWG** поднимается (`vpn start`) и снимается (`vpn reset`) автоматически,
   если не был активен; состояние системы после прогона — как до него.
 - **Egress-проверка**: `api.ipify.org` через каждый туннель → должен быть IP
   сервера; иначе замер невалиден (трафик шёл напрямую).
@@ -794,9 +794,9 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
 
 ```bash
-vpn start                          # быстрый вход: Reality-split (по умолч.)
+vpn start                          # по умолчанию: AWG + доменный split
+vpn start reality                  # Reality-split
 vpn start xhttp                    # XHTTP-split
-vpn start awg                      # AWG + доменный split
 vpn scheme xray-split <profile>    # Reality/XHTTP; <profile> — имя из
                                    # 'vpn profile list' (без имени — первый)
 vpn scheme xhttp-split [профиль]   # алиас: автовыбор только xray-xhttp
@@ -824,7 +824,7 @@ sudo bash scripts/17_xray-split.sh --status | --off
   проба 204 через tun);
 - **браузер после включения**: Chrome/Firefox держат старые TCP/QUIC-соединения
   и DNS-кэш — они продолжают идти напрямую и «ломают» youtube/gemini. После
-  первого `vpn start` перезапустите браузер (новые вкладки не всегда помогают
+  первого `vpn start reality`/`xhttp` перезапустите браузер (новые вкладки не всегда помогают
   из-за переиспользования QUIC-сессии). `vpn start` печатает эту подсказку.
 
 **Ограничения (SPEC §8):**

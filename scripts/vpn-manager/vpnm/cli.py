@@ -60,9 +60,9 @@ app = VpnTyper(
 
 Активация VPN — из вкладки терминала:
 
-  vpn start                  # Reality-split (по умолчанию): tun xray0,
-                             # TCP 443; 'vpn start xhttp' — XHTTP (8443),
-                             # 'vpn start awg' — AWG + доменный split
+  vpn start                  # AWG + доменный split (по умолчанию)
+  vpn start reality          # Reality-split: tun xray0, TCP 443
+  vpn start xhttp            # XHTTP-split: tun xray0, TCP 8443
   vpn up <profile>           # один socks-профиль (Reality/XHTTP/Hy2/CDN)
   vpn sysproxy on            # socks-профиль → системный прокси браузера
   vpn status                 # что включено + внешний IP
@@ -109,7 +109,7 @@ app = VpnTyper(
 Предустановленные конфигурации (зеркала 'vpn reset'):
 
   vpn scheme awg              # AWG-схема: туннель + доменный split
-                              # (= 'vpn start awg'); снимает xray-split
+                              # (= 'vpn start'); снимает xray-split
   vpn scheme xray-split <profile>
                               # split через tun xray0: Reality (443) или
                               # XHTTP (8443). <profile> — имя из
@@ -666,7 +666,7 @@ def scheme_cmd(preset: str = typer.Argument(
     """Предустановленные конфигурации (зеркала 'vpn reset').
 
     vpn scheme awg               — AWG-туннель + доменный split (то же,
-                                   что 'vpn start awg'); снимает xray-split,
+                                   что 'vpn start'); снимает xray-split,
                                    если был поднят
     vpn scheme xray-split [профиль] — системный split для xray-транспорта:
                                    tun xray0 (xray 26.x) → Reality (443) или
@@ -806,20 +806,29 @@ def _browser_restart_hint() -> None:
 
 @app.command()
 def start(scheme: str = typer.Argument(
-        "reality", help="'reality' (по умолчанию) | 'xhttp' | 'awg'")) -> None:
-    """Поднять основную схему: Reality-split / XHTTP-split / AWG.
+        "awg", help="'awg' (по умолчанию) | 'reality' | 'xhttp'")) -> None:
+    """Поднять основную схему: AWG / Reality-split / XHTTP-split.
 
-    vpn start          — Reality-split (по умолчанию): tun xray0 →
-                         VLESS Reality (TCP 443), домены через туннель,
-                         GLM/RU напрямую
+    vpn start          — AWG-туннель + доменный split (по умолчанию, как
+                         'vpn scheme awg'; зеркало 'vpn reset')
+    vpn start reality  — Reality-split: tun xray0 → VLESS Reality (TCP 443)
     vpn start xhttp    — XHTTP-split: tun xray0 → VLESS XHTTP (TCP 8443)
-    vpn start awg      — AWG-туннель + доменный split (зеркало 'vpn reset')
 
     Reality/XHTTP берут первый подходящий профиль из 'vpn profile list'
     (конкретный — 'vpn scheme xray-split <profile>') и снимают AWG-схему;
-    'vpn start awg' снимает xray-split — схемы взаимоисключимы. Идемпотентно.
+    'vpn start' / 'vpn start awg' снимает xray-split — взаимоисключимы.
+    Идемпотентно.
     """
     name = scheme.strip().lower()
+    if name in ("awg", "default"):
+        ok, msg = _apply_awg_scheme()
+        if not ok:
+            _warn(f"{msg} — повторите 'vpn start' или выполните "
+                  "подсказки выше")
+            raise typer.Exit(code=1)
+        _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
+            "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
+        return
     if name in ("reality", "xray", "xray-split"):
         from . import xsplit as xsplit_mod
         ok, msg = xsplit_mod.apply(default_protocol="xray-reality")
@@ -840,16 +849,7 @@ def start(scheme: str = typer.Argument(
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
         _browser_restart_hint()
         return
-    if name == "awg":
-        ok, msg = _apply_awg_scheme()
-        if not ok:
-            _warn(f"{msg} — повторите 'vpn start awg' или выполните "
-                  "подсказки выше")
-            raise typer.Exit(code=1)
-        _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
-            "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
-        return
-    _err("unknown scheme: expected 'reality' | 'xhttp' | 'awg'")
+    _err("unknown scheme: expected 'awg' | 'reality' | 'xhttp'")
     raise typer.Exit(code=2)
 
 

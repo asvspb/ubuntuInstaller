@@ -259,21 +259,17 @@ def test_cli_scheme_cdn_without_profile_fails(monkeypatch):
     assert called == []
 
 
-def test_cli_start_default_is_reality(monkeypatch):
-    from vpnm import xsplit
-    from vpnm.cli import app as cli_app
+def test_cli_start_default_is_awg(monkeypatch):
+    from vpnm import cli as cli_mod
     from typer.testing import CliRunner
     calls: list = []
-
-    def fake_apply(profile=None, run=None, default_protocol=None):
-        calls.append((profile, default_protocol))
-        return True, "reality ok"
-
-    monkeypatch.setattr(xsplit, "apply", fake_apply)
-    result = CliRunner().invoke(cli_app, ["start"])
+    monkeypatch.setattr(
+        cli_mod, "_apply_awg_scheme",
+        lambda: calls.append("awg") or (True, "AWG + доменный split"))
+    result = CliRunner().invoke(cli_mod.app, ["start"])
     assert result.exit_code == 0, result.output
-    assert calls == [(None, "xray-reality")]
-    assert "Reality-split" in result.output
+    assert calls == ["awg"]
+    assert "AWG" in result.output
 
 
 def test_cli_start_xhttp(monkeypatch):
@@ -299,7 +295,7 @@ def test_cli_start_reality_failure_exits(monkeypatch):
     from typer.testing import CliRunner
     monkeypatch.setattr(xsplit, "apply",
                         lambda **kw: (False, "нет профиля"))
-    result = CliRunner().invoke(cli_app, ["start"])
+    result = CliRunner().invoke(cli_app, ["start", "reality"])
     assert result.exit_code == 1
 
 
@@ -308,4 +304,4 @@ def test_cli_start_unknown_scheme():
     from typer.testing import CliRunner
     result = CliRunner().invoke(cli_app, ["start", "wireguard"])
     assert result.exit_code == 2
-    assert "expected 'reality'" in result.output
+    assert "expected 'awg'" in result.output
