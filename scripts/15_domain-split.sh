@@ -526,6 +526,12 @@ info "4. dnsmasq-конфиг: $DNSMASQ_CONF"
     # но остальная сеть стабильна.
     echo "server=77.88.8.8"
     echo "cache-size=1000"
+    # Отрицательный кеш (NXDOMAIN) — не по SOA-минимуму зоны (CF = 1800с!),
+    # а 60с: без этого свежая DNS-запись (asv2.asvpersonal.ru 2026-11-15)
+    # недоступна клиенту до получаса после добавления. Лечится
+    # resolvectl flush-caches, но dns-клиенты (hysteria и пр.) смотрят в
+    # dnsmasq — перекрываем тут.
+    echo "neg-ttl=60"
     echo "# Домены из списка → nft set inet/${NFT_TABLE}/${NFT_SET}"
     # ВАЖНО: семейство отделяется ПРОБЕЛОМ ('4 inet#...'), не двоеточием —
     # dnsmasq в runtime сверяет setname[1]==' ' и с '4:' строит битую nft-команду
