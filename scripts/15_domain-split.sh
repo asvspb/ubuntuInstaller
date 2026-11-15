@@ -709,8 +709,24 @@ systemctl restart dnsmasq.service
 systemctl restart systemd-resolved.service
 sleep 2
 
+# Грабля 2026-11-15: в /etc/dnsmasq.conf строка conf-dir=/etc/dnsmasq.d была
+# ЗАКОММЕНТИРОВАНА — служебный dnsmasq не видел awg-split.conf
+# (listen-address=127.0.0.1, bind-interfaces), биндил wildcard 0.0.0.0:53
+# и конфликтовал со stub systemd-resolved (127.0.0.53) → exit 1 → split
+# «применён», а DNS-механика мертва («впн не работает» при живом туннеле).
+# Гарантируем conf-dir идемпотентно (с бэкапом).
+if grep -q '^#\s*conf-dir=/etc/dnsmasq\.d' /etc/dnsmasq.conf 2>/dev/null; then
+    cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak-split 2>/dev/null || true
+    sed -i 's/^#\s*conf-dir=\/etc\/dnsmasq\.d$/conf-dir=\/etc\/dnsmasq.d/' /etc/dnsmasq.conf
+    warn "conf-dir=/etc/dnsmasq.d в /etc/dnsmasq.conf был закомментирован — раскомментирован (бэкап: /etc/dnsmasq.conf.bak-split)"
+fi
+# Повторный рестарт: первый мог упасть на wildcard-конфликте до фикса conf-dir.
+systemctl restart dnsmasq.service 2>/dev/null || true
+sleep 1
+
 if ! systemctl is-active --quiet dnsmasq.service; then
     err "dnsmasq не поднялся — журнал: journalctl -u dnsmasq -n 30"
+    err "частые причины: (1) закомментированный conf-dir=/etc/dnsmasq.d в /etc/dnsmasq.conf (wildcard-bind против resolved); (2) дубликат директивы в /etc/dnsmasq.d/*.conf («illegal repeated keyword»); (3) порт 53 занят сторонним процессом (ss -ulnp | grep ':53')"
     exit 1
 fi
 # retry: одиночный флап DoH-апстрима не должен ронять весь сплит (инцидент
