@@ -5,6 +5,7 @@ All subprocess interaction goes through a fake ``run`` callable
 settings paths are redirected to tmp_path.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -567,3 +568,23 @@ def test_cli_awg_qr_error_when_nothing_running(env, monkeypatch):
     result = runner.invoke(cli.app, ["amneziawg", "qr"])
     assert result.exit_code == 2
     assert "укажите имя" in result.output
+
+
+def test_active_conf_text_strips_table_for_client(env):
+    """for_client=True вырезает Table = off (парсер AmneziaVPN его не знает)."""
+    conf = ("[Interface]\nPrivateKey = FIXTURE_PW_AWG_T\n"
+            "Table = off\nAddress = 10.9.0.2/32\n\n[Peer]\n")
+
+    def run(args, **kw):
+        if args[:3] == ["sudo", "-n", "cat"]:
+            return 0, conf, ""
+        return 1, "", "unexpected"
+
+    name, text = amneziawg.active_conf_text("laptop", run=run)
+    assert "Table" not in text
+    assert "PrivateKey = FIXTURE_PW_AWG_T" in text
+    assert "Address = 10.9.0.2/32" in text
+
+    # for_client=False (точная копия) — Table остаётся
+    _name, raw = amneziawg.active_conf_text("laptop", run=run, for_client=False)
+    assert re.search(r"^\s*Table\s*=\s*off", raw, re.MULTILINE)

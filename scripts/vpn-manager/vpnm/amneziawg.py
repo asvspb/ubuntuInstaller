@@ -44,7 +44,8 @@ class AwgError(Exception):
 
 
 def active_conf_text(name: Optional[str] = None,
-                     run: Optional[RunCmd] = None) -> Tuple[str, str]:
+                     run: Optional[RunCmd] = None,
+                     for_client: bool = True) -> Tuple[str, str]:
     """Text of the AWG client config for ``name`` (default: running instance).
 
     The running tunnel's config lives in ``/etc/amnezia/amneziawg/<name>.conf``
@@ -52,6 +53,10 @@ def active_conf_text(name: Optional[str] = None,
     user-local copy ``LOCAL_CONF_DIR/<name>.conf`` (add-client artifacts).
     Returns ``(name, text)``; secrets stay in the return value only (passed
     to qrencode via stdin), never logged or printed.
+
+    ``for_client=True`` strips system-only attributes (``Table = off`` —
+    the split mechanism on the laptop; AmneziaVPN's parser rejects them:
+    «неизвестный атрибут interface») so the QR imports cleanly on phones.
 
     Raises AwgError when no instance is running and no name is given, or
     when the config cannot be read.
@@ -65,18 +70,23 @@ def active_conf_text(name: Optional[str] = None,
     rc, out, err = runner(["sudo", "-n", "cat",
                            f"{AWG_SYSTEM_CONF_DIR}/{resolved}.conf"])
     if rc == 0 and out.strip():
-        return resolved, out
-    local = LOCAL_CONF_DIR / f"{resolved}.conf"
-    try:
-        text = local.read_text()
-    except OSError as exc:
-        sudo_reason = (err or "").strip() or f"exit {rc}"
-        raise AwgError(
-            f"конфиг {resolved} не читается: ни {AWG_SYSTEM_CONF_DIR}/"
-            f"{resolved}.conf (sudo: {sudo_reason}), ни {local} ({exc})"
-        ) from exc
-    if not text.strip():
-        raise AwgError(f"конфиг {local} пуст")
+        text = out
+    else:
+        local = LOCAL_CONF_DIR / f"{resolved}.conf"
+        try:
+            text = local.read_text()
+        except OSError as exc:
+            sudo_reason = (err or "").strip() or f"exit {rc}"
+            raise AwgError(
+                f"конфиг {resolved} не читается: ни {AWG_SYSTEM_CONF_DIR}/"
+                f"{resolved}.conf (sudo: {sudo_reason}), ни {local} ({exc})"
+            ) from exc
+        if not text.strip():
+            raise AwgError(f"конфиг {local} пуст")
+    if for_client:
+        text = "\n".join(
+            line for line in text.splitlines()
+            if not re.match(r"^\s*Table\s*=", line, re.IGNORECASE))
     return resolved, text
 
 

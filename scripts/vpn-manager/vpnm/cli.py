@@ -247,7 +247,9 @@ def amneziawg_qr(name: Optional[str] = typer.Argument(
     По умолчанию берётся конфиг АКТИВНОГО основного профиля
     (/etc/amnezia/amneziawg/<name>.conf работающего туннеля); с аргументом
     NAME — конфиг этого пира (fallback: ~/.awg/NAME.conf от add-client).
-    Требуется `qrencode` (`sudo apt install qrencode`).
+    Системные атрибуты (Table = off — split-механика ноута) вырезаются:
+    парсер AmneziaVPN их не понимает. Требуется `qrencode`
+    (`sudo apt install qrencode`).
     """
     from . import amneziawg as awg
     from .qr import QrError, render
