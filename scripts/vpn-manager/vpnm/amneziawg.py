@@ -33,6 +33,7 @@ DEFAULT_LOCAL_INSTANCE = "laptop"
 SERVER_CLIENTS_DIR = "/opt/my-vds/gateway/clients/amneziawg"
 LOCAL_CONF_DIR = Path(os.environ.get(
     "VPN_MANAGER_AWG_CONF_DIR", str(Path.home() / ".awg")))
+AWG_SYSTEM_CONF_DIR = "/etc/amnezia/amneziawg"
 AWG_SERVICE = "vds-amneziawg"  # server-side unit, for log hints only
 
 PromptFn = Callable[[str], str]
@@ -40,6 +41,43 @@ PromptFn = Callable[[str], str]
 
 class AwgError(Exception):
     """Raised when the ssh/scp roundtrip or the host resolution fails."""
+
+
+def active_conf_text(name: Optional[str] = None,
+                     run: Optional[RunCmd] = None) -> Tuple[str, str]:
+    """Text of the AWG client config for ``name`` (default: running instance).
+
+    The running tunnel's config lives in ``/etc/amnezia/amneziawg/<name>.conf``
+    (root-owned; the unit reads it) — read via ``sudo cat``. Fallback: the
+    user-local copy ``LOCAL_CONF_DIR/<name>.conf`` (add-client artifacts).
+    Returns ``(name, text)``; secrets stay in the return value only (passed
+    to qrencode via stdin), never logged or printed.
+
+    Raises AwgError when no instance is running and no name is given, or
+    when the config cannot be read.
+    """
+    runner: RunCmd = run or run_cmd
+    resolved = name or local_instance(run)
+    if not resolved:
+        raise AwgError(
+            f"нет активного юнита {AWG_UNIT_PREFIX}<name>.service — "
+            f"укажите имя: vpn amneziawg qr NAME")
+    rc, out, err = runner(["sudo", "-n", "cat",
+                           f"{AWG_SYSTEM_CONF_DIR}/{resolved}.conf"])
+    if rc == 0 and out.strip():
+        return resolved, out
+    local = LOCAL_CONF_DIR / f"{resolved}.conf"
+    try:
+        text = local.read_text()
+    except OSError as exc:
+        sudo_reason = (err or "").strip() or f"exit {rc}"
+        raise AwgError(
+            f"конфиг {resolved} не читается: ни {AWG_SYSTEM_CONF_DIR}/"
+            f"{resolved}.conf (sudo: {sudo_reason}), ни {local} ({exc})"
+        ) from exc
+    if not text.strip():
+        raise AwgError(f"конфиг {local} пуст")
+    return resolved, text
 
 
 # --- host ----------------------------------------------------------------------

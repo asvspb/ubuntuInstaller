@@ -436,3 +436,134 @@ def test_cli_tunnel_no_split_skips_script(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli_app, ["amneziawg", "tunnel", "on", "--no-split"])
     assert result.exit_code == 0, result.output
     assert calls == ["on"]
+
+
+# --- vpn amneziawg qr ----------------------------------------------------------
+
+
+def test_active_conf_text_prefers_running_instance(env, monkeypatch):
+    """Active vpn-awg-split@NAME → config read via sudo cat (system path)."""
+    calls = []
+
+    def run(args, **kw):
+        calls.append(list(args))
+        if args[:3] == ["systemctl", "list-units", "--type=service"]:
+            return 0, (
+                "vpn-awg-split@laptop.service loaded active exited "
+                "AWG split tunnel"
+            ), ""
+        if args[:3] == ["sudo", "-n", "cat"]:
+            return 0, "[Interface]\nPrivateKey = FIXTURE_PW_AWG_KEY\n", ""
+        return 1, "", "unexpected"
+
+    name, text = amneziawg.active_conf_text(run=run)
+    assert name == "laptop"
+    assert "PrivateKey = FIXTURE_PW_AWG_KEY" in text
+    assert any(a[:3] == ["sudo", "-n", "cat"] and
+               "laptop.conf" in " ".join(a) for a in calls)
+
+
+def test_active_conf_text_explicit_name_skips_instance_lookup(env):
+    """Explicit NAME → no systemctl probing, sudo cat for that name."""
+
+    def run(args, **kw):
+        if args[:3] == ["sudo", "-n", "cat"]:
+            return 0, "[Interface]\nPrivateKey = FIXTURE_PW_AWG_KEY\n", ""
+        return 1, "", "unexpected"
+
+    name, text = amneziawg.active_conf_text("win", run=run)
+    assert name == "win"
+    assert "FIXTURE_PW_AWG_KEY" in text
+
+
+def test_active_conf_text_falls_back_to_local_copy(env):
+    """sudo cat fails → fallback ~/.awg/<name>.conf (add-client artifact)."""
+    conf_dir = env / "awg"
+    conf_dir.mkdir(parents=True)
+    (conf_dir / "win.conf").write_text(
+        "[Interface]\nPrivateKey = FIXTURE_PW_AWG_LOCAL\n")
+
+    def run(args, **kw):
+        return 1, "", "sudo: a password is required"
+
+    name, text = amneziawg.active_conf_text("win", run=run)
+    assert name == "win"
+    assert "FIXTURE_PW_AWG_LOCAL" in text
+
+
+def test_active_conf_text_errors_without_instance_and_name(env):
+    """Nothing running + no name → readable AwgError, no secrets."""
+
+    def run(args, **kw):
+        return 0, "", ""
+
+    with pytest.raises(amneziawg.AwgError) as exc_info:
+        amneziawg.active_conf_text(run=run)
+    assert "укажите имя" in str(exc_info.value)
+
+
+def test_active_conf_text_errors_when_unreadable_everywhere(env):
+    """sudo cat fails and local copy missing → error names both paths."""
+
+    def run(args, **kw):
+        return 1, "", "sudo: a password is required"
+
+    with pytest.raises(amneziawg.AwgError) as exc_info:
+        amneziawg.active_conf_text("win", run=run)
+    msg = str(exc_info.value)
+    assert "/etc/amnezia/amneziawg/win.conf" in msg
+    assert "awg/win.conf" in msg
+
+
+def test_cli_awg_qr_renders_active_profile(env, monkeypatch):
+    """`vpn amneziawg qr` без имени — QR активного профиля; секрет не в argv."""
+    runner = CliRunner()
+
+    def run(args, **kw):
+        if args[:3] == ["systemctl", "list-units", "--type=service"]:
+            return 0, (
+                "vpn-awg-split@laptop.service loaded active exited "
+                "AWG split tunnel"
+            ), ""
+        if args[:3] == ["sudo", "-n", "cat"]:
+            return 0, "[Interface]\nPrivateKey = FIXTURE_PW_AWG_QR\n", ""
+        return 1, "", "unexpected"
+
+    monkeypatch.setattr(amneziawg, "run_cmd", run)
+    result = runner.invoke(cli.app, ["amneziawg", "qr"])
+    assert result.exit_code == 0, result.output
+    assert "AWG: laptop" in result.output
+    # QR-арт непустой (ANSIUTF8-блоки) — сам секрет в нём зашифрован кодом,
+    # plaintext-ключ в выводе не печатается отдельной строкой.
+    assert "PrivateKey = FIXTURE_PW_AWG_QR" not in result.output
+    assert "█" in result.output
+
+
+def test_cli_awg_qr_explicit_name(env, monkeypatch):
+    """`vpn amneziawg qr NAME` — QR этого пира (fallback на локальную копию)."""
+    runner = CliRunner()
+    conf_dir = env / "awg"
+    conf_dir.mkdir(parents=True)
+    (conf_dir / "win.conf").write_text(
+        "[Interface]\nPrivateKey = FIXTURE_PW_AWG_WIN\n")
+
+    def run(args, **kw):
+        return 1, "", "sudo: a password is required"
+
+    monkeypatch.setattr(amneziawg, "run_cmd", run)
+    result = runner.invoke(cli.app, ["amneziawg", "qr", "win"])
+    assert result.exit_code == 0, result.output
+    assert "AWG: win" in result.output
+    assert "█" in result.output
+
+
+def test_cli_awg_qr_error_when_nothing_running(env, monkeypatch):
+    runner = CliRunner()
+
+    def run(args, **kw):
+        return 0, "", ""
+
+    monkeypatch.setattr(amneziawg, "run_cmd", run)
+    result = runner.invoke(cli.app, ["amneziawg", "qr"])
+    assert result.exit_code == 2
+    assert "укажите имя" in result.output

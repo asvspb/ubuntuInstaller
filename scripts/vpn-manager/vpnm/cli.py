@@ -237,6 +237,31 @@ def amneziawg_status() -> None:
         typer.echo(line)
 
 
+@amneziawg_app.command("qr")
+def amneziawg_qr(name: Optional[str] = typer.Argument(
+        None, help="Имя инстанции/пира (по умолчанию — активный "
+        "vpn-awg-split@<name>); секрет не печатается, идёт в qrencode "
+        "через stdin")) -> None:
+    """QR AWG-конфига в терминал: сканировать AmneziaVPN на телефоне/планшете.
+
+    По умолчанию берётся конфиг АКТИВНОГО основного профиля
+    (/etc/amnezia/amneziawg/<name>.conf работающего туннеля); с аргументом
+    NAME — конфиг этого пира (fallback: ~/.awg/NAME.conf от add-client).
+    Требуется `qrencode` (`sudo apt install qrencode`).
+    """
+    from . import amneziawg as awg
+    from .qr import QrError, render
+    try:
+        resolved, text = awg.active_conf_text(name)
+        art = render(text)
+    except (awg.AwgError, QrError) as exc:
+        _err(str(exc))
+        raise typer.Exit(code=2)
+    typer.echo(f"── AWG: {resolved} (конфиг содержит секреты — "
+               "не фотографируйте в общий чат) ──")
+    typer.echo(art)
+
+
 @amneziawg_app.command("add-client")
 def amneziawg_add_client(name: str) -> None:
     """Создать клиента на сервере, конфиг придёт в ~/.awg/NAME.conf (0600)."""
