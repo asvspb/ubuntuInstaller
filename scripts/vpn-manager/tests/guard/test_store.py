@@ -244,3 +244,48 @@ def test_status_carries_redaction_hits() -> None:
     assert payload["counters"]["redaction_hits"] == 7
     assert schema.validate(payload, events.STATUS_SCHEMA) == []
 
+
+# --- persistent redaction_hits (WP-G3) ---------------------------------------
+
+def test_state_redaction_hits_are_cumulative_across_restarts(
+        tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    assert store.read_redaction_hits(target) == 0
+    store.write_state({"schema": "guard.state/1",
+                       "note": "auth password=FIXTURE_PW_state"}, target)
+    first = store.read_redaction_hits(target)
+    assert first >= 1
+    # a clean write (a restarted daemon with nothing to mask) must not reset it
+    store.write_state({"schema": "guard.state/1", "state": "armed"}, target)
+    assert store.read_redaction_hits(target) == first
+    # a write that masks again adds to the same counter
+    store.write_state({"schema": "guard.state/1",
+                       "note": "obfs-password=FIXTURE_PW_again"}, target)
+    assert store.read_redaction_hits(target) > first
+    assert "FIXTURE_PW" not in target.read_text(encoding="utf-8")
+
+
+def test_state_redaction_hits_take_the_payload_counter_as_a_floor(
+        tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    store.write_state({"schema": "guard.state/1", "redaction_hits": 5}, target)
+    assert store.read_redaction_hits(target) >= 5
+    store.write_state({"schema": "guard.state/1", "redaction_hits": 3}, target)
+    assert store.read_redaction_hits(target) == 5
+
+
+def test_state_redaction_hits_can_be_disabled(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    store.write_state({"schema": "guard.state/1",
+                       "note": "password=FIXTURE_PW_noacc"}, target,
+                      accumulate_redaction_hits=False)
+    assert store.read_redaction_hits(target) == 0
+
+
+def test_redaction_hits_total_prefers_the_persisted_counter(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    assert store.redaction_hits_total(3, target) == 3
+    store.write_state({"schema": "guard.state/1", "redaction_hits": 9}, target)
+    assert store.redaction_hits_total(3, target) == 9
+    assert store.redaction_hits_total(0, tmp_path / "absent.json") == 0
+    assert store.redaction_hits_total(-4, tmp_path / "absent.json") == 0

@@ -224,9 +224,12 @@ def status(as_json: bool = typer.Option(
         vpnm_units=(state_active,) if state_active else (),
         awg_iface=iface)
     cached = install_mod.load_install_state()
-    redaction_hits = 0
+    install_hits = 0
     if cached and isinstance(cached.get("redaction_hits"), int):
-        redaction_hits = max(0, int(cached["redaction_hits"]))
+        install_hits = max(0, int(cached["redaction_hits"]))
+    # the daemon keeps a cumulative counter in state.json: after a crash it
+    # must not look like a restart reset it (WP-G3, store.read_redaction_hits)
+    redaction_hits = store.redaction_hits_total(install_hits)
     payload = store.build_status(
         running=bool(info["active"]),
         since=info.get("created"),
@@ -276,9 +279,10 @@ def sources(as_json: bool = typer.Option(
     payload = None if recheck else store.read_coverage()
     if payload is None:
         install_state = install_mod.load_install_state()
-        hits = 0
+        install_hits = 0
         if install_state and isinstance(install_state.get("redaction_hits"), int):
-            hits = max(0, int(install_state["redaction_hits"]))
+            install_hits = max(0, int(install_state["redaction_hits"]))
+        hits = store.redaction_hits_total(install_hits)
         payload = collect_coverage(install_state=install_state,
                                    redaction_hits=hits)
         try:

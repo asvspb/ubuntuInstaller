@@ -444,11 +444,28 @@ def state_path() -> Path:
 def write_state(payload: Mapping[str, Any],
                 path: Optional[Path] = None, *,
                 snippets: Optional[bool] = None,
-                config_root: Optional[Path] = None) -> Path:
-    """Persist daemon state atomically (0600, sanitized; SPEC §7.3/§11.4)."""
-    clean, _hits = sanitize(payload, snippets=snippets,
-                            config_root=config_root)
+                config_root: Optional[Path] = None,
+                accumulate_redaction_hits: bool = True) -> Path:
+    """Persist daemon state atomically (0600, sanitized; SPEC §7.3/§11.4).
+
+    ``redaction_hits`` is **cumulative** and survives ``kill -9`` (WP-G3):
+    the counter already stored in ``state.json`` is read back, the payload's
+    own counter is treated as a floor, and the hits applied by this very
+    write are added on top.  A restart therefore never resets the number
+    ``vpn guard status`` shows (SPEC §12 «guard перезапущен → state
+    восстановлен»).
+    """
     target = path if path is not None else state_path()
+    prior = 0
+    if accumulate_redaction_hits:
+        prior = read_redaction_hits(target)
+        own = payload.get("redaction_hits")
+        if isinstance(own, int) and not isinstance(own, bool):
+            prior = max(prior, max(0, own))
+    clean, hits = sanitize(payload, snippets=snippets,
+                           config_root=config_root)
+    if accumulate_redaction_hits:
+        clean["redaction_hits"] = prior + int(hits)
     atomic_write_0600(target, json.dumps(clean, ensure_ascii=False,
                                          sort_keys=True) + "\n")
     return target
@@ -461,6 +478,30 @@ def read_state(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     except (OSError, json.JSONDecodeError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def read_redaction_hits(path: Optional[Path] = None) -> int:
+    """Cumulative ``redaction_hits`` persisted in ``state.json`` (0 if none).
+
+    Used by the daemon at start-up (it continues counting instead of zeroing
+    the counter) and by ``vpn guard status`` after a crash.
+    """
+    payload = read_state(path)
+    if not payload:
+        return 0
+    value = payload.get("redaction_hits")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
+
+
+def redaction_hits_total(install_hits: int = 0,
+                         path: Optional[Path] = None) -> int:
+    """Best known cumulative hits: daemon ``state.json`` or install baseline."""
+    base = 0
+    if isinstance(install_hits, int) and not isinstance(install_hits, bool):
+        base = max(0, install_hits)
+    return max(read_redaction_hits(path), base)
 
 
 def coverage_degraded(payload: Mapping[str, Any]) -> bool:
