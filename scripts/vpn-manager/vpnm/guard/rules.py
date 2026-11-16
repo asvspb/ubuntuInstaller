@@ -1,4 +1,4 @@
-"""Rules G-01…G-08 of the client guard (WP-G3, SPEC §8.2/§8.3).
+"""Rules G-01…G-12 of the client guard (WP-G3/WP-G4, SPEC §8.2/§8.3).
 
 The engine is a pure function of the event stream: it reads no wall clock, no
 files and no network, so a corpus replay yields a bit-for-bit identical list
@@ -10,7 +10,10 @@ daemon owns:
 - ``note_activity(active, now_us)`` — ``activity.json`` probe marker (§8.4);
 - ``note_route_change``/``note_suspend``/``note_roaming`` — netlink/suspend
   stop factors (S4 is opt-in v1.1, the hooks are here for G-04/G-07);
-- ``note_awg_window`` — one closed sysfs counter window (G-04 AWG branch).
+- ``note_awg_window`` — one closed sysfs counter window (G-04 AWG branch);
+- ``note_speed_report`` — a finished ``last-speed.json`` report (G-11);
+- ``note_source_status``/``note_queue_drops``/``note_parse_stats``/
+  ``note_clock_skew`` — the guard's own health (G-12, never a notification).
 
 What the rules deliberately **do not** do:
 
@@ -21,9 +24,12 @@ What the rules deliberately **do not** do:
   ``unit_start``); silence alone is ``insufficient_data:no_app_banner``;
 - the AWG branch of G-04 lives on counters only: ``awg`` has no app logs by
   design, so ``app_signal=blind`` does not block it (§4.3);
-- server-side correlation (``verdict.py``, incidents, G-09…G-12) is WP-G4.
-  This module only *consumes* an already validated, already freshness-checked
-  :class:`ServerContext` — never the file itself.
+- G-09 never claims censorship: without a second vantage it stays
+  ``endpoint_unreachable`` with confidence ≤ medium; ``conn_refused`` is an
+  ``endpoint_down`` (local/server side), never a censor;
+- G-12 is ``low`` and never boosts another rule's confidence (§8.4);
+- the engine only *consumes* an already validated, already freshness-checked
+  :class:`ServerContext` — never the file itself (``verdict.py`` owns it).
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ from typing import (Any, Callable, Deque, Dict, Iterable, List, Mapping,
 from . import events, schema
 from .window import (FIRE, MONO_US_PER_S, PENDING, Clock, Coalescer,
                      CooldownRegistry, Hysteresis, ReorderBuffer, WindowStore,
-                     endpoint_key, mono_of, mono_us, sum_counts)
+                     endpoint_key, event_count, mono_of, mono_us, sum_counts)
 
 VPNM_PREFIX = "vpnm-"
 #: AmneziaWG template units: no app logs at all, own observability (§4.3).
@@ -68,21 +74,39 @@ LIFECYCLE_SIGNALS: frozenset = frozenset((
 TRAFFIC_WAIT_SIGNALS: frozenset = frozenset(
     ("dial_start", "read_timeout", "slow_consumer"))
 COUNTER_SIGNALS: Tuple[str, ...] = ("awg_tx_growth", "awg_rx_flat")
+#: Pre-handshake failures of G-09 (§8.2): refused/timeout/stall/reset before
+#: any successful handshake is an endpoint problem, not a reset storm.
+SILENT_SIGNALS: frozenset = frozenset(
+    ("dial_timeout", "tls_stall", "conn_refused", "conn_reset"))
+#: Perf signals of the G-11 second branch (`1 report + 3 timeouts`).
+PERF_TIMEOUT_SIGNALS: frozenset = frozenset(("read_timeout", "write_timeout"))
+#: G-12 inputs (the guard's own degradations, §8.2).
+SELF_SIGNALS: frozenset = frozenset(
+    ("unparsed", "source_lost", "clock_skew", "no_signal_window"))
+#: CDN channels never count for G-11 (Cloudflare gives no bulk baseline).
+CDN_PROTOCOLS: frozenset = frozenset(("xray-cdn-ws",))
 #: Route-change kinds that mean "the default route is gone" (G-07).
 ROUTE_GONE_KINDS: frozenset = frozenset(
     ("del_default", "delete_default", "route_del", "default_route_removed"))
 
-RULES_IN_ORDER: Tuple[str, ...] = ("G-01", "G-02", "G-03", "G-04",
-                                   "G-05", "G-06", "G-07", "G-08")
+RULES_IN_ORDER: Tuple[str, ...] = (
+    "G-01", "G-02", "G-03", "G-04", "G-05", "G-06", "G-07", "G-08",
+    "G-09", "G-10", "G-11", "G-12")
+
+#: Rules evaluated once per ticker, not per unit (they describe the guard or
+#: the whole measurement history, not one service window).
+GLOBAL_RULES: Tuple[str, ...] = ("G-11", "G-12")
 
 #: Rules whose SPEC condition is a single decisive observation (a count of
-#: resets/cycles/idle timeouts/auth fails/DNS errors, one unreachable route):
-#: their own evidence **is** the confirmation, so hysteresis uses
-#: ``confirm_windows=1``.  Otherwise the SPEC threshold would silently double
-#: (3 resets → 4–5) and AC-2/AC-14 would drift.  Absence-style rules
-#: (G-01, G-08) still need the configured ``confirm_windows`` evaluations.
+#: resets/cycles/idle timeouts/auth fails/DNS errors, 5 silent dials, 3 unit
+#: flaps, 2 low speed reports, one lost source): their own evidence **is** the
+#: confirmation, so hysteresis uses ``confirm_windows=1``.  Otherwise the SPEC
+#: threshold would silently double (3 resets → 4–5) and AC-2/AC-14 would
+#: drift.  Absence-style rules (G-01, G-08) still need the configured
+#: ``confirm_windows`` evaluations.
 SINGLE_EVIDENCE_RULES: frozenset = frozenset(
-    ("G-02", "G-03", "G-04", "G-05", "G-06", "G-07"))
+    ("G-02", "G-03", "G-04", "G-05", "G-06", "G-07",
+     "G-09", "G-10", "G-11", "G-12"))
 
 #: Signals that make each rule worth re-evaluating (event-driven path).
 _RULE_TRIGGERS: Mapping[str, frozenset] = {
@@ -94,6 +118,12 @@ _RULE_TRIGGERS: Mapping[str, frozenset] = {
     "G-06": frozenset(DNS_SIGNALS),
     "G-07": frozenset(LOCAL_NET_SIGNALS),
     "G-08": frozenset(("tls_cert_error", "tls_handshake_ok")),
+    "G-09": frozenset(SILENT_SIGNALS | HANDBOOK_SIGNALS
+                      | frozenset(("tls_cert_error",))),
+    "G-10": frozenset(("unit_start", "unit_stop", "unit_exit",
+                       "unit_restart_scheduled")),
+    "G-11": frozenset(PERF_TIMEOUT_SIGNALS | frozenset(("slow_consumer",))),
+    "G-12": frozenset(SELF_SIGNALS),
 }
 
 #: Prose limits of ``guard.finding/1`` (clipped here, not by the writer).
@@ -128,9 +158,16 @@ INT_THRESHOLDS: Tuple[str, ...] = (
     "auth_fail_window_s", "dns_fail_count", "dns_fail_window_s",
     "tls_ok_window_s", "route_change_grace_s", "suspend_grace_s",
     "cooldown_s", "confirm_windows", "quiet_windows", "activity_grace_s",
+    "endpoint_silent_count", "endpoint_silent_window_s",
+    "unit_flap_count", "unit_flap_window_s",
+    "degraded_reports", "degraded_window_s",
+    "degraded_timeout_count", "degraded_timeout_window_s",
+    "self_lost_s", "self_unparsed_min_lines", "self_skew_s",
+    "self_drop_window_s",
 )
 FLOAT_THRESHOLDS: Tuple[str, ...] = (
-    "post_handshake_drop_gap_s", "awg_rx_ratio")
+    "post_handshake_drop_gap_s", "awg_rx_ratio", "degraded_mbps",
+    "self_unparsed_ratio")
 
 
 @dataclass(frozen=True)
@@ -171,6 +208,26 @@ class Thresholds:
     #: ``activity.json`` grace: the probe's own sockets outlive the marker
     #: by a few seconds (§8.4 "±30 с").
     activity_grace_s: int = 30
+    #: G-09 `endpoint_silent` (§8.2): 5 failures / 10 min on one host:port.
+    endpoint_silent_count: int = 5
+    endpoint_silent_window_s: int = 600
+    #: G-10 `unit_flap` (§8.2): 3 hard exits or starts / 10 min per unit.
+    unit_flap_count: int = 3
+    unit_flap_window_s: int = 600
+    #: G-11 `degraded_throughput` (§8.2): 2 consecutive reports < 2.0 Mbps
+    #: within 24 h, or 1 report + 3 read/write timeouts / 5 min.
+    degraded_mbps: float = 2.0
+    degraded_reports: int = 2
+    degraded_window_s: int = 86400
+    degraded_timeout_count: int = 3
+    degraded_timeout_window_s: int = 300
+    #: G-12 `guard_selfdegraded` (§8.2): a lost source > 60 s, unparsed > 30%
+    #: of ≥ 200 app lines, queue drops, clock skew > 2 s.
+    self_lost_s: int = 60
+    self_unparsed_ratio: float = 0.3
+    self_unparsed_min_lines: int = 200
+    self_skew_s: int = 2
+    self_drop_window_s: int = 60
 
     @classmethod
     def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> "Thresholds":
@@ -218,6 +275,11 @@ class ServerContext:
     age_s: int = 0
     fresh: bool = False
     lockdown: bool = False
+    #: Verdict name (``RU-PROBE-SUSPECT``…) — informational, never an enum
+    #: the rules act on.  ``present`` distinguishes "file absent" from a
+    #: quiet server verdict.
+    verdict: Optional[str] = None
+    present: bool = False
 
     def __post_init__(self) -> None:
         if (self.threat_level is not None
@@ -384,6 +446,18 @@ class RuleEngine:
         self._awg_windows: Dict[str, Deque[Dict[str, Any]]] = {}
         self._awg_gone: Dict[str, bool] = {}
         self._awg_units: Dict[str, str] = {}
+        # G-11: ring of observed (finished) speed reports, no URLs/secrets.
+        self._speed_reports: Deque[Dict[str, Any]] = deque(maxlen=8)
+        # G-12: the guard's own health, filled by the run loop.
+        self._source_status: Dict[str, Dict[str, Any]] = {}
+        self._queue_drops = 0
+        self._queue_drop_us: Optional[int] = None
+        self._parse_ratio = 0.0
+        self._parse_lines = 0
+        self._parse_us: Optional[int] = None
+        self._clock_skew_s = 0.0
+        self._skew_us: Optional[int] = None
+        self._self_ts: Optional[str] = None
 
     # -- contexts (filled by the daemon; WP-G4 wires them) -------------------
 
@@ -432,6 +506,97 @@ class RuleEngine:
             self._awg_gone[name] = True
             self._awg_windows.pop(name, None)
         return []
+
+    # -- G-11 / G-12 contexts (S3 files and self-health) ----------------------
+
+    def note_speed_report(self, payload: Optional[Mapping[str, Any]],
+                          now_us: Optional[int] = None) -> None:
+        """One ``last-speed.json`` snapshot (G-11, §8.3).
+
+        Only **finished** reports count, CDN channels are excluded (Cloudflare
+        never gives a bulk baseline) and only measured ``speed_mbps`` values
+        are kept — no endpoints, URLs or profile secrets.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        finished = payload.get("finished")
+        if not isinstance(finished, str) or not finished.strip():
+            return  # an interrupted report is not an observation
+        stamp = int(now_us) if now_us is not None else self._now_us()
+        channels = payload.get("channels")
+        if not isinstance(channels, list):
+            return
+        for channel in channels:
+            if not isinstance(channel, Mapping):
+                continue
+            name = channel.get("name")
+            protocol = channel.get("protocol")
+            if not isinstance(name, str) or not name:
+                continue
+            if (protocol in CDN_PROTOCOLS
+                    or "cdn" in name.lower()):
+                continue  # SPEC §8.2: CDN-профиль исключён
+            speed = channel.get("speed_mbps")
+            if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+                continue  # "no data" is not "0 Mbps"
+            self._speed_reports.append({
+                "mono_us": stamp,
+                "ts": finished,
+                "channel": name,
+                "speed": float(speed),
+            })
+
+    def note_source_status(self, name: str, status: str,
+                           now_us: Optional[int] = None,
+                           ts: Optional[str] = None) -> None:
+        """Source health of one reader/S3 file (G-12 ``source_lost``)."""
+        if not isinstance(name, str) or not name:
+            return
+        if status in ("ok", "off"):
+            self._source_status.pop(name, None)
+            return
+        stamp = int(now_us) if now_us is not None else self._now_us()
+        record = self._source_status.get(name)
+        if record is None or record.get("status") != status:
+            self._source_status[name] = {
+                "status": str(status),
+                "since_us": stamp,
+                "ts": ts if isinstance(ts, str) and ts else _iso_now(),
+            }
+            self._self_ts = self._source_status[name]["ts"]
+
+    def note_queue_drops(self, count: int = 1,
+                         now_us: Optional[int] = None) -> None:
+        """Bounded-queue drops are a G-12 signal, never a finding of a rule."""
+        amount = int(count) if isinstance(count, int) else 1
+        if amount <= 0:
+            return
+        self._queue_drops += amount
+        self._queue_drop_us = (int(now_us) if now_us is not None
+                               else self._now_us())
+
+    def note_parse_stats(self, unparsed_ratio: float, lines: int,
+                         now_us: Optional[int] = None) -> None:
+        """App-only unparsed ratio of the parser (D-10, G-12)."""
+        try:
+            self._parse_ratio = max(0.0, min(1.0, float(unparsed_ratio)))
+        except (TypeError, ValueError):
+            return
+        self._parse_lines = max(0, int(lines))
+        self._parse_us = (int(now_us) if now_us is not None
+                          else self._now_us())
+
+    def note_clock_skew(self, skew_s: float,
+                        now_us: Optional[int] = None) -> None:
+        """``realtime - monotonic`` drift estimate (G-12, RSK-9)."""
+        try:
+            value = abs(float(skew_s))
+        except (TypeError, ValueError):
+            return
+        self._clock_skew_s = value
+        if value > 0:
+            self._skew_us = (int(now_us) if now_us is not None
+                             else self._now_us())
 
     # -- streaming ----------------------------------------------------------
 
@@ -486,6 +651,8 @@ class RuleEngine:
         endpoint = endpoint_key(payload.get("endpoint"))
         results: List[RuleOutcome] = []
         for rule in RULES_IN_ORDER:
+            if rule in GLOBAL_RULES:
+                continue  # evaluated once per ticker (G-11/G-12)
             if signal not in _RULE_TRIGGERS[rule]:
                 continue
             if isinstance(unit, str) and unit:
@@ -511,6 +678,8 @@ class RuleEngine:
         results: List[RuleOutcome] = []
         for unit in self.windows.units:
             for rule in RULES_IN_ORDER:
+                if rule in GLOBAL_RULES:
+                    continue
                 verdict = self._evaluate(rule, unit, stamp)
                 if verdict is None:
                     continue
@@ -520,6 +689,15 @@ class RuleEngine:
                                                 self._cause_key(rule)), stamp)
                 if outcome is not None:
                     results.append(outcome)
+        for rule in GLOBAL_RULES:
+            verdict = self._evaluate(rule, None, stamp)
+            if verdict is None:
+                continue
+            outcome = self._apply(rule, None, verdict,
+                                  self._key(rule, None, None,
+                                            self._cause_key(rule)), stamp)
+            if outcome is not None:
+                results.append(outcome)
         return self._sorted(results)
 
     # -- AWG counter windows (G-04 branch) -----------------------------------
@@ -726,6 +904,10 @@ class RuleEngine:
             "G-06": "dns_broken",
             "G-07": "local_network_down",
             "G-08": "tls_cert_error",
+            "G-09": "endpoint_silent",
+            "G-10": "unit_flap",
+            "G-11": "degraded_throughput",
+            "G-12": "guard_selfdegraded",
         }.get(rule, "unknown")
 
     # -- shared context helpers ---------------------------------------------
@@ -737,6 +919,45 @@ class RuleEngine:
 
     def _planned_stop(self, unit: str) -> bool:
         return self._causes.get(unit) == "vpn_down"
+
+    def _unit_exit_is_fault(self, event: Mapping[str, Any],
+                            unit: str) -> bool:
+        """Non-zero exit (or an exit while the profile stays active) = fault.
+
+        SPEC §8.1: ``exit 0`` with ``state.active=null`` is a planned stop;
+        any non-zero code — or an unknown code while a profile is still
+        active — is an incident and belongs to G-10.
+        """
+        fields = event.get("fields")
+        status = fields.get("exit_status") if isinstance(fields, Mapping) else None
+        if isinstance(status, int) and not isinstance(status, bool):
+            return status != 0
+        return bool(self._state_known and self._active_profile is not None)
+
+    def _local_net_active(self, unit: str, now_us: int) -> bool:
+        """G-07 owns the cause: tunnel rules are lowered, not notified."""
+        return bool(self._fp(unit, now_us, LOCAL_NET_SIGNALS,
+                             self.thresholds.reset_storm_window_s))
+
+    def _other_channel_alive(self, unit: Optional[str], now_us: int) -> bool:
+        """Any *other* channel proved a handshake recently (G-09 vantage)."""
+        horizon = int(now_us) - 10 * 60 * MONO_US_PER_S
+        for other in self.windows.units:
+            if other == unit:
+                continue
+            window = self.windows.peek(other)
+            if window is None:
+                continue
+            if any(mono_of(event) >= horizon
+                   and event.get("signal") in HANDBOOK_SIGNALS
+                   for event in window.events):
+                return True
+        for records in self._awg_windows.values():
+            if any(int(record.get("mono_us", 0)) >= horizon
+                   and "awg_tx_growth" in record.get("signals", set())
+                   for record in records):
+                return True
+        return False
 
     def _state_off(self, unit: Optional[str]) -> bool:
         """``state.json.active=null`` for a ``vpnm-*`` unit (G-07 FP-guard)."""
@@ -769,6 +990,19 @@ class RuleEngine:
                 if isinstance(ts, str) and ts:
                     return ts
         return fallback or _iso_now()
+
+    def _latest_ts(self, fallback: Optional[str] = None) -> str:
+        """Newest wall timestamp across all units (G-11/G-12 windows)."""
+        best: Optional[str] = None
+        for name in self.windows.units:
+            window = self.windows.peek(name)
+            if window is None:
+                continue
+            for event in window.events:
+                ts = event.get("ts")
+                if isinstance(ts, str) and (best is None or ts > best):
+                    best = ts
+        return best or fallback or _iso_now()
 
     def _profile(self, unit: Optional[str]) -> Optional[str]:
         if not isinstance(unit, str):
@@ -818,6 +1052,14 @@ class RuleEngine:
         recent = [item for item in self._route_changes if item[0] >= horizon]
         return len(recent) >= 2
 
+    def _recent_switch(self, unit: str) -> bool:
+        """Another profile started within 60 s: ``vpn switch`` (G-10 stop)."""
+        own = self._starts.get(unit)
+        if own is None:
+            return False
+        return any(other != unit and abs(when - own) <= 60 * MONO_US_PER_S
+                   for other, when in self._starts.items())
+
     def _suspend_blocked(self, now_us: int) -> bool:
         grace = self.thresholds.suspend_grace_s * MONO_US_PER_S
         for stamp in (self._suspend_us, self._roaming_us):
@@ -856,6 +1098,10 @@ class RuleEngine:
             return None
         if self._planned_stop(unit):
             return _Verdict(False, status="suppressed", reason="planned_stop")
+        if self._fp(unit, now_us, FLAP_SIGNALS, t.reset_storm_handshake_s):
+            # G-10 suppression matrix §8.4: restarts are the cause, not the
+            # consequence; the startup check of a new invocation is fresh.
+            return _Verdict(False, status="suppressed", reason="unit_flap")
         if self._fp(unit, now_us, LOCAL_NET_SIGNALS, t.handshake_timeout_s):
             return _Verdict(False, status="insufficient_data",
                             reason="network_unreachable")
@@ -984,7 +1230,18 @@ class RuleEngine:
              "value": round(count / max(handshake_count, 1), 2)},
         ]
         confidence = self._boost("medium")
-        cross = self._cross()
+        lockdown = bool(self._server is not None
+                        and self._server.lockdown_expected)
+        severity = "info" if lockdown else "high"
+        hypothesis = ("серия reset/EOF после успешного handshake — "
+                      "цензура на пути или серверный сбой")
+        action = "не рестартить; vpn probe; свежие ссылки; резервный канал"
+        if lockdown:
+            hypothesis = ("ожидаемо: активен серверный lock-443 (lockdown), "
+                          "клиентские обрывы не цензура")
+            action = ("снять серверный lock-443 или дождаться TTL; "
+                      "проверить vpn probe")
+        cross = bool(self._cross() or lockdown)
 
         def build() -> Dict[str, Any]:
             return build_finding(
@@ -1000,16 +1257,14 @@ class RuleEngine:
                     "no active probe marker",
                     "planned stop not observed",
                 ],
-                severity="high", confidence=confidence,
+                severity=severity, confidence=confidence,
                 category="censorship_suspect", stage_hint="post_handshake",
-                hypothesis="серия reset/EOF после успешного handshake — "
-                           "цензура на пути или серверный сбой",
-                action="не рестартить; vpn probe; свежие ссылки; резервный "
-                       "канал",
+                hypothesis=hypothesis, action=action,
                 alternatives=["свои пробы или параллельные клиенты",
                               "рестарт сервера",
                               "локальная сеть/маршрут"],
-                server=self._server_block(), cross_vantage=cross)
+                server=self._server_block(),
+                expected_lockdown=lockdown, cross_vantage=cross)
 
         return _Verdict(True, finding=build)
 
@@ -1075,6 +1330,8 @@ class RuleEngine:
             return _Verdict(False, status="suppressed", reason="unit_flap")
         if self._fp(unit, now_us, ("slow_consumer",), window_s):
             return _Verdict(False, status="suppressed", reason="slow_consumer")
+        if self._local_net_active(unit, now_us):
+            return _Verdict(False, status="suppressed", reason="local_network")
         lockdown = bool(self._server is not None
                         and self._server.lockdown_expected)
         severity = "info" if lockdown else "high"
@@ -1194,6 +1451,8 @@ class RuleEngine:
             return _Verdict(False, status="suppressed", reason="suspend/roaming")
         if self._route_blocked(now_us):
             return _Verdict(False, status="suppressed", reason="route_change")
+        if self._local_net_active(unit, now_us):
+            return _Verdict(False, status="suppressed", reason="local_network")
         endpoint = endpoint_key(idles[-1].get("endpoint")) or endpoint_key(
             handshakes_before[-1].get("endpoint"))
         endpoint_payload = None
@@ -1575,6 +1834,395 @@ class RuleEngine:
 
         return _Verdict(True, finding=build)
 
+    # -- G-09 endpoint_silent -------------------------------------------------
+
+    def _g09(self, unit: Optional[str], now_us: int) -> Optional[_Verdict]:
+        if not isinstance(unit, str):
+            return None
+        window = self.windows.peek(unit)
+        if window is None:
+            return None
+        t = self.thresholds
+        horizon = t.endpoint_silent_window_s
+        candidates = [event for event in window.since(now_us, horizon)
+                      if event.get("signal") in SILENT_SIGNALS]
+        if not candidates:
+            return _Verdict(False)
+        groups: Dict[Optional[str], List[Dict[str, Any]]] = {}
+        for event in candidates:
+            key = endpoint_key(event.get("endpoint"))
+            if key is None:
+                continue  # no attribution → not an endpoint-silent finding
+            groups.setdefault(key, []).append(event)
+        if not groups:
+            return _Verdict(False)
+        endpoint, group = max(
+            groups.items(),
+            key=lambda item: (sum_counts(item[1]), str(item[0])))
+        count = sum_counts(group)
+        if count < t.endpoint_silent_count:
+            return _Verdict(False)
+        handshakes = [event for event in window.since(now_us, horizon)
+                      if event.get("signal") in HANDBOOK_SIGNALS
+                      and endpoint_key(event.get("endpoint")) == endpoint]
+        if handshakes:
+            # A handshake on the same endpoint: G-02/G-03 own the pattern, an
+            # endpoint is not silent.
+            return _Verdict(False)
+        if self._planned_stop(unit):
+            return _Verdict(False, status="suppressed", reason="planned_stop")
+        if self._activity(now_us):
+            return _Verdict(False, status="suppressed", reason="active_probe")
+        if self._fp(unit, now_us, ("tls_cert_error",), t.tls_ok_window_s):
+            # G-08 owns the certificate failure: G-09 is not escalated (§8.4).
+            return _Verdict(False, status="suppressed",
+                            reason="tls_cert_error")
+        if self._local_net_active(unit, now_us):
+            return _Verdict(False, status="suppressed", reason="local_network")
+        if self._planned_switch(now_us):
+            return _Verdict(False, status="suppressed", reason="network_switch")
+        if self._fp(unit, now_us, FLAP_SIGNALS, horizon):
+            return _Verdict(False, status="suppressed", reason="unit_flap")
+        refused = [event for event in group
+                   if event.get("signal") == "conn_refused"]
+        stalls = [event for event in group
+                  if event.get("signal") == "tls_stall"]
+        kinds: Dict[str, int] = {}
+        for event in group:
+            name = str(event.get("signal"))
+            kinds[name] = kinds.get(name, 0) + event_count(event)
+        stamps = [event.get("ts") for event in group
+                  if isinstance(event.get("ts"), str)]
+        first_ts = min(stamps) if stamps else self._last_ts(unit)
+        last_ts = max(stamps) if stamps else first_ts
+        host, _, port = endpoint.rpartition(":")
+        endpoint_payload = ({"host": host, "port": int(port)}
+                            if host and port.isdigit() else None)
+        profile = self._profile(unit)
+        lockdown = bool(self._server is not None
+                        and self._server.lockdown_expected)
+        alive = self._other_channel_alive(unit, now_us)
+        cross = bool(alive and self._cross())
+        alternatives = ["сервер не отвечает/лежит",
+                        "L3-ACL или молчаливый drop на пути (цензура)"]
+        if refused:
+            severity = "high"
+            confidence = "high"
+            stage = "pre_handshake"
+            hypothesis = ("эндпоинт отвечает refused: IP достижим, порт не "
+                          "слушает — сервис/порт, а не цензура")
+            action = ("проверить unit и порт на сервере; профиль не менять; "
+                      "vpn probe")
+            alternatives = ["сервер не запущен или упал",
+                            "порт изменён после обновления/перегенерации",
+                            "локальный файрвол закрыл порт"]
+        elif stalls:
+            severity = "medium"
+            confidence = "high" if cross else "medium"
+            stage = "tls_stall"
+            hypothesis = ("TCP/QUIC connect проходит, handshake молчит — "
+                          "кандидат на silent ClientHello drop")
+            action = ("не рестартить; vpn probe; проверить резервный канал и "
+                      "свежие ссылки")
+        else:
+            severity = "medium"
+            confidence = "high" if cross else "medium"
+            stage = "pre_handshake"
+            hypothesis = ("эндпоинт молчит: ни handshake, ни ответа на "
+                          "попытки подключения")
+            action = ("не рестартить; vpn probe; свежие ссылки; резервный "
+                      "канал")
+        if lockdown:
+            severity = "info"
+            hypothesis = ("ожидаемо: активен серверный lock-443 (lockdown); "
+                          "молчание эндпоинта не цензура")
+            action = ("снять серверный lock-443 или дождаться TTL; "
+                      "проверить vpn probe")
+        evidence: List[Dict[str, Any]] = [
+            {"kind": "signal_count", "signal": name, "value": value}
+            for name, value in sorted(kinds.items())]
+        evidence.append({"kind": "absence", "metric": "handshake_ok_s",
+                         "value": horizon})
+        checks = [
+            f"{count} silent attempts on one endpoint in {horizon}s",
+            "no handshake_ok on that endpoint",
+            f"no tls_cert_error in {t.tls_ok_window_s}s",
+            "no network_unreachable/no_route in window",
+            "no unit_exit/unit_restart_scheduled in window",
+            "no active probe marker",
+            "alternative channel alive" if alive
+            else "no alternative channel evidence",
+            "server verdict fresh" if (self._server is not None
+                                       and self._server.fresh)
+            else "server verdict absent/stale",
+        ]
+
+        def build() -> Dict[str, Any]:
+            return build_finding(
+                rule="G-09", unit=unit, profile=profile,
+                endpoint=endpoint_payload,
+                window_first=first_ts, window_last=last_ts, count=count,
+                evidence=evidence, fp_checks=checks,
+                severity=severity, confidence=confidence,
+                category="endpoint_unreachable", stage_hint=stage,
+                hypothesis=hypothesis, action=action,
+                alternatives=alternatives,
+                server=self._server_block(),
+                expected_lockdown=lockdown, cross_vantage=cross)
+
+        return _Verdict(True, finding=build)
+
+    # -- G-10 unit_flap -------------------------------------------------------
+
+    def _g10(self, unit: Optional[str], now_us: int) -> Optional[_Verdict]:
+        if not isinstance(unit, str):
+            return None
+        window = self.windows.peek(unit)
+        if window is None:
+            return None
+        t = self.thresholds
+        events_in = window.since(now_us, t.unit_flap_window_s)
+        starts = [event for event in events_in
+                  if event.get("signal") == "unit_start"]
+        hard_exits = [event for event in events_in
+                      if event.get("signal") == "unit_exit"
+                      and self._unit_exit_is_fault(event, unit)]
+        scheduled = [event for event in events_in
+                     if event.get("signal") == "unit_restart_scheduled"]
+        hard = hard_exits + scheduled
+        if len(hard) < t.unit_flap_count and len(starts) < t.unit_flap_count:
+            return _Verdict(False)
+        if self._planned_stop(unit):
+            return _Verdict(False, status="suppressed", reason="planned_stop")
+        if self._causes.get(unit) == "vpn_switch":
+            return _Verdict(False, status="suppressed", reason="vpn_switch")
+        if self._recent_switch(unit):
+            return _Verdict(False, status="suppressed", reason="vpn_switch")
+        if self._state_off_any() and not hard_exits:
+            return _Verdict(False, status="suppressed", reason="vpn_off")
+        if self._activity(now_us):
+            return _Verdict(False, status="suppressed", reason="active_probe")
+        stamps = [event.get("ts") for event in events_in
+                  if isinstance(event.get("ts"), str)]
+        first_ts = min(stamps) if stamps else self._last_ts(unit)
+        last_ts = max(stamps) if stamps else first_ts
+        count = max(len(hard), len(starts))
+        evidence: List[Dict[str, Any]] = [
+            {"kind": "signal_count", "signal": "unit_start",
+             "value": len(starts)},
+            {"kind": "signal_count", "signal": "unit_exit",
+             "value": len(hard_exits)},
+            {"kind": "signal_count", "signal": "unit_restart_scheduled",
+             "value": len(scheduled)},
+        ]
+        profile = self._profile(unit)
+
+        def build() -> Dict[str, Any]:
+            return build_finding(
+                rule="G-10", unit=unit, profile=profile, endpoint=None,
+                window_first=first_ts, window_last=last_ts, count=count,
+                evidence=evidence,
+                fp_checks=[
+                    f"hard exits/starts ≥ {t.unit_flap_count} in "
+                    f"{t.unit_flap_window_s}s",
+                    "planned stop not observed",
+                    "state.active unchanged during the flap window",
+                    "no active probe marker",
+                    "no planned restart evidence (vpn down/switch)",
+                ],
+                severity="high", confidence="high",
+                category="local_fault", stage_hint="local",
+                hypothesis="юнит перезапускается/flapping — локальный сбой "
+                           "клиента, а не сеть или цензура",
+                action="journalctl --user -u <unit>; проверить конфиг/бинарь; "
+                       "не рестартить вслепую",
+                alternatives=["OOM/убийство юнита супервизором",
+                              "обновление или переустановка бинаря",
+                              "битый конфиг профиля"],
+                server=self._server_block(), cross_vantage=False)
+
+        return _Verdict(True, finding=build)
+
+    # -- G-11 degraded_throughput (global) ------------------------------------
+
+    def _speed_streak(self, now_us: int) -> Optional[Dict[str, Any]]:
+        """Best channel with ≥ ``degraded_reports`` consecutive low reports."""
+        t = self.thresholds
+        horizon = int(now_us) - t.degraded_window_s * MONO_US_PER_S
+        by_channel: Dict[str, List[Dict[str, Any]]] = {}
+        for report in self._speed_reports:
+            if int(report["mono_us"]) < horizon:
+                continue
+            by_channel.setdefault(str(report["channel"]), []).append(report)
+        best: Optional[Dict[str, Any]] = None
+        for channel in sorted(by_channel):
+            items = sorted(by_channel[channel], key=lambda item: item["mono_us"])
+            streak = 0
+            for report in reversed(items):
+                if float(report["speed"]) < t.degraded_mbps:
+                    streak += 1
+                else:
+                    break
+            if streak < t.degraded_reports:
+                continue
+            if best is None or streak > best["streak"]:
+                best = {
+                    "channel": channel,
+                    "streak": streak,
+                    "reports": items[-streak:],
+                }
+        return best
+
+    def _g11(self, unit: Optional[str], now_us: int) -> Optional[_Verdict]:
+        if unit is not None:
+            return None  # global rule: evaluated once per ticker
+        t = self.thresholds
+        streak = self._speed_streak(now_us)
+        if not self._speed_reports:
+            return _Verdict(False, status="insufficient_data",
+                            reason="no_speed_history")
+        if self._activity(now_us):
+            return _Verdict(False, status="suppressed", reason="active_probe")
+        timeouts = 0
+        for name in self.windows.units:
+            window = self.windows.peek(name)
+            if window is None:
+                continue
+            timeouts += window.count(now_us, t.degraded_timeout_window_s,
+                                     PERF_TIMEOUT_SIGNALS)
+        branch_b = (
+            streak is None and timeouts >= t.degraded_timeout_count
+            and any(float(report["speed"]) < t.degraded_mbps
+                    and int(report["mono_us"]) >= int(now_us)
+                    - t.degraded_window_s * MONO_US_PER_S
+                    for report in self._speed_reports))
+        if streak is None and not branch_b:
+            return _Verdict(False)
+        evidence: List[Dict[str, Any]] = []
+        if streak is not None:
+            last = streak["reports"][-1]
+            first = streak["reports"][0]
+            count = streak["streak"]
+            profile = streak["channel"]
+            first_ts = str(first["ts"])
+            last_ts = str(last["ts"])
+            evidence = [
+                {"kind": "counter", "metric": "speed_mbps",
+                 "value": round(float(last["speed"]), 2), "unit": "mbps"},
+                {"kind": "counter", "metric": "reports_below_threshold",
+                 "value": count},
+                {"kind": "counter", "metric": "degraded_mbps",
+                 "value": round(float(t.degraded_mbps), 2)},
+            ]
+            hypothesis = ("скорость канала устойчиво ниже "
+                          f"{t.degraded_mbps} Мбит/с в "
+                          f"{count} отчётах подряд")
+        else:
+            count = timeouts
+            profile = None
+            first_ts = self._latest_ts()
+            last_ts = first_ts
+            evidence = [
+                {"kind": "signal_count", "signal": "read_timeout",
+                 "value": timeouts},
+                {"kind": "counter", "metric": "degraded_mbps",
+                 "value": round(float(t.degraded_mbps), 2)},
+                {"kind": "absence", "metric": "speed_history_s",
+                 "value": t.degraded_window_s},
+            ]
+            hypothesis = ("данные идут с обрывами: read/write timeouts без "
+                          "падения handshake — деградация канала")
+
+        def build() -> Dict[str, Any]:
+            return build_finding(
+                rule="G-11", unit=None, profile=profile, endpoint=None,
+                window_first=first_ts, window_last=last_ts, count=count,
+                evidence=evidence,
+                fp_checks=[
+                    "finished speed reports only",
+                    "CDN profile excluded",
+                    "no active probe marker",
+                    f"threshold {t.degraded_mbps} Mbps",
+                ],
+                severity="medium", confidence="medium",
+                category="degraded", stage_hint="data_phase",
+                hypothesis=hypothesis,
+                action="vpn speed по каналам; сменить канал/сервер; проверить "
+                       "шейпинг провайдера; VPN тут не рестартить",
+                alternatives=["провайдер шейпит bulk-эндпоинт",
+                              "сервер/канал перегружен",
+                              "замер во время инцидента"],
+                server=self._server_block(), cross_vantage=False)
+
+        return _Verdict(True, finding=build)
+
+    # -- G-12 guard_selfdegraded (global) -------------------------------------
+
+    def _g12(self, unit: Optional[str], now_us: int) -> Optional[_Verdict]:
+        if unit is not None:
+            return None  # global rule: evaluated once per ticker
+        t = self.thresholds
+        # (metric, detail for fp_checks, numeric evidence value)
+        breaches: List[Tuple[str, str, float]] = []
+        stamps: List[str] = []
+        lost_us = t.self_lost_s * MONO_US_PER_S
+        for name, record in sorted(self._source_status.items()):
+            if record.get("status") != "lost":
+                continue  # §8.2: only `lost` > 60 s is a G-12 breach
+            age_s = (int(now_us) - int(record["since_us"])) / MONO_US_PER_S
+            if age_s * MONO_US_PER_S >= lost_us:
+                breaches.append(("source_lost", name, round(age_s, 1)))
+                ts = record.get("ts")
+                if isinstance(ts, str):
+                    stamps.append(ts)
+        if (self._queue_drop_us is not None
+                and 0 <= int(now_us) - self._queue_drop_us
+                <= t.self_drop_window_s * MONO_US_PER_S):
+            breaches.append(("queue_drops", str(self._queue_drops),
+                             float(self._queue_drops)))
+        if (self._parse_us is not None
+                and self._parse_lines >= t.self_unparsed_min_lines
+                and self._parse_ratio > t.self_unparsed_ratio
+                and 0 <= int(now_us) - self._parse_us
+                <= t.self_drop_window_s * MONO_US_PER_S):
+            breaches.append(("unparsed_ratio", f"{self._parse_ratio:.2f}",
+                             round(self._parse_ratio, 3)))
+        if (self._skew_us is not None
+                and self._clock_skew_s > t.self_skew_s
+                and 0 <= int(now_us) - self._skew_us
+                <= t.self_drop_window_s * MONO_US_PER_S):
+            breaches.append(("clock_skew", f"{self._clock_skew_s:.1f}",
+                             round(self._clock_skew_s, 2)))
+        if not breaches:
+            return _Verdict(False)
+        first_ts = min(stamps) if stamps else (self._self_ts or
+                                               self._latest_ts())
+        last_ts = max(stamps) if stamps else first_ts
+        evidence: List[Dict[str, Any]] = [
+            {"kind": "counter", "metric": kind, "value": value}
+            for kind, _detail, value in breaches[:8]]
+        checks = [f"{kind}: {detail}"
+                  for kind, detail, _value in breaches[:8]]
+
+        def build() -> Dict[str, Any]:
+            return build_finding(
+                rule="G-12", unit=None, profile=None, endpoint=None,
+                window_first=first_ts, window_last=last_ts,
+                count=len(breaches), evidence=evidence,
+                fp_checks=checks,
+                severity="low", confidence="low",
+                category="observability", stage_hint="local",
+                hypothesis="деградация самого guard: источник/парсер/часы — "
+                           "наблюдаемость ниже, это не отказ VPN",
+                action="проверить права на журнал, очереди и системные часы; "
+                       "guard v1 ничего не рестартит",
+                alternatives=["журнал/права изменились",
+                              "высокая нагрузка или скачок часов",
+                              "версия клиента не совпала с каталогом сигналов"],
+                server=self._server_block(), cross_vantage=False)
+
+        return _Verdict(True, finding=build)
+
 
 __all__ = [
     "AWG_PREFIXES",
@@ -1584,12 +2232,14 @@ __all__ = [
     "DNS_SIGNALS",
     "DROP_SIGNALS",
     "FLOAT_THRESHOLDS",
+    "GLOBAL_RULES",
     "HANDBOOK_SIGNALS",
     "INT_THRESHOLDS",
     "LOCAL_NET_SIGNALS",
     "RESET_SIGNALS",
     "RULES_IN_ORDER",
     "RULE_TRIGGERS",
+    "SILENT_SIGNALS",
     "RuleEngine",
     "RuleOutcome",
     "ServerContext",

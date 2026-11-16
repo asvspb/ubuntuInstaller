@@ -360,12 +360,14 @@ class JournalReader:
                  popen: Optional[PopenFn] = None,
                  cursors: Optional[CursorStore] = None,
                  persist_interval_s: float = 5.0,
-                 cursor_grace_s: float = 0.3) -> None:
+                 cursor_grace_s: float = 0.3,
+                 follow: bool = True) -> None:
         self.source = source
         self.user = user
         self.cursor = cursor
         self.since = since
         self.units = units
+        self.follow = bool(follow)
         self.cursors = cursors
         self.persist_interval_s = persist_interval_s
         self.cursor_grace_s = cursor_grace_s
@@ -385,7 +387,7 @@ class JournalReader:
 
     def _spawn(self, cursor: Optional[str], since: Optional[str]) -> _FakeablePopen:
         cmd = journalctl_cmd(user=self.user, cursor=cursor, since=since,
-                             units=self.units)
+                             units=self.units, follow=self.follow)
         return self._popen_fn(cmd, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True)
 
@@ -504,25 +506,28 @@ def _real_popen(cmd: List[str], **kwargs: Any) -> subprocess.Popen:
 
 def open_user_reader(cursors: Optional[CursorStore] = None,
                      since: Optional[str] = None,
-                     popen: Optional[PopenFn] = None) -> JournalReader:
+                     popen: Optional[PopenFn] = None,
+                     follow: bool = True) -> JournalReader:
     """S1 reader: whole user journal, ``vpnm-*`` filtered in-process."""
     store = cursors if cursors is not None else CursorStore()
     return JournalReader(source="journal:user", user=True,
                          cursor=store.get("journal:user"),
                          since=since or DEFAULT_SINCE,
-                         popen=popen, cursors=store)
+                         popen=popen, cursors=store, follow=follow)
 
 
 def open_system_reader(system_journal: bool = True,
                        cursors: Optional[CursorStore] = None,
                        since: Optional[str] = None,
-                       popen: Optional[PopenFn] = None) -> JournalReader:
+                       popen: Optional[PopenFn] = None,
+                       follow: bool = True) -> JournalReader:
     """S2 reader (opt-in): AWG lifecycle + dnsmasq, honest ``denied``."""
     store = cursors if cursors is not None else CursorStore()
     return JournalReader(source="journal:system", user=False,
                          cursor=store.get("journal:system"),
                          since=since or DEFAULT_SINCE,
-                         units=SYSTEM_UNITS, popen=popen, cursors=store)
+                         units=SYSTEM_UNITS, popen=popen, cursors=store,
+                         follow=follow)
 
 
 # --- S3: structured state files (read-only, mtime+size) -----------------------

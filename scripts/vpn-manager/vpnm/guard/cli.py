@@ -1,21 +1,28 @@
-"""``vpn guard`` CLI surface (WP-G1: install/remove/status/sources).
+"""``vpn guard`` CLI surface (WP-G1…WP-G4).
 
 Heavy modules are imported lazily inside the commands so that CLI startup
-stays light.  The full command set (``run``/``findings``/``explain``/…)
-arrives in WP-G3+; this module wires what WP-G1 owns:
+stays light.  Commands:
 
+- ``run`` — the streaming daemon (``--once`` processes the available backfill
+  and exits); rules → incidents → ``findings.jsonl``;
+- ``status`` — ``guard.status/1``: running/state/profile/counters/open
+  incidents/coverage (exit 0 ok / 1 degraded / 2 high open);
+- ``findings``/``explain`` — history and "why did it fire";
+- ``sync`` — the **only** network command: one read-only ssh fetch of the
+  server verdict (SPEC §13.1);
+- ``sources`` — ``guard.coverage/1``: per-source health, honest
+  ``denied``/``off``/``missing`` instead of "всё хорошо" (R-9);
 - ``install``/``remove`` — the ``vpn-guard.service`` user unit with the
   ``hardened`` → ``compat`` fallback that is only taken on an *observed*
-  start failure (AC-17);
-- ``status`` — ``guard.status/1``: running/state/profile/counters (exit
-  0 ok / 1 degraded / 2 high open);
-- ``sources`` — ``guard.coverage/1``: per-source health, honest
-  ``denied``/``off``/``missing`` instead of "всё хорошо" (R-9).
+  start failure (AC-17).
 """
 
 from __future__ import annotations
 
 import json
+import signal
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -211,9 +218,205 @@ def remove(apply: bool = typer.Option(
 
 
 @guard_app.command()
+def run(once: bool = typer.Option(
+            False, "--once",
+            help="Обработать доступный backfill (--since) и выйти; absence-"
+                 "правила могут вернуть insufficient_data"),
+        since: str = typer.Option(
+            "-2m", "--since",
+            help="Окно backfill на старте (максимум 24h, SPEC §6.5)"),
+        as_json: bool = typer.Option(
+            False, "--json", help="Findings как NDJSON в stdout"),
+        quiet: bool = typer.Option(
+            False, "--quiet", help="Не печатать findings (только файл)"),
+        foreground: bool = typer.Option(
+            False, "--foreground",
+            help="Явно foreground (демонизация — только systemd)")) -> None:
+    """Потоковый анализ журналов; read-only, без сети и root.
+
+    Сеть в guard отсутствует: серверный вердикт обновляется только явной
+    командой `vpn guard sync`. Exit: 0 — нет high; 2 — есть high; 3 —
+    ошибка конфига/источника.
+    """
+    from . import reader, report, runner
+
+    try:
+        reader.validate_backfill(since)
+    except reader.BackfillError as exc:
+        typer.secho(f"[error] {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3)
+    except ValueError as exc:
+        typer.secho(f"[error] --since: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3)
+
+    def emit(finding: Dict[str, Any]) -> None:
+        if as_json:
+            typer.echo(json.dumps(finding, ensure_ascii=False,
+                                  sort_keys=True))
+        elif not quiet:
+            for line in report.render_finding(finding):
+                typer.echo(line)
+
+    try:
+        guard_runner = runner.build_runner(
+            since=since, once=once, on_finding=emit,
+            on_incident=(None if quiet or as_json else
+                         lambda item: typer.echo(report.incident_line(item))))
+        if once:
+            counters = guard_runner.run_once()
+        else:
+            stop = threading.Event()
+            _install_stop_handlers(stop)
+            typer.secho("[info] guard run (foreground): Ctrl-C/SIGTERM — "
+                        "graceful shutdown", fg=typer.colors.CYAN,
+                        err=quiet or as_json)
+            counters = guard_runner.run_forever(stop)
+    except (OSError, ValueError) as exc:
+        typer.secho(f"[error] guard run: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=3)
+    if counters.high:
+        raise typer.Exit(code=2)
+    if as_json or quiet:
+        raise typer.Exit(code=0)
+    typer.secho(
+        f"[info] findings={counters.findings} high={counters.high} "
+        f"suppressed={counters.suppressed} events={counters.events} "
+        f"dropped={counters.dropped}",
+        fg=typer.colors.CYAN)
+    raise typer.Exit(code=0)
+
+
+def _install_stop_handlers(stop: threading.Event) -> None:
+    """SIGTERM/SIGINT → graceful shutdown (main thread only)."""
+    def handle(_signum: int, _frame: Any) -> None:
+        stop.set()
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(signum, handle)
+        except (ValueError, OSError):
+            continue  # non-main thread: caller passes its own event
+
+
+@guard_app.command()
+def findings(since: str = typer.Option(
+                 "24h", "--since",
+                 help="Окно истории: 30m, 24h, 7d (по window.last)"),
+             limit: int = typer.Option(
+                 50, "--limit", help="Максимум findings (0 — без лимита)"),
+             as_json: bool = typer.Option(
+                 False, "--json", help="JSON-массив (или NDJSON с --follow)"),
+             follow: bool = typer.Option(
+                 False, "--follow", help="Хвост findings.jsonl (Ctrl-C — стоп)")) -> None:
+    """История findings (файл 0600, без секретов и сырого текста)."""
+    from . import reader, store
+
+    try:
+        seconds = reader.parse_since(since)
+    except ValueError as exc:
+        typer.secho(f"[error] --since: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    findings_store = store.FindingsStore(path=store.findings_path())
+    cutoff = time.time() - seconds
+    if not follow:
+        items = findings_store.read(since_ts=cutoff, limit=limit)
+        if as_json:
+            _echo_json_list(items)
+        else:
+            for item in items:
+                typer.echo("\n".join(
+                    _render_quiet(item, as_json=False)))
+        raise typer.Exit(code=0)
+
+    seen: set = set()
+    try:
+        while True:
+            items = findings_store.read(since_ts=cutoff, limit=limit)
+            for item in reversed(items):  # oldest first for a tail
+                key = item.get("id") or id(item)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if as_json:
+                    typer.echo(json.dumps(item, ensure_ascii=False,
+                                          sort_keys=True))
+                else:
+                    for line in _render_quiet(item, as_json=False):
+                        typer.echo(line)
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        raise typer.Exit(code=0)
+
+
+def _render_quiet(finding: Dict[str, Any],
+                  as_json: bool) -> List[str]:
+    from . import report
+    return report.render_finding(finding)
+
+
+def _echo_json_list(items: List[Dict[str, Any]]) -> None:
+    typer.echo(json.dumps(items, ensure_ascii=False, indent=2, default=str))
+
+
+@guard_app.command()
+def explain(target: str = typer.Argument(
+        ..., help="ID finding (12 hex) или правило (например G-03)")) -> None:
+    """Почему сработало: окно, сигналы, выполненные FP-проверки, действия."""
+    from . import report, store
+
+    findings_store = store.FindingsStore(path=store.findings_path())
+    items = findings_store.read(limit=0)
+    match: Optional[Dict[str, Any]] = None
+    for item in items:  # newest first
+        if item.get("id") == target or item.get("rule") == target:
+            match = item
+            break
+    if match is None:
+        typer.secho(f"[warning] finding не найден: {target}",
+                    fg=typer.colors.YELLOW)
+        raise typer.Exit(code=1)
+    opened = store.read_state()
+    incident = None
+    if opened:
+        for item in opened.get("open_incidents") or []:
+            if isinstance(item, dict) and match.get("id") in (
+                    item.get("findings") or []):
+                incident = item
+                break
+    typer.echo(report.explain(match, incident))
+    raise typer.Exit(code=0)
+
+
+@guard_app.command()
+def sync(host: Optional[str] = typer.Option(
+             None, "--host",
+             help="ssh-хост; по умолчанию settings.json:ssh_host"),
+         timeout: float = typer.Option(
+             10.0, "--timeout", help="Таймаут одного ssh, секунды")) -> None:
+    """Сеть: один ssh `vds gateway probe-watch watch --json` (без --record)."""
+    from . import verdict
+
+    if timeout <= 0:
+        typer.secho("[error] --timeout должен быть > 0", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    result = verdict.sync(host=host, timeout=timeout)
+    _echo_json(result.as_dict())
+    if not result.ok:
+        typer.secho(f"[warning] sync не выполнен: {result.error}; старый "
+                    f"server-verdict.json сохранён ({result.note})",
+                    fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(code=2)
+    typer.secho(f"[ok] verdict={result.verdict or '-'} "
+                f"threat={result.threat_level or '-'} "
+                f"fresh={result.context.fresh}", fg=typer.colors.GREEN,
+                err=True)
+    raise typer.Exit(code=0)
+
+
+@guard_app.command()
 def status(as_json: bool = typer.Option(
         False, "--json", help="Machine-readable guard.status/1")) -> None:
-    """Состояние guard: running/state/profile/coverage (exit 0/1/2)."""
+    """Состояние guard: running/state/profile/incidents/coverage (exit 0/1/2)."""
     from . import counters, install as install_mod, store
 
     info = install_mod.status()
@@ -230,21 +433,61 @@ def status(as_json: bool = typer.Option(
     # the daemon keeps a cumulative counter in state.json: after a crash it
     # must not look like a restart reset it (WP-G3, store.read_redaction_hits)
     redaction_hits = store.redaction_hits_total(install_hits)
+    daemon_state = store.read_state() or {}
+    persisted = daemon_state.get("counters")
+    counter_payload: Dict[str, int] = {
+        "events": 0, "unparsed": 0, "dropped": 0,
+        "findings": 0, "suppressed": 0,
+    }
+    if isinstance(persisted, dict):
+        for key in counter_payload:
+            value = persisted.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                counter_payload[key] = max(0, value)
+    open_incidents = daemon_state.get("open_incidents")
+    if not isinstance(open_incidents, list):
+        open_incidents = []
+    coverage = store.read_coverage()
+    last_lifecycle = daemon_state.get("last_lifecycle")
+    if isinstance(last_lifecycle, dict) and not isinstance(
+            last_lifecycle.get("ts"), str):
+        last_lifecycle = None
+    since_value = info.get("created") or daemon_state.get("since")
+    if not isinstance(since_value, str) or not since_value:
+        since_value = None
     payload = store.build_status(
         running=bool(info["active"]),
-        since=info.get("created"),
+        since=since_value,
         state=guard_state,
         unit_profile=info.get("profile"),
-        counters={"events": 0, "unparsed": 0, "dropped": 0,
-                  "findings": 0, "suppressed": 0},
+        counters=counter_payload,
         redaction_hits=redaction_hits,
-        open_incidents=(),
-        last_event_ts=None,
+        open_incidents=open_incidents,
+        last_event_ts=(daemon_state.get("last_event_ts")
+                       if isinstance(daemon_state.get("last_event_ts"), str)
+                       else None),
+        last_lifecycle=last_lifecycle,
         )
-    degraded = not info["active"]
+    # additive summary inside major /1: the CLI needs coverage without
+    # re-probing sources on every status call (SPEC §10.2, R-9)
+    if coverage is not None:
+        payload["coverage"] = {
+            "sources_ref": "coverage.json",
+            "unparsed_ratio": coverage.get("unparsed_ratio", 0.0),
+            "dropped": coverage.get("dropped", 0),
+            "blind": list(coverage.get("blind") or []),
+            "notes": list(coverage.get("notes") or []),
+            "redaction_hits": coverage.get("redaction_hits", 0),
+        }
+    high_open = any(
+        isinstance(item, dict) and item.get("severity") == "high"
+        for item in open_incidents)
+    degraded = (not info["active"]
+                or (coverage is not None
+                    and store.coverage_degraded(coverage)))
     if as_json:
         _echo_json(payload)
-        raise typer.Exit(code=1 if degraded else 0)
+        raise typer.Exit(code=2 if high_open else (1 if degraded else 0))
     if not info["installed"]:
         typer.secho("[info] guard не установлен (vpn guard install)",
                     fg=typer.colors.YELLOW)
@@ -257,13 +500,36 @@ def status(as_json: bool = typer.Option(
                 + (f", awg iface={iface}" if iface else
                    ", awg не обнаружен"),
                 fg=typer.colors.CYAN)
+    lifecycle = payload.get("last_lifecycle")
+    if isinstance(lifecycle, dict):
+        typer.secho(f"[info] last_lifecycle={lifecycle.get('signal')} "
+                    f"cause={lifecycle.get('cause')}",
+                    fg=typer.colors.CYAN)
+    counters_info = payload.get("counters") or {}
+    typer.secho("[info] counters: " + ", ".join(
+        f"{key}={value}" for key, value in counters_info.items()),
+        fg=typer.colors.CYAN)
+    for incident in open_incidents:
+        if isinstance(incident, dict):
+            typer.secho(f"[warning] open incident {incident.get('id')} "
+                        f"root_cause={incident.get('root_cause')} "
+                        f"severity={incident.get('severity', '-')}",
+                        fg=typer.colors.YELLOW)
     if cached and cached.get("notify_delivery"):
         typer.secho(f"[info] notify-send: {cached['notify_delivery']}",
                     fg=typer.colors.CYAN)
+    if coverage is not None:
+        for note in coverage.get("notes") or []:
+            typer.secho(f"[info] coverage: {note}", fg=typer.colors.CYAN)
+    if high_open:
+        typer.secho("[warning] есть открытый high-инцидент",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
     if degraded:
         typer.secho("[warning] guard не активен: наблюдаемость деградирована",
                     fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
+    raise typer.Exit(code=0)
 
 
 @guard_app.command()

@@ -168,6 +168,9 @@ class AwgCounterPoller:
         self._samples: Deque[CounterSample] = deque(maxlen=8192)
         self._window_base: Optional[CounterSample] = None
         self._evaluated_window: Optional[Dict[str, object]] = None
+        #: Last closed window kept for coverage/rules introspection even after
+        #: ``pop_closed_window()`` handed it to the run loop (D-07).
+        self._last_window: Optional[Dict[str, object]] = None
         self._iface = iface if valid_iface(iface) else None
         #: candidate → last observed tx_bytes while ambiguity is unresolved
         self._candidates: Dict[str, Optional[int]] = {}
@@ -229,7 +232,12 @@ class AwgCounterPoller:
         if sample is None:
             return None
         self._samples.append(sample)
-        self._evaluated_window = self._maybe_close_window(sample)
+        closed = self._maybe_close_window(sample)
+        if closed is not None:
+            # D-07: keep the window until the run loop pops it exactly once —
+            # assigning unconditionally would drop it on the next 1 s tick.
+            self._evaluated_window = closed
+            self._last_window = closed
         return sample
 
     def _poll_candidates(self, stamp: float) -> Optional[CounterSample]:
@@ -295,11 +303,26 @@ class AwgCounterPoller:
             "tx_growth": tx_growth,
             "rx_growth": rx_growth,
             "signals": signals,
+            # D-06/D-07: the run loop stamps the closed window in the single
+            # monotonic domain instead of re-deriving it from wall-clock.
+            "mono_s": sample.mono_s,
+            "mono_us": int(sample.mono_s * 1_000_000),
         }
+
+    def pop_closed_window(self) -> Optional[Dict[str, object]]:
+        """Hand the last closed window to the run loop **exactly once** (D-07).
+
+        The 1 Hz ``poll()`` keeps the window until it is popped, so the daemon
+        can call ``engine.note_awg_window(win)`` once per 120 s window instead
+        of re-noting the same window on every one-second tick.
+        """
+        window = self._evaluated_window
+        self._evaluated_window = None
+        return window
 
     def evaluate(self) -> Dict[str, object]:
         """Current derived state for coverage/rules (no I/O)."""
-        last_window = self._evaluated_window
+        last_window = self._evaluated_window or self._last_window
         signals: List[str] = []
         if isinstance(last_window, dict):
             raw_signals = last_window.get("signals")
