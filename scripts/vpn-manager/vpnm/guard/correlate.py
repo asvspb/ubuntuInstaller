@@ -20,11 +20,12 @@ right where the evidence is, §8.4):
 - ``lockdown.active`` marks the incident ``expected_lockdown`` and lowers it to
   ``info`` (server protection is not censorship).
 
-**Deviation, documented:** the WP-G4 matrix orders root causes as
-``G-07 > G-06 > G-10 > G-05 > G-01…G-04``, which puts DNS above
-``local_fault``/``config`` — unlike the pure category list of SPEC §9.2.  The
-rule matrix is the more specific instruction and wins here; the category list
-below mirrors it.
+Root cause follows SPEC §9.2 verbatim (DECISIONS D-08):
+``local_net > local_fault > config > dns > tunnel_down > censorship_suspect >
+endpoint_unreachable > degraded > observability``.  A crashed unit (G-10,
+``local_fault``) or broken credentials (G-05, ``config``) legitimately produces
+DNS errors (G-06) as a **secondary symptom**, so DNS ranks below them; the
+earlier WP-G4 ordering was a temporary matrix and is superseded.
 """
 
 from __future__ import annotations
@@ -43,14 +44,15 @@ INCIDENT_RESOLVE_S = 600
 MAX_FINDINGS_PER_INCIDENT = 64
 MAX_HISTORY = 64
 
-#: Root-cause priority of SPEC §9.2, re-ordered by the WP-G4 matrix
-#: (``G-07 > G-06 > G-10 > G-05 > G-01…G-04``).  Categories only; a finding's
-#: rule maps to one of them.
+#: Root-cause priority of SPEC §9.2 (DECISIONS D-08), highest first.
+#: Categories only; a finding's rule maps to one of them.  Local causes beat
+#: symptoms: ``local_fault``/``config`` rank above ``dns`` because a broken
+#: unit or credentials *cause* DNS errors, not the other way round.
 ROOT_CAUSE_PRIORITY: Sequence[str] = (
     "local_net",          # G-07
-    "dns",                # G-06
     "local_fault",        # G-10
     "config",             # G-05/G-08
+    "dns",                # G-06
     "tunnel_down",        # G-01
     "censorship_suspect",  # G-02/G-03/G-04
     "endpoint_unreachable",  # G-09

@@ -105,12 +105,21 @@ def test_incident_id_is_stable_and_schema_shaped() -> None:
 
 # --- root cause ------------------------------------------------------------------
 
-def test_root_cause_follows_the_wp_g4_matrix() -> None:
+def test_root_cause_follows_spec_9_2() -> None:
     correlator = Correlator()
     for rule, category in (("G-05", "config"), ("G-06", "dns")):
         correlator.note(finding(rule, category, seconds=10), mono(10))
-    # G-06 (dns) outranks G-05 (config) in the WP-G4 matrix
-    assert correlator.open_incidents()[0]["root_cause"] == "dns"
+    # D-08: SPEC §9.2 ranks `config` above `dns` — a broken config legitimately
+    # produces DNS errors, not the other way round.
+    assert correlator.open_incidents()[0]["root_cause"] == "config"
+
+
+def test_root_cause_priority_matches_d08_order() -> None:
+    assert list(ROOT_CAUSE_PRIORITY) == [
+        "local_net", "local_fault", "config", "dns", "tunnel_down",
+        "censorship_suspect", "endpoint_unreachable", "degraded",
+        "observability",
+    ]
 
 
 def test_local_net_dominates_everything() -> None:

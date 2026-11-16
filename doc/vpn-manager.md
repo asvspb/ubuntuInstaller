@@ -42,7 +42,8 @@ scripts/vpn-manager/
 │   ├── doh.py             # DoH-резолвер cloudflared
 │   ├── amneziawg.py       # AWG: локальный туннель + клиенты на сервере
 │   ├── doctor.py          # диагностика окружения
-│   └── repair.py          # снимок состояния + возврат трафика/DNS
+│   ├── repair.py          # снимок состояния + возврат трафика/DNS
+│   └── guard/             # vpn guard: потоковый разбор клиентских логов (см. раздел)
 └── tests/                 # pytest, без сети/root (моки subprocess)
 ```
 
@@ -91,6 +92,13 @@ vpn install --linger
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
 | `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / ZeroTier / amneziawg / xray-split / zapret / dns-doh (N/7) |
+| `vpn guard run [--once] [--json] [--trace]` | Потоковый анализ журналов: правила G-01…G-12, инциденты, findings (read-only) |
+| `vpn guard status\|findings\|explain\|sources [--json]` | Состояние, история, «почему сработало», покрытие источников |
+| `vpn guard rules [--json]` | Каталог правил, текущие пороги, `rules_hash`/`config_hash` |
+| `vpn guard export [--since 7d] [-o FILE] [--keep-hosts]` | Обезличенный бандл findings+coverage (≤5 МБ, хосты → `<host>`) |
+| `vpn guard selftest` | Проверка схем/парсера/правил/пост-сканера из установленного пакета |
+| `vpn guard sync [--host root@asv]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
+| `vpn guard install [--apply] [--linger] [--sync-timer]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 | `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
@@ -512,6 +520,101 @@ vpn autostart status  # состояние автозапуска + список
 | `ssh` | Связность с сохранённым хостом (если задан) |
 | `dns` | Resolve + запрос через SOCKS активного профиля (только при наличии активного) |
 | `active` | Нет активного профиля — warn, DNS пропускается |
+
+## `vpn guard` — разбор клиентских логов в реальном времени (2026-11-16)
+
+Серверный `vds logs` видит эффекты на NIC и активные пробы; целый класс отказов
+виден **только с клиента** — SNI-drop, DNS-подмена, whitelist-режим, «handshake
+прошёл, данные умерли» на конкретном пути оператора. `vpn guard` — потоковый
+конвейер `journalctl -f → parse → window → rules → correlate → finding`, который
+за секунды отвечает «что сломалось, на каком слое, насколько уверены и что
+делать». Спека: `vds/docs/team/specs/SPEC-20261116-vpn-guard.md`, ADR-014.
+
+```bash
+vpn guard rules                 # каталог G-01…G-12 + пороги + rules_hash/config_hash
+vpn guard run --foreground      # демон (обычно через vpn-guard.service)
+vpn guard run --once --json     # разобрать backfill и выйти (NDJSON findings)
+vpn guard run --trace           # + trace.ndjson (≤10 МБ, 1 ч, только после redact)
+vpn guard status                # running/state/счётчики/открытые инциденты (exit 0/1/2)
+vpn guard findings --since 24h  # история findings (JSONL 0600)
+vpn guard explain G-03          # окно, счётчики, FP-проверки, действие
+vpn guard sources [--recheck]   # покрытие: права, слепые зоны, unparsed
+vpn guard export --since 7d -o /tmp/guard-bundle
+vpn guard selftest              # схемы/парсер/правила/пост-сканер (exit 0/1)
+vpn guard sync --host root@asv1 # единственная сетевая команда (read-only ssh)
+vpn guard install --apply       # user-юнит vpn-guard.service (+ --linger)
+```
+
+### Правила
+
+| ID | Правило | Слой / стадия |
+|----|---------|---------------|
+| G-01 | `no_handshake_after_start` — app жив (banner/dial), handshake нет 25 с | `tunnel_down` / `pre_handshake` |
+| G-02 | `reset_storm` — ≥3 reset/EOF за 60 с после handshake | `censorship_suspect` / `post_handshake` |
+| G-03 | `post_handshake_drop` — ≥3 циклов handshake→обрыв (≤5 с) за 120 с | `censorship_suspect` / `data_phase` |
+| G-04 | `udp_response_blackhole` — QUIC ok, ответов нет; AWG `tx↑/rx≈0` | `censorship_suspect` / `udp_response` |
+| G-05 | `auth_failure` — `auth_fail` без `auth_ok` 5 мин | `config` / `pre_handshake` |
+| G-06 | `dns_broken` — ≥2 DNS-ошибок за 60 с | `dns` / `local` |
+| G-07 | `local_network_down` — `network_unreachable`/нет route | `local_net` / `local` |
+| G-08 | `tls_cert_error` — сертификат без успешного TLS 5 мин | `config` / `tls_stall` |
+| G-09 | `endpoint_silent` — ≥5 pre-handshake сбоев на host:port за 10 мин | `endpoint_unreachable` / `pre_handshake` |
+| G-10 | `unit_flap` — ≥3 exit (non-zero)/start за 10 мин | `local_fault` / `local` |
+| G-11 | `degraded_throughput` — ≥2 отчётов `vpn speed` < 2.0 Мбит/с за 24 ч | `degraded` / `data_phase` |
+| G-12 | `guard_selfdegraded` — источник lost/очереди/unparsed/часы | `observability` / `local` |
+
+Пороги — только в `~/.config/vpn-manager/guard.json` (никаких пользовательских
+regex); актуальные значения и детерминированные `rules_hash`/`config_hash`
+печатает `vpn guard rules --json`. Корневая причина инцидента выбирается по
+SPEC §9.2: `local_net > local_fault > config > dns > tunnel_down >
+censorship_suspect > endpoint_unreachable > degraded > observability`.
+
+### Приватность и артефакты
+
+- маскирование **до записи**: UUID, ключи/пароли/obfs/shortId, share-ссылки,
+  URL с токенами, e-mail; текст строки не сохраняется — только счётчики,
+  окна и `sha1`-хэши шаблонов;
+- пост-сканер секретов проверяет finding/coverage/export; собственные
+  `*_hash`/`*_sha256` и `sha256:<64 hex>` — не секреты (иначе экспорт был бы
+  невозможен);
+- `vpn guard export` по умолчанию заменяет хосты на `<host>`; `--keep-hosts` —
+  осознанный opt-in; при найденном секрете (в т.ч. уже лежащем в
+  `findings.jsonl`) печатаются **только пути полей** и команда завершается
+  кодом 2;
+- нотификации на десктоп — opt-in (`notify.desktop=true`, `min_severity=high`),
+  `notify-send` вызывается списком аргументов (без shell), не чаще 12/час;
+  без D-Bus finding не теряется — остаётся строка в журнале;
+- счётчик `redaction_hits` и кольцо G-11 живут в `guard/state.json` и
+  переживают рестарт/`kill -9`.
+
+| Путь | Права | TTL/лимит |
+|------|-------|-----------|
+| `~/.local/share/vpn-manager/guard/findings.jsonl` | 0600 | 14 дней / 20 МБ |
+| `~/.local/share/vpn-manager/guard/state.json` | 0600 | ≤64 КБ (счётчики, инциденты, кольцо G-11) |
+| `~/.local/share/vpn-manager/guard/coverage.json` | 0600 | перезапись |
+| `~/.local/share/vpn-manager/guard/trace.ndjson` | 0600 | opt-in, 1 ч / ≤10 МБ |
+| `~/.config/vpn-manager/guard.json` | 0600 | пороги/флаги |
+| `~/.local/share/vpn-manager/server-verdict.json` | 0600 | только allowlist серверных полей |
+
+`vpn guard export` пишет каталог (`manifest.json` + `findings.ndjson` +
+`coverage.json`) или один `*.json`-файл; если coverage ещё не собирался,
+`manifest.coverage_included=false`, а в бандле нет `coverage.json` — честно,
+вместо выдуманного «всё ok».
+
+### Чего guard не делает (v1, read-only)
+
+- не рестартит, не переключает, не «лечит» и не правит конфиги — только
+  диагностирует (`action` в finding — текст для человека);
+- не делает сетевых проб — активная проверка остаётся за `vpn monitor`/`vpn probe`;
+  сеть есть только у явной команды `vpn guard sync`;
+- не требует root: системный журнал — best-effort (`coverage.status=denied`),
+  AWG читается из world-readable `/sys/class/net/<iface>/statistics/*`;
+- не отправляет логи и телеметрию никуда; `vpn guard install` не ставится
+  автоматически при `vpn install` (политика чистого старта).
+
+JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/1`,
+`guard.status/1`, `guard.coverage/1`, `guard.server_verdict/1`, `guard.config/1`
+(`vpnm/guard/schemas/`, package-data); `vpn guard selftest` проверяет, что
+`pip install` довёз схемы, парсер, правила и пост-сканер.
 
 ## Мониторинг каналов (`vpn monitor`)
 

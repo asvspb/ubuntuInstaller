@@ -38,7 +38,7 @@ ubuntuInstaller/
 │   ├── 14_awg-split.sh         # AmneziaWG split-tunnel
 │   ├── 15_domain-split.sh      # Доменный split: dnsmasq + nft + fwmark
 │   ├── 20_vds-migrate.sh       # Перенос state.json + secrets + сертификатов между серверами
-│   └── vpn-manager/            # 🔐 VPN-менеджер клиента (vpnm): Xray/Hysteria2, TUI (doc/vpn-manager.md)
+│   └── vpn-manager/            # 🔐 VPN-менеджер клиента (vpnm): Xray/Hysteria2, TUI, vpn guard (doc/vpn-manager.md)
 ├── $USER/                      # Пользовательские dotfiles и конфигурации
 │   ├── .bashrc / .zshrc        # Расширенная shell-конфигурация с алиасами
 │   ├── .zt-functions.sh        # Функции управления ZeroTier (ztup, ztd, ztswitch)

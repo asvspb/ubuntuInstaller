@@ -1,13 +1,20 @@
-"""``vpn guard`` CLI surface (WP-G1…WP-G4).
+"""``vpn guard`` CLI surface (WP-G1…WP-G5).
 
 Heavy modules are imported lazily inside the commands so that CLI startup
 stays light.  Commands:
 
 - ``run`` — the streaming daemon (``--once`` processes the available backfill
-  and exits); rules → incidents → ``findings.jsonl``;
+  and exits); rules → incidents → ``findings.jsonl``; ``--trace`` writes the
+  redacted ``trace.ndjson`` ring (SPEC §10.3);
 - ``status`` — ``guard.status/1``: running/state/profile/counters/open
   incidents/coverage (exit 0 ok / 1 degraded / 2 high open);
 - ``findings``/``explain`` — history and "why did it fire";
+- ``rules`` — the G-01…G-12 catalogue, effective thresholds and the
+  deterministic ``rules_hash``/``config_hash``/``schema_hash`` set;
+- ``export`` — anonymised ``guard.bundle/1`` (hosts → ``<host>`` unless
+  ``--keep-hosts``), blocked with exit 2 on a surviving secret (AC-13);
+- ``selftest`` — schemas, parser, rules and the post-scanner **from the
+  installed package** (AC-12), exit 0/1;
 - ``sync`` — the **only** network command: one read-only ssh fetch of the
   server verdict (SPEC §13.1);
 - ``sources`` — ``guard.coverage/1``: per-source health, honest
@@ -15,16 +22,20 @@ stays light.  Commands:
 - ``install``/``remove`` — the ``vpn-guard.service`` user unit with the
   ``hardened`` → ``compat`` fallback that is only taken on an *observed*
   start failure (AC-17).
+
+Desktop notifications are opt-in (``notify.desktop=true``) and are wired by
+the run loop, not by a command (SPEC §10.4).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import signal
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import typer
 
@@ -231,7 +242,11 @@ def run(once: bool = typer.Option(
             False, "--quiet", help="Не печатать findings (только файл)"),
         foreground: bool = typer.Option(
             False, "--foreground",
-            help="Явно foreground (демонизация — только systemd)")) -> None:
+            help="Явно foreground (демонизация — только systemd)"),
+        trace: bool = typer.Option(
+            False, "--trace",
+            help="Opt-in: кольцевой trace.ndjson (≤10 МБ, 1 ч, только после "
+                 "redact)")) -> None:
     """Потоковый анализ журналов; read-only, без сети и root.
 
     Сеть в guard отсутствует: серверный вердикт обновляется только явной
@@ -260,6 +275,7 @@ def run(once: bool = typer.Option(
     try:
         guard_runner = runner.build_runner(
             since=since, once=once, on_finding=emit,
+            trace_enabled=trace,
             on_incident=(None if quiet or as_json else
                          lambda item: typer.echo(report.incident_line(item))))
         if once:
@@ -479,6 +495,14 @@ def status(as_json: bool = typer.Option(
             "notes": list(coverage.get("notes") or []),
             "redaction_hits": coverage.get("redaction_hits", 0),
         }
+    # contract hashes (SPEC §10.2): deterministic, so status can prove which
+    # rules/config produced the findings it reports
+    try:
+        payload["rules_hash"] = store.rules_hash()
+        payload["config_hash"] = store.config_hash()
+    except (OSError, ValueError) as exc:
+        typer.secho(f"[warning] hashes недоступны: "
+                    f"{type(exc).__name__}", fg=typer.colors.YELLOW, err=True)
     high_open = any(
         isinstance(item, dict) and item.get("severity") == "high"
         for item in open_incidents)
@@ -580,3 +604,228 @@ def sources(as_json: bool = typer.Option(
     for note in payload.get("notes", []):
         typer.secho(f"[info] {note}", fg=typer.colors.CYAN)
     raise typer.Exit(code=1 if degraded else 0)
+
+
+# --- WP-G5: rules / export / selftest ----------------------------------------
+
+@guard_app.command()
+def rules(as_json: bool = typer.Option(
+              False, "--json", help="Machine-readable каталог + пороги + хэши"),
+          verbose: bool = typer.Option(
+              False, "--verbose",
+              help="Печатать эффективный конфиг целиком")) -> None:
+    """Каталог G-01…G-12, текущие пороги, rules_hash/config_hash.
+
+    Хэши детерминированы (каталог + эффективный конфиг) и не содержат
+    секретов: конфиг guard — только пороги и флаги (SPEC §10.2/§10.3).
+    """
+    from . import report
+
+    payload = report.rules_payload()
+    if as_json:
+        _echo_json(payload)
+        raise typer.Exit(code=0)
+    for line in report.render_rules(payload, verbose=verbose):
+        typer.echo(line)
+    raise typer.Exit(code=0)
+
+
+@guard_app.command()
+def export(since: str = typer.Option(
+               "7d", "--since", help="Окно findings: 30m, 24h, 7d"),
+           output: Optional[str] = typer.Option(
+               None, "-o", "--output",
+               help="Файл *.json или каталог (manifest/findings/coverage); "
+                    "'-' — stdout"),
+           keep_hosts: bool = typer.Option(
+               False, "--keep-hosts",
+               help="Осознанный opt-in: оставить хосты эндпоинтов "
+                    "(по умолчанию <host>)")) -> None:
+    """Обезличенный бандл findings+coverage ≤ 5 МБ (SPEC §11.6, AC-13).
+
+    Хосты заменяются на <host> по умолчанию; пост-сканер секретов
+    блокирует экспорт кодом 2 и печатает только пути полей.  Ключи
+    собственного контракта (*_hash/*_sha256, sha256:<64 hex>) — не секреты.
+    """
+    from . import reader, store
+
+    try:
+        seconds = reader.parse_since(since)
+    except ValueError as exc:
+        typer.secho(f"[error] --since: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    findings_store = store.FindingsStore(path=store.findings_path())
+    items = findings_store.read(since_ts=time.time() - seconds, limit=0)
+    stored_coverage = store.read_coverage()
+    bundle = store.build_export(
+        items, stored_coverage, keep_hosts=keep_hosts, since=since)
+    # gate twice: the bundle as it would be written **and** the source
+    # artefacts — a secret already on disk blocks the export (AC-13)
+    hits = sorted(set(store.export_hits(bundle))
+                  | set(store.input_export_hits(items, stored_coverage)))
+    if hits:
+        for path in hits:
+            typer.secho(f"[error] секрет в бандле: {path}",
+                        fg=typer.colors.RED, err=True)
+        typer.secho("[error] export заблокирован (exit 2): значения не "
+                    "печатаются, только пути полей", fg=typer.colors.RED,
+                    err=True)
+        raise typer.Exit(code=2)
+    manifest = bundle["manifest"]
+    if output == "-":
+        typer.echo(json.dumps(bundle, ensure_ascii=False, sort_keys=True,
+                              indent=2, default=str))
+        raise typer.Exit(code=0)
+    target = Path(output).expanduser() if output else None
+    try:
+        path, size = store.write_export(bundle, target)
+    except OSError as exc:
+        typer.secho(f"[error] export не записан: {exc.strerror or exc}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+    if size > store.EXPORT_MAX_BYTES:
+        typer.secho(f"[warning] бандл больше {store.EXPORT_MAX_BYTES} байт",
+                    fg=typer.colors.YELLOW, err=True)
+    typer.secho(f"[ok] export: {path} ({size} байт, "
+                f"findings={manifest.get('findings')}"
+                + (f", dropped={manifest.get('findings_dropped')}"
+                   if manifest.get("findings_dropped") else "")
+                + f", keep_hosts={bool(keep_hosts)})",
+                fg=typer.colors.GREEN)
+    raise typer.Exit(code=0)
+
+
+def run_selftest(config_root: Optional[Path] = None) -> Tuple[
+        bool, List[Dict[str, Any]]]:
+    """Validate schemas/parser/rules/post-scanner **from the installed package**.
+
+    Returns ``(ok, checks)``; each check is ``{check, ok, detail}``.  No live
+    logs, no root, no network — this is the AC-12 probe that ``pip install``
+    delivered ``vpnm.guard.schemas`` as package data (SPEC §5.4).
+    """
+    from . import events, parse, redact, schema, store
+
+    checks: List[Dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str = "") -> None:
+        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+    # 1. schemas: all seven files present, loadable, hashes canonical
+    missing = [name for name in events.SCHEMA_FILES
+               if not schema.schema_path(name).is_file()]
+    if missing:
+        add("schemas", False, f"нет: {', '.join(missing)}")
+    else:
+        try:
+            hashes = schema.schema_hashes()
+            bad = [name for name, value in hashes.items()
+                   if not re.fullmatch(r"sha256:[0-9a-f]{64}", value)]
+            add("schemas", not bad and len(hashes) == len(events.SCHEMA_FILES),
+                f"{len(hashes)}/{len(events.SCHEMA_FILES)} схем"
+                + (f", битый хэш: {', '.join(bad)}" if bad else ""))
+        except (OSError, ValueError) as exc:
+            add("schemas", False, f"{type(exc).__name__}: {exc}")
+
+    # 2. parser: structured/app-regex corpus subset, events validate
+    try:
+        parser = parse.JournalParser(
+            proto_hints={"vpnm-selftest.service": "xray"})
+        base = {
+            "PRIORITY": "6",
+            "__REALTIME_TIMESTAMP": "1794830403412345",
+            "__MONOTONIC_TIMESTAMP": "812345678",
+            "_SYSTEMD_USER_UNIT": "vpnm-selftest.service",
+            "_SYSTEMD_INVOCATION_ID": "selftest",
+        }
+        samples = [
+            dict(base, MESSAGE="Xray 1.8.6 started"),
+            dict(base, MESSAGE='{"level":"warning","msg":"connection reset '
+                               'by peer"}'),
+        ]
+        signals: List[str] = []
+        errors: List[str] = []
+        for record in samples:
+            event = parser.parse(record)
+            if event is None:
+                errors.append("unparsed sample")
+                continue
+            signals.append(str(event.get("signal")))
+            errors.extend(schema.validate(event, events.EVENT_SCHEMA))
+        add("parser", not errors and signals == ["app_banner_ok",
+                                                 "conn_reset"],
+            f"signals={signals}" + (f", errors={errors}" if errors else ""))
+    except (OSError, ValueError, RuntimeError) as exc:
+        add("parser", False, f"{type(exc).__name__}: {exc}")
+
+    # 3. rules: catalogue complete, enums known, hash deterministic
+    try:
+        from . import rules as rules_mod
+        catalog = rules_mod.rule_catalog()
+        ids = [str(item.get("id")) for item in catalog]
+        unknown = [str(item.get("id")) for item in catalog
+                   if item.get("category") not in events.CATEGORIES
+                   or item.get("severity") not in events.SEVERITIES
+                   or item.get("stage") not in events.STAGES]
+        first = store.rules_hash(config_root)
+        second = store.rules_hash(config_root)
+        add("rules", ids == list(events.RULES) and not unknown
+            and first == second,
+            f"{len(ids)} правил, rules_hash={first}"
+            + (f", неизвестные enum: {unknown}" if unknown else ""))
+    except (OSError, ValueError, RuntimeError) as exc:
+        add("rules", False, f"{type(exc).__name__}: {exc}")
+
+    # 4. post-scanner (AC-13): reference contract values pass, FIXTURE blocks
+    try:
+        from . import rules as rules_mod
+        reference = rules_mod.build_finding(
+            rule="G-03", unit="vpnm-selftest.service", profile="selftest",
+            endpoint={"host": "203.0.113.10", "port": 443},
+            window_first="2026-11-16T12:00:00.000Z",
+            window_last="2026-11-16T12:01:00.000Z", count=3,
+            evidence=[{"kind": "signal_count", "signal": "conn_reset",
+                       "value": 3}],
+            fp_checks=["no auth_fail"], severity="high", confidence="medium",
+            category="censorship_suspect", stage_hint="data_phase",
+            hypothesis="после handshake данные обрываются",
+            action="не рестартить; vpn probe",
+            server=None, cross_vantage=False)
+        clean_hits = redact.scan_secrets(reference)
+        view, _hits = redact.export_view(reference)
+        code_clean, _paths = redact.export_gate([view], None)
+        # the gate is the last line of defence: it scans the payload as
+        # handed in (a contract regression that skipped sanitizing), so the
+        # dirty copy is passed **without** export_view
+        dirty = dict(reference)
+        dirty["hypothesis"] = "password=FIXTURE_PW_SELFTEST leak"
+        code_dirty, dirty_paths = redact.export_gate([dirty], None)
+        add("post-scanner", not clean_hits and code_clean == 0
+            and code_dirty == 2 and bool(dirty_paths),
+            f"reference hits={clean_hits}, block_hits="
+            f"{len(dirty_paths)}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        add("post-scanner", False, f"{type(exc).__name__}: {exc}")
+
+    ok = bool(checks) and all(item["ok"] for item in checks)
+    return ok, checks
+
+
+@guard_app.command()
+def selftest() -> None:
+    """Проверка схем/парсера/правил/пост-сканера из установленного пакета.
+
+    Exit 0 — всё зелёное; 1 — любая проверка провалилась (AC-12).  Живых
+    логов, root и сети не требуется.
+    """
+    ok, checks = run_selftest()
+    for item in checks:
+        color = typer.colors.GREEN if item["ok"] else typer.colors.RED
+        tag = "ok" if item["ok"] else "error"
+        detail = f" — {item['detail']}" if item.get("detail") else ""
+        typer.secho(f"[{tag}] {item['check']}{detail}", fg=color)
+    if not ok:
+        typer.secho("[error] selftest провален: guard работать не будет "
+                    "корректно (см. строки выше)", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    typer.secho("[ok] selftest пройден", fg=typer.colors.GREEN)
+    raise typer.Exit(code=0)

@@ -355,6 +355,21 @@ def action_zapret() -> None:
     (_ok if ok else _err)(message)
 
 
+def action_guard() -> None:
+    """Guard status + command hint (read-only diagnostics, no network/root)."""
+    from .guard import cli as guard_cli
+
+    try:
+        guard_cli.status(as_json=False)
+    except typer.Exit:
+        pass  # status exit codes (0/1/2) are not a menu error
+    except (OSError, ValueError) as exc:
+        _err(f"guard status: {exc}")
+    _echo("guard (read-only): vpn guard run | status | findings | explain | "
+          "rules | sources | export | selftest | install")
+    _echo("guard только диагностирует: не рестартит и не переключает VPN")
+
+
 def action_exit() -> None:
     raise MenuExit()
 
@@ -375,6 +390,7 @@ MENU_ACTIONS: ActionMap = {
     "Profiles": None,  # submenu, handled in run_menu
     "System proxy": action_sysproxy,
     "Doctor": action_doctor,
+    "Guard (диагностика логов)": action_guard,
     "Exit": action_exit,
 }
 

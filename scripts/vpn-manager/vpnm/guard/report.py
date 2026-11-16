@@ -7,6 +7,7 @@ counters, rule ids and the prose fields only — never log text or secrets.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Mapping, Optional
 
 
@@ -118,10 +119,66 @@ def finding_dict_line(finding: Mapping[str, Any]) -> Dict[str, Any]:
     return dict(finding)
 
 
+def rules_payload(config_root: Optional[Any] = None) -> Dict[str, Any]:
+    """``vpn guard rules --json``: catalogue + effective thresholds + hashes.
+
+    Hashes are deterministic (no clock, no state): ``rules_hash`` covers the
+    catalogue **and** the effective thresholds, ``config_hash`` the whole
+    effective config, ``schemas`` the seven contract files (SPEC §10.2).
+    """
+    from . import schema, store
+    from .rules import rule_catalog
+
+    return {
+        "rules": rule_catalog(),
+        "thresholds": store.effective_thresholds(config_root).as_dict(),
+        "config": store.effective_config(config_root),
+        "rules_hash": store.rules_hash(config_root),
+        "config_hash": store.config_hash(config_root),
+        "schemas": schema.schema_hashes(),
+    }
+
+
+def render_rules(payload: Mapping[str, Any], *,
+                 verbose: bool = False) -> List[str]:
+    """Human table for ``vpn guard rules`` (no values from logs)."""
+    lines: List[str] = []
+    for item in payload.get("rules") or []:
+        if not isinstance(item, Mapping):
+            continue
+        flag = "" if item.get("notify", True) else "  (не уведомляет)"
+        lines.append(
+            f"{item.get('id')}  {item.get('name')}  "
+            f"{item.get('severity')}/{item.get('category')}  "
+            f"stage={item.get('stage')}{flag}")
+        summary = item.get("summary")
+        if summary:
+            lines.append(f"      {summary}")
+    thresholds = payload.get("thresholds")
+    if isinstance(thresholds, Mapping):
+        lines.append("")
+        lines.append("thresholds:")
+        for name in sorted(thresholds):
+            lines.append(f"      {name}={thresholds[name]}")
+    if verbose:
+        config = payload.get("config")
+        if isinstance(config, Mapping):
+            lines.append("")
+            lines.append("effective config: "
+                         + json.dumps(config, ensure_ascii=False,
+                                      sort_keys=True))
+    lines.append("")
+    lines.append(f"rules_hash={payload.get('rules_hash')}")
+    lines.append(f"config_hash={payload.get('config_hash')}")
+    return lines
+
+
 __all__ = [
     "explain",
     "finding_dict_line",
     "finding_line",
     "incident_line",
     "render_finding",
+    "render_rules",
+    "rules_payload",
 ]

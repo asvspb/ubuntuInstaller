@@ -7,15 +7,21 @@ The loop wires the pieces the previous work packages built and nothing else:
 - the parser (:mod:`vpnm.guard.parse`) → :class:`~vpnm.guard.rules.RuleEngine`;
 - the correlator (:mod:`vpnm.guard.correlate`) → ``findings.jsonl`` sink;
 - a 5 s ticker for absence rules/hysteresis/G-11/G-12 and a periodic
-  ``state.json``/``coverage.json`` snapshot.
+  ``state.json``/``coverage.json`` snapshot;
+- opt-in ``trace.ndjson`` sink (``--trace``) that redacts each event before it
+  touches the disk (SPEC §10.3);
+- opt-in desktop notifications (``notify.desktop=true``), severity/rate gated
+  in :mod:`vpnm.guard.notify` (SPEC §8.1/§10.4).
 
-D-06/D-07 invariants:
+D-06/D-07/D-09 invariants:
 
 - every S3-driven context is stamped with the single monotonic clock
   (``clock.now_us()``/``window.mono_us()``) — wall-clock is used only for
   freshness of ``fetched_at`` (``verdict.py``);
 - a closed 120 s AWG counter window is popped **once** and handed to
-  ``engine.note_awg_window`` exactly once per window.
+  ``engine.note_awg_window`` exactly once per window;
+- the G-11 speed ring is restored from ``state.json`` at start and written back
+  on every persist, so a restart does not reset the 24 h history (D-09).
 
 No network, no root, no ``systemctl``: the only network command of the guard
 is the explicit ``vpn guard sync`` (:mod:`vpnm.guard.verdict`).
@@ -33,6 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence
 
 from . import counters, parse, reader, store, verdict
+from . import notify as notify_mod
 from .correlate import Correlator
 from .rules import RuleEngine, RuleOutcome, ServerContext, Thresholds
 from .window import MONO_US_PER_S, Clock, mono_us
@@ -88,6 +95,9 @@ class GuardRunner:
                  on_incident: Optional[Callable[[Dict[str, Any]], None]] = None,
                  state_writer: Optional[Callable[[Mapping[str, Any]], Any]] = None,
                  coverage_writer: Optional[Callable[[Mapping[str, Any]], Any]] = None,
+                 trace: Optional[store.TraceWriter] = None,
+                 notifier: Optional[Any] = None,
+                 restore_speed_ring: bool = True,
                  log: Optional[Callable[[str], None]] = None,
                  sleep: Callable[[float], None] = time.sleep,
                  pid: Optional[int] = None,
@@ -111,6 +121,8 @@ class GuardRunner:
         self.on_incident = on_incident
         self.state_writer = state_writer
         self.coverage_writer = coverage_writer
+        self.trace = trace
+        self.notifier = notifier
         self.log = log or (lambda _message: None)
         self.sleep = sleep
         self.pid = pid
@@ -125,6 +137,8 @@ class GuardRunner:
         self._last_dropped = 0
         self._server: Optional[ServerContext] = None
         self._initial_server()
+        if restore_speed_ring:
+            self._restore_speed_ring()
 
     # -- time ---------------------------------------------------------------
 
@@ -154,6 +168,22 @@ class GuardRunner:
         if context.present and not context.fresh:
             self.notes.append("verdict_stale")
 
+    def _restore_speed_ring(self) -> None:
+        """Reload the G-11 ring from ``state.json`` (D-09).
+
+        A restart must not reset the 24 h speed history: ``vpn speed`` runs
+        rarely, so losing the ring meant G-11 could never see two low reports
+        in a row.  Monotonic time of the restored records is synthesised from
+        their wall timestamps relative to now (D-06, §7.1).
+        """
+        records = store.read_speed_ring()
+        if not records:
+            return
+        restored = self.engine.restore_speed_ring(
+            records, now_us=self.now_us(), now_wall=self.wall_now())
+        if restored:
+            self.notes.append(f"speed_ring_restored:{restored}")
+
     # -- ingestion -----------------------------------------------------------
 
     def _ingest_record(self, record: Mapping[str, Any], source: str,
@@ -168,6 +198,11 @@ class GuardRunner:
     def _ingest_event(self, event: Dict[str, Any],
                       *, streaming: bool) -> None:
         self.counters.events += 1
+        if self.trace is not None:
+            # SPEC §10.3/§7.3: the trace stores an already redacted event.
+            if not self.trace.append(event):
+                if "trace_write_failed" not in self.notes:
+                    self.notes.append("trace_write_failed")
         proto = event.get("proto")
         signal = event.get("signal")
         if isinstance(proto, str) and signal not in (None, "unparsed"):
@@ -205,6 +240,10 @@ class GuardRunner:
                 self.emitted.append(finding)
                 if self.on_finding is not None:
                     self.on_finding(finding)
+                if self.notifier is not None:
+                    # opt-in desktop notification (§8.1/§10.4); never raises,
+                    # a missing desktop degrades to the journal line above.
+                    self.notifier.notify(finding)
                 if self.on_incident is not None:
                     self.on_incident(incident)
             elif outcome.status == "suppressed":
@@ -252,7 +291,12 @@ class GuardRunner:
                 self.engine.note_activity(True, self.now_us())
             return
         if name == "last-speed.json":
+            before = len(self.engine.speed_ring())
             self.engine.note_speed_report(payload, self.now_us())
+            if len(self.engine.speed_ring()) != before:
+                # D-09: persist the refreshed G-11 ring with the report, so a
+                # crash right after `vpn speed` does not lose the observation
+                self.persist()
             return
         if name == "server-verdict.json":
             context = verdict.context_from_payload(payload, now=self.wall_now())
@@ -488,11 +532,17 @@ class GuardRunner:
         return reader.SourceHealth(name="verdict", status="ok")
 
     def persist(self) -> None:
+        payload: Dict[str, Any] = dict(self.status_payload())
+        ring = self.engine.speed_ring()
+        if ring:
+            # additive key inside state.json (D-09): `guard.status/1` ignores
+            # unknown fields and the schema allows them (ADR-014 §2)
+            payload["speed_ring"] = ring
         try:
             if self.state_writer is not None:
-                self.state_writer(self.status_payload())
+                self.state_writer(payload)
             else:
-                store.write_state(self.status_payload())
+                store.write_state(payload)
         except OSError as exc:
             self.log(f"state_write_failed:{exc}")
         try:
@@ -529,6 +579,9 @@ def build_runner(*, config_root: Optional[Path] = None,
                  sink: Optional[store.FindingsStore] = None,
                  state_writer: Optional[Callable[[Mapping[str, Any]], Any]] = None,
                  coverage_writer: Optional[Callable[[Mapping[str, Any]], Any]] = None,
+                 trace_enabled: bool = False,
+                 notifications: bool = True,
+                 notifier: Optional[Any] = None,
                  log: Optional[Callable[[str], None]] = None) -> GuardRunner:
     """Wire the production daemon from ``guard.json`` (lazy, no side effects).
 
@@ -563,6 +616,9 @@ def build_runner(*, config_root: Optional[Path] = None,
     if sink is None:
         sink = store.FindingsStore(
             path=sink_path, config_root=config_root)
+    if notifier is None and notifications:
+        notifier = notify_mod.Notifier(config_root=config_root)
+    trace = store.TraceWriter() if trace_enabled else None
     install_state = load_install_state()
     return GuardRunner(
         engine=engine, parser=parser, readers=readers or (),
@@ -570,6 +626,7 @@ def build_runner(*, config_root: Optional[Path] = None,
         clock=clock, now_us_fn=now_us_fn, wall_clock=wall_clock,
         on_finding=on_finding, on_incident=on_incident,
         state_writer=state_writer, coverage_writer=coverage_writer,
+        trace=trace, notifier=notifier,
         log=log, unit_profile=_profile_of_install(install_state))
 
 

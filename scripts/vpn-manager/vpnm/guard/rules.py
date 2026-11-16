@@ -80,6 +80,9 @@ SILENT_SIGNALS: frozenset = frozenset(
     ("dial_timeout", "tls_stall", "conn_refused", "conn_reset"))
 #: Perf signals of the G-11 second branch (`1 report + 3 timeouts`).
 PERF_TIMEOUT_SIGNALS: frozenset = frozenset(("read_timeout", "write_timeout"))
+#: How many mini-records of the G-11 ring are persisted in ``state.json``
+#: (DECISIONS D-09: ``ts``, ``profile``, ``proto``, ``median_mbps``).
+SPEED_RING_PERSISTED = 5
 #: G-12 inputs (the guard's own degradations, §8.2).
 SELF_SIGNALS: frozenset = frozenset(
     ("unparsed", "source_lost", "clock_skew", "no_signal_window"))
@@ -107,6 +110,70 @@ GLOBAL_RULES: Tuple[str, ...] = ("G-11", "G-12")
 SINGLE_EVIDENCE_RULES: frozenset = frozenset(
     ("G-02", "G-03", "G-04", "G-05", "G-06", "G-07",
      "G-09", "G-10", "G-11", "G-12"))
+
+#: Static catalogue of SPEC §8.2 for ``vpn guard rules`` (WP-G5).  Metadata
+#: only — the logic lives in the ``_gNN`` methods and the defaults in
+#: :class:`Thresholds`; a test asserts the ids match :data:`RULES_IN_ORDER`.
+#: ``notify=False`` is the "never notifies" property of G-12 (§8.4).
+RULE_CATALOG: Mapping[str, Mapping[str, Any]] = {
+    "G-01": {"name": "no_handshake_after_start", "category": "tunnel_down",
+             "severity": "high", "stage": "pre_handshake",
+             "summary": "app жив (banner/dial), но за 25 с нет handshake"},
+    "G-02": {"name": "reset_storm", "category": "censorship_suspect",
+             "severity": "high", "stage": "post_handshake",
+             "summary": "≥3 conn_reset/conn_eof за 60 с после handshake"},
+    "G-03": {"name": "post_handshake_drop", "category": "censorship_suspect",
+             "severity": "high", "stage": "data_phase",
+             "summary": "≥3 циклов handshake→обрыв (≤5 с) за 120 с"},
+    "G-04": {"name": "udp_response_blackhole", "category": "censorship_suspect",
+             "severity": "high", "stage": "udp_response",
+             "summary": "QUIC handshake ok, ответы не приходят; AWG tx↑/rx≈0"},
+    "G-05": {"name": "auth_failure", "category": "config",
+             "severity": "high", "stage": "pre_handshake",
+             "summary": "auth_fail без auth_ok 5 мин (или ≥3 за 5 мин)"},
+    "G-06": {"name": "dns_broken", "category": "dns",
+             "severity": "high", "stage": "local",
+             "summary": "≥2 DNS-ошибок за 60 с или SERVFAIL на ≥2 именах"},
+    "G-07": {"name": "local_network_down", "category": "local_net",
+             "severity": "high", "stage": "local",
+             "summary": "network_unreachable/no_route, потеря default route"},
+    "G-08": {"name": "tls_cert_error", "category": "config",
+             "severity": "high", "stage": "tls_stall",
+             "summary": "tls_cert_error без успешного TLS 5 мин"},
+    "G-09": {"name": "endpoint_silent", "category": "endpoint_unreachable",
+             "severity": "medium", "stage": "pre_handshake",
+             "summary": "≥5 pre-handshake сбоев на host:port за 10 мин"},
+    "G-10": {"name": "unit_flap", "category": "local_fault",
+             "severity": "high", "stage": "local",
+             "summary": "≥3 unit_exit (non-zero)/unit_start за 10 мин"},
+    "G-11": {"name": "degraded_throughput", "category": "degraded",
+             "severity": "medium", "stage": "data_phase",
+             "summary": "≥2 отчётов speed < 2.0 Мбит/с подряд за 24 ч"},
+    "G-12": {"name": "guard_selfdegraded", "category": "observability",
+             "severity": "low", "stage": "local",
+             "summary": "источник lost/очереди/unparsed/часы — деградация guard",
+             "notify": False},
+}
+
+
+def rule_catalog() -> List[Dict[str, Any]]:
+    """Catalogue entries in fixed rule order (``vpn guard rules``)."""
+    return [dict(RULE_CATALOG[rule], id=rule) for rule in RULES_IN_ORDER]
+
+
+def rules_hash(thresholds: Optional["Thresholds"] = None) -> str:
+    """Deterministic ``sha256:<64 hex>`` of the rule catalogue + thresholds.
+
+    The same value is printed by ``vpn guard rules`` and stored in
+    ``guard.status/1``; it changes only when a rule/metadata/threshold
+    changes, never because of local time or state (SPEC §10.2).
+    """
+    payload = {
+        "rules": rule_catalog(),
+        "thresholds": (thresholds if thresholds is not None
+                       else Thresholds()).as_dict(),
+    }
+    return events.payload_hash(payload)
 
 #: Signals that make each rule worth re-evaluating (event-driven path).
 _RULE_TRIGGERS: Mapping[str, frozenset] = {
@@ -539,12 +606,80 @@ class RuleEngine:
             speed = channel.get("speed_mbps")
             if isinstance(speed, bool) or not isinstance(speed, (int, float)):
                 continue  # "no data" is not "0 Mbps"
+            if any(existing.get("ts") == finished
+                   and existing.get("channel") == name
+                   for existing in self._speed_reports):
+                continue  # the same report re-read (restart / mtime change)
             self._speed_reports.append({
                 "mono_us": stamp,
                 "ts": finished,
                 "channel": name,
+                "proto": protocol if isinstance(protocol, str) else None,
                 "speed": float(speed),
             })
+
+    # -- G-11 ring persistence (D-09) ----------------------------------------
+
+    def speed_ring(self) -> List[Dict[str, Any]]:
+        """Last :data:`SPEED_RING_PERSISTED` mini-records for ``state.json``.
+
+        ``ts``, ``profile``, ``proto``, ``median_mbps`` — no endpoints, URLs
+        or secrets (D-09).  Oldest first.
+        """
+        records = list(self._speed_reports)[-SPEED_RING_PERSISTED:]
+        return [{"ts": str(record["ts"]),
+                 "profile": str(record["channel"]),
+                 "proto": record.get("proto"),
+                 "median_mbps": round(float(record["speed"]), 3)}
+                for record in records]
+
+    def restore_speed_ring(self, records: Optional[Iterable[Mapping[str, Any]]],
+                           *, now_us: int,
+                           now_wall: Optional[datetime] = None) -> int:
+        """Load the persisted ring; returns how many records were accepted.
+
+        Monotonic time is **synthesised from the wall timestamp** exactly like
+        any other ``state``-sourced context (§7.1, D-06): ``mono_us = now_us -
+        (now_wall - ts)``.  A malformed record is skipped instead of breaking
+        the daemon; a restart therefore no longer resets the G-11 history
+        (D-09).
+        """
+        if not records:
+            return 0
+        moment = now_wall if now_wall is not None else datetime.now(timezone.utc)
+        horizon = moment.timestamp()
+        accepted = 0
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            ts_value = record.get("ts")
+            profile = record.get("profile")
+            speed = record.get("median_mbps")
+            if (not isinstance(ts_value, str) or not isinstance(profile, str)
+                    or not profile
+                    or isinstance(speed, bool)
+                    or not isinstance(speed, (int, float))):
+                continue
+            try:
+                stamp = datetime.fromisoformat(
+                    ts_value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            proto = record.get("proto")
+            if any(existing.get("ts") == ts_value
+                   and existing.get("channel") == profile
+                   for existing in self._speed_reports):
+                continue
+            age_us = max(0, int((horizon - stamp) * MONO_US_PER_S))
+            self._speed_reports.append({
+                "mono_us": int(now_us) - age_us,
+                "ts": ts_value,
+                "channel": profile,
+                "proto": proto if isinstance(proto, str) else None,
+                "speed": float(speed),
+            })
+            accepted += 1
+        return accepted
 
     def note_source_status(self, name: str, status: str,
                            now_us: Optional[int] = None,
@@ -2238,14 +2373,18 @@ __all__ = [
     "LOCAL_NET_SIGNALS",
     "RESET_SIGNALS",
     "RULES_IN_ORDER",
+    "RULE_CATALOG",
     "RULE_TRIGGERS",
     "SILENT_SIGNALS",
+    "SPEED_RING_PERSISTED",
     "RuleEngine",
     "RuleOutcome",
     "ServerContext",
     "Thresholds",
     "build_finding",
     "finding_schema_hash",
+    "rule_catalog",
+    "rules_hash",
 ]
 
 #: Public alias of the trigger map (tests assert the catalogue is complete).

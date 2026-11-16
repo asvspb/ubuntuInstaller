@@ -5,6 +5,10 @@ Artefacts (SPEC §10.3), all under ``~/.local/share/vpn-manager/guard/``
 
 - ``findings.jsonl`` — 0600, rotation 14 days / 20 MB total in 5 × 4 MB
   segments (oldest segment dropped);
+- ``trace.ndjson`` — opt-in ``--trace`` ring: 1 h / ≤ 10 MB, redacted before
+  the write, one ``.1`` generation (SPEC §10.3);
+- ``export`` — anonymised bundle (``manifest.json`` + ``findings.ndjson`` +
+  ``coverage.json``, ≤ 5 MB) built by :func:`build_export`;
 - ``activity.json`` — best-effort FP-guard marker written by the probe
   commands (``monitor``/``probe``/``speed``): ``{cmd, started, until}``.
   The write must never break the probing command and never change its
@@ -19,7 +23,8 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping,
+                    Optional, Sequence, Tuple)
 
 from .reader import config_dir, guard_dir
 
@@ -41,6 +46,103 @@ def guard_config(config_root: Optional[Path] = None) -> Dict[str, Any]:
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+#: Documented defaults of ``guard.config/1`` (SPEC §10.3).  ``vpn guard rules``
+#: and ``config_hash`` work off the **effective** config = defaults + guard.json,
+#: so a fresh install and an explicit file with the same values hash equally.
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "schema": "guard.config/1",
+    "sources": {
+        "user_journal": True,
+        "system_journal": False,
+        "files": True,
+        "awg_counters": True,
+        "netlink": False,
+        "server_verdict": True,
+    },
+    "notify": {"desktop": False, "min_severity": "high"},
+    "redact": {"hosts_in_export": True, "snippets": False},
+    "retention_days": 14,
+}
+
+_CONFIG_BOOL_FLAGS: Mapping[str, Tuple[str, ...]] = {
+    "sources": ("system_journal", "files", "awg_counters", "netlink",
+                "server_verdict"),
+    "redact": ("hosts_in_export", "snippets"),
+}
+
+
+def effective_config(config_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Defaults + ``guard.json``, validated field by field (no user regex).
+
+    Unknown keys and garbage values are ignored: the guard config surface is
+    fixed by SPEC §10.3 (OQ-13) and a typo must not silently change behaviour.
+    Only known booleans/enums/retention are accepted; thresholds are parsed
+    through :meth:`vpnm.guard.rules.Thresholds.from_mapping`.
+    """
+    from . import events
+    from .rules import Thresholds
+
+    raw = guard_config(config_root)
+    payload: Dict[str, Any] = {
+        "schema": DEFAULT_CONFIG["schema"],
+        "sources": dict(DEFAULT_CONFIG["sources"]),
+        "notify": dict(DEFAULT_CONFIG["notify"]),
+        "redact": dict(DEFAULT_CONFIG["redact"]),
+        "retention_days": DEFAULT_CONFIG["retention_days"],
+    }
+    for block, flags in _CONFIG_BOOL_FLAGS.items():
+        given = raw.get(block)
+        if not isinstance(given, Mapping):
+            continue
+        for flag in flags:
+            if isinstance(given.get(flag), bool):
+                payload[block][flag] = bool(given[flag])
+    notify = raw.get("notify")
+    if isinstance(notify, Mapping):
+        if isinstance(notify.get("desktop"), bool):
+            payload["notify"]["desktop"] = bool(notify["desktop"])
+        if notify.get("min_severity") in events.SEVERITIES:
+            payload["notify"]["min_severity"] = str(notify["min_severity"])
+    retention = raw.get("retention_days")
+    if (isinstance(retention, int) and not isinstance(retention, bool)
+            and 1 <= retention <= 90):
+        payload["retention_days"] = retention
+    payload["thresholds"] = Thresholds.from_mapping(
+        raw.get("thresholds")).as_dict()
+    return payload
+
+
+def config_hash(config_root: Optional[Path] = None) -> str:
+    """``sha256:<64 hex>`` of the effective ``guard.config/1`` payload.
+
+    Deterministic: same config → same hash; the config holds thresholds and
+    flags only, so the hash can never encode a secret (SPEC §10.2, AC-8).
+    """
+    from .events import payload_hash
+    return payload_hash(effective_config(config_root))
+
+
+def effective_thresholds(config_root: Optional[Path] = None) -> Any:
+    """Typed thresholds of the effective config (``guard.json`` over defaults)."""
+    from .rules import Thresholds
+    return Thresholds.from_mapping(guard_config(config_root).get("thresholds"))
+
+
+def rules_hash(config_root: Optional[Path] = None) -> str:
+    """Effective ``rules_hash`` (catalogue + effective thresholds, §10.2)."""
+    from .rules import rules_hash as _rules_hash
+    return _rules_hash(effective_thresholds(config_root))
+
+
+def notify_settings(config_root: Optional[Path] = None) -> Tuple[bool, str]:
+    """``(desktop, min_severity)`` of the effective config (opt-in, OQ-5)."""
+    config = effective_config(config_root)
+    notify = config.get("notify")
+    if not isinstance(notify, Mapping):
+        return False, "high"
+    return bool(notify.get("desktop")), str(notify.get("min_severity", "high"))
 
 
 def redact_snippets(config_root: Optional[Path] = None) -> bool:
@@ -559,3 +661,250 @@ def build_status(*, running: bool, since: Optional[str] = None,
         raise ValueError("invalid guard.status/1: " + "; ".join(errors))
     return payload
 
+
+# --- G-11 ring persistence (DECISIONS D-09) -----------------------------------
+
+def read_speed_ring(path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """``speed_ring`` mini-records persisted in ``state.json`` (or ``[]``).
+
+    Shape (D-09): ``ts``, ``profile``, ``proto``, ``median_mbps`` — no
+    endpoints/URLs/secrets, so the ring is safe to keep across restarts.
+    """
+    payload = read_state(path)
+    if not payload:
+        return []
+    ring = payload.get("speed_ring")
+    if not isinstance(ring, list):
+        return []
+    return [dict(item) for item in ring if isinstance(item, Mapping)]
+
+
+# --- trace ring (SPEC §10.3: ``trace.ndjson``, 1 h / ≤ 10 MB) -------------------
+
+TRACE_MAX_BYTES = 10 * 1024 * 1024
+TRACE_TTL_S = 3600
+
+#: Event fields kept in a trace line (the contract is add-only: a superset is
+#: rejected by nothing, but tracing only contract keys keeps it small).
+TRACE_EVENT_KEYS: Tuple[str, ...] = (
+    "schema", "ts", "mono_us", "source", "unit", "profile", "proto", "level",
+    "signal", "template", "endpoint", "fields", "count",
+)
+
+
+def trace_path() -> Path:
+    return guard_dir() / "trace.ndjson"
+
+
+class TraceWriter:
+    """Append-only NDJSON trace with size + age rotation and redaction.
+
+    Every event is passed through :func:`vpnm.guard.redact.sanitize_payload`
+    **before** serialisation (SPEC §7.3: "запись только после redact"), so a
+    secret that slipped into a free-text field is masked in the trace too.
+    The file is 0600 inside the 0700 guard directory; ``--trace`` is opt-in.
+    """
+
+    def __init__(self, path: Optional[Path] = None, *,
+                 max_bytes: int = TRACE_MAX_BYTES,
+                 ttl_s: int = TRACE_TTL_S,
+                 now_fn: Optional[Callable[[], float]] = None) -> None:
+        self.path = path if path is not None else trace_path()
+        self.max_bytes = max(1024, int(max_bytes))
+        self.ttl_s = max(0, int(ttl_s))
+        self._now_fn = now_fn
+
+    def now(self) -> float:
+        return self._now_fn() if self._now_fn is not None else time.time()
+
+    def append(self, event: Mapping[str, Any]) -> bool:
+        """Sanitize + append one event; ``False`` on an I/O failure."""
+        from .redact import sanitize_payload
+
+        clean, _hits = sanitize_payload(
+            {key: event[key] for key in TRACE_EVENT_KEYS if key in event})
+        line = json.dumps(clean, ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":")) + "\n"
+        try:
+            self._rotate_if_needed(len(line.encode("utf-8")))
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.path.parent, 0o700)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+            os.chmod(self.path, 0o600)
+        except OSError:
+            return False
+        return True
+
+    def _rotate_if_needed(self, incoming_bytes: int) -> None:
+        if not self.path.exists():
+            return
+        stat = self.path.stat()
+        too_big = stat.st_size + incoming_bytes > self.max_bytes
+        too_old = (self.ttl_s > 0
+                   and self.now() - stat.st_mtime > self.ttl_s)
+        if not too_big and not too_old:
+            return
+        rotated = self.path.with_name(self.path.name + ".1")
+        if rotated.exists():
+            rotated.unlink()
+        os.replace(self.path, rotated)
+
+
+# --- export bundle (SPEC §10.1/§11.6, AC-8/AC-13) ------------------------------
+
+EXPORT_MAX_BYTES = 5 * 1024 * 1024
+BUNDLE_SCHEMA = "guard.bundle/1"
+
+
+def build_export(findings: Sequence[Mapping[str, Any]],
+                 coverage: Optional[Mapping[str, Any]] = None, *,
+                 keep_hosts: bool = False,
+                 since: Optional[str] = None,
+                 config_root: Optional[Path] = None,
+                 created: Optional[str] = None,
+                 max_bytes: int = EXPORT_MAX_BYTES) -> Dict[str, Any]:
+    """Build the anonymised bundle dict ``guard.bundle/1`` (no raw text).
+
+    - hosts → ``<host>`` unless ``keep_hosts`` (explicit opt-in, §11.6);
+    - every finding goes through :func:`redact.export_view` (sanitize + hosts);
+    - findings are trimmed oldest-first until the bundle fits ``max_bytes``;
+    - the manifest carries hashes (``*_sha256`` keys) and counts only.
+
+    Returns the bundle dict; :func:`export_hits` is the gate the CLI enforces
+    **before** anything is written (exit 2, paths only).
+    """
+    from . import events, schema
+    from .redact import export_view, sanitize_payload
+
+    views: List[Dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            continue
+        view, _hits = export_view(finding, keep_hosts=keep_hosts)
+        views.append(view)
+    # deterministic "newest first" regardless of the caller's order, so the
+    # trimming below always drops the oldest findings
+    views.sort(key=_export_order, reverse=True)
+    clean_coverage: Optional[Dict[str, Any]] = None
+    if isinstance(coverage, Mapping):
+        clean_coverage, _hits = sanitize_payload(coverage)
+    dropped = 0
+    while views and _bundle_size(views, clean_coverage, keep_hosts, since,
+                                 created) > max_bytes:
+        views.pop()  # findings are newest-first: drop the oldest
+        dropped += 1
+    manifest: Dict[str, Any] = {
+        "schema": BUNDLE_SCHEMA,
+        "created": created or datetime.now(timezone.utc).replace(
+            microsecond=0).isoformat().replace("+00:00", "Z"),
+        "since": since,
+        "keep_hosts": bool(keep_hosts),
+        "findings": len(views),
+        "findings_dropped": dropped,
+        "coverage_included": clean_coverage is not None,
+        "rules_hash": _lazy_rules_hash(config_root),
+        "config_hash": config_hash(config_root),
+        "findings_sha256": events.payload_hash(views),
+        "coverage_sha256": events.payload_hash(clean_coverage),
+        "schemas": schema.schema_hashes(),
+    }
+    return {"manifest": manifest, "findings": views,
+            "coverage": clean_coverage}
+
+
+def _export_order(finding: Mapping[str, Any]) -> str:
+    """Sort key: ``window.last`` (newest first), falling back to ``ts``."""
+    window = finding.get("window")
+    if isinstance(window, Mapping):
+        last = window.get("last")
+        if isinstance(last, str):
+            return last
+    ts = finding.get("ts")
+    return ts if isinstance(ts, str) else ""
+
+
+def _lazy_rules_hash(config_root: Optional[Path] = None) -> str:
+    """Effective rules hash (rules + effective thresholds)."""
+    return rules_hash(config_root)
+
+
+def _bundle_size(findings: Sequence[Mapping[str, Any]],
+                 coverage: Optional[Mapping[str, Any]], keep_hosts: bool,
+                 since: Optional[str],
+                 created: Optional[str]) -> int:
+    """Serialized size estimate of the findings+coverage part of a bundle."""
+    body = {"findings": list(findings), "coverage": coverage,
+            "keep_hosts": bool(keep_hosts), "since": since,
+            "created": created}
+    return len(json.dumps(body, ensure_ascii=False, sort_keys=True,
+                          default=str).encode("utf-8"))
+
+
+def export_hits(bundle: Mapping[str, Any]) -> List[str]:
+    """Post-scan the built bundle; returns hit paths (never values).
+
+    ``redact.export_gate`` is applied to the very payload that would be
+    written, so the allowlist (``*_hash``/``*_sha256``/``sha256:<64 hex>``)
+    is exercised end-to-end (AC-13).
+    """
+    from .redact import export_gate
+
+    findings = bundle.get("findings")
+    coverage = bundle.get("coverage")
+    code, hits = export_gate(findings if isinstance(findings, list) else [],
+                             coverage if isinstance(coverage, Mapping) else None)
+    return hits if code == 2 else []
+
+
+def input_export_hits(findings: Sequence[Mapping[str, Any]],
+                      coverage: Optional[Mapping[str, Any]]) -> List[str]:
+    """Gate over the **source** findings/coverage, before anonymisation.
+
+    Sanitisation normally removes a secret earlier, but AC-13 is explicit: a
+    real ``FIXTURE_PW_*`` in a written artefact must *block* the export with
+    exit 2 instead of being silently masked — a leak already on disk is an
+    incident, not something to prettify.  Returns paths only.
+    """
+    from .redact import export_gate
+
+    code, hits = export_gate(findings, coverage)
+    return hits if code == 2 else []
+
+
+def write_export(bundle: Mapping[str, Any],
+                 target: Optional[Path] = None) -> Tuple[Path, int]:
+    """Write the bundle: ``*.json`` → one file, otherwise a directory.
+
+    Directory layout follows SPEC §10.1: ``manifest.json``,
+    ``findings.ndjson`` and ``coverage.json`` (all 0600).  Returns the path
+    touched and the byte size actually written.
+    """
+    destination = target if target is not None else (
+        guard_dir() / "export")
+    manifest = bundle.get("manifest") or {}
+    findings = bundle.get("findings") or []
+    coverage = bundle.get("coverage")
+    manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2,
+                               sort_keys=True, default=str) + "\n"
+    findings_text = "".join(
+        json.dumps(item, ensure_ascii=False, sort_keys=True, default=str) + "\n"
+        for item in findings)
+    coverage_text = ""
+    if coverage is not None:
+        coverage_text = json.dumps(coverage, ensure_ascii=False, indent=2,
+                                   sort_keys=True, default=str) + "\n"
+    if destination.suffix.lower() == ".json":
+        payload = json.dumps(bundle, ensure_ascii=False, indent=2,
+                             sort_keys=True, default=str) + "\n"
+        atomic_write_0600(destination, payload)
+        return destination, len(payload.encode("utf-8"))
+    destination.mkdir(parents=True, exist_ok=True)
+    os.chmod(destination, 0o700)
+    atomic_write_0600(destination / "manifest.json", manifest_text)
+    atomic_write_0600(destination / "findings.ndjson", findings_text)
+    if coverage_text:
+        atomic_write_0600(destination / "coverage.json", coverage_text)
+    total = sum(len(text.encode("utf-8")) for text in
+                (manifest_text, findings_text, coverage_text))
+    return destination, total
