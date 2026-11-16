@@ -313,6 +313,44 @@ Ref: `TEST-20261113-cdn-mux` (приёмка SPEC-20261113-cdn-usability, WP-1 �
 FAIL). Реальное мультиплексирование для CDN — отдельная идея **XHTTP через
 Cloudflare** (новая SPEC), а не Mux.Cool.
 
+## XHTTP: `xPaddingBytes` + `xmux` (GR-25, 2026-11-16)
+
+Для XHTTP-профилей (`xray-xhttp`, и socks `vpn up xhttp-*`, и tun
+`vpn start xhttp`) клиентский конфиг несёт анти-ML профиль из
+SPEC-20261116-xhttp-xmux-padding §2.2:
+
+```json
+"xhttpSettings": {
+  "path": "/<secret>", "host": "<sni>", "mode": "auto",
+  "xPaddingBytes": "100-1000",
+  "xmux": {"maxConcurrency": "2-4", "maxConnections": 0,
+           "cMaxReuseTimes": "32-64", "hMaxRequestTimes": "64-128",
+           "hMaxReusableSecs": "180-300", "keepAlivePeriod": 0}
+}
+```
+
+- `xPaddingBytes: 100-1000` — рандомная длина служебного padding'а на каждый
+  фрейм: размывает гистограмму размеров пакетов (SPLT), по которой
+  ML-классификатор АСБИ узнаёт дефолтный XHTTP по первым 10–15 пакетам.
+- `xmux` — управление жизненным циклом **сокетов транспорта**: 2–4
+  параллельных соединения (как Chrome к HTTP/2 origin), не более 32–64
+  туннельных сессий на сокет (`cMaxReuseTimes`), не более 64–128 HTTP-запросов
+  внутри соединения (`hMaxRequestTimes`) и жёсткий TTL 180–300 с
+  (`hMaxReusableSecs`). `keepAlivePeriod: 0` — никаких пингов в простое.
+- **Ротация сокетов штатная, не разрыв.** Долгое скачивание (стрим, образ)
+  идёт непрерывно, а в `ss -tn dst <сервер>:8443` видно 2–4 сокета, которые
+  плавно сменяются каждые 3–5 минут с новым исходящим портом. Для DPI/NetFlow
+  это серия независимых коротких HTTPS-сессий, а не одна «VPN-труба» на
+  сотни мегабайт.
+- Не путать с **Mux.Cool** (отклонён выше): `xmux` живёт внутри
+  `xhttpSettings` транспорта, outbound-level `mux` в конфиге отсутствует.
+- Reality/CDN-WS конфиги этих полей не получают; серверный инблэнд vds с
+  `xPaddingBytes` полностью совместим и со старыми клиентами (только `path`).
+
+Проверка на живой машине — T-XM6 (A/B): 50 МБ через `vpn start xhttp` →
+`ss -tn dst <SERVER_IP>:8443` показывает 2–4 сокета и их ротацию за 3–5 минут
+без обрыва скачивания.
+
 ## Бенчмарк CDN (`scripts/bench-cdn-mux.sh`)
 
 Воспроизводимый baseline живого CDN-профиля. Имя файла историческое: A/B
@@ -879,6 +917,11 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 `typer`, `questionary` (TUI), `curl` (probe DNS/external IP), `ssh`,
 `systemd` (user units), `gsettings` (GNOME, только для sysproxy).
 
+Пиннутые бинари в `~/.local/lib/vpn/` (ставит `vpn` сам, `vpnm/bins.py`):
+**Xray-core 26.1.23** — один и тот же для socks-профилей (`vpn up`) и
+tun-split (`vpn start xhttp`), — и **hysteria v2.13.0**. Идемпотентность по
+версии: бинарь 25.1.1 будет переустановлен.
+
 ## Разработка
 
 Тесты: `python3 -m pytest` из `scripts/vpn-manager/` (моки subprocess, без сети).
@@ -893,8 +936,10 @@ https://www.youtube.com/generate_204` → 204, github → 200 (напрямую)
 Системный зонный split на xray-транспорте (Reality **или** XHTTP) — та же
 механика, что у AWG (dnsmasq → nft set → fwmark → table → dev), но
 `dev = xray0`: tun-инбаунд xray-клиента (v26.1.23+; сервер asv1 тоже обновлён
-до 26.1.23 — ADR-010; socks-профили vpnm могут оставаться на 25.1.1, у
-split-юнита свой бинарь в `/usr/local/lib/vpn-xray-split`).
+до 26.1.23 — ADR-010; с GR-25 пин `vpnm` унифицирован: и socks-профили, и
+split-юнит идут на **26.1.23** — `vpnm/bins.py: XRAY_VERSION`, у split-юнита
+свой бинарь в `/usr/local/lib/vpn-xray-split`). Один пин нужен потому, что
+`xPaddingBytes`/`xmux` в `xhttpSettings` понимает только 26.x.
 
 ```bash
 vpn start                          # по умолчанию: AWG + доменный split
@@ -909,12 +954,16 @@ sudo bash scripts/17_xray-split.sh --status | --off
 ```
 
 - конфиг: `/etc/vpn-manager/xray-split-<профиль>.json` (0600) генерирует vpnm
-  из share-link (Reality: flow=xtls-rprx-vision; XHTTP: path); секрет (UUID)
+  из share-link (Reality: flow=xtls-rprx-vision; XHTTP: path + `mode: auto`,
+  `xPaddingBytes: 100-1000`, `xmux`-ротация сокетов — GR-25); секрет (UUID)
   не попадает в argv/логи (tmp 0600 + sudo install);
   конфиг остаётся после `--off`/`vpn reset` — это «резерв одной командой»
   (каталог 0700 root, поэтому статус в мониторе читается через `sudo -n ls`);
 - защита от петли: `sockopt.mark=0xca6c` на outbound — nft возвращает этот
   mark, иначе домен сервера в зоне `com` уводил бы xray в собственный tun;
+- сокеты XHTTP: 2–4 параллельных с ротацией каждые 3–5 минут (`xmux`, GR-25) —
+  это штатное поведение, а не обрыв; `ss -tn dst <сервер>:8443` показывает
+  смену исходящих портов;
 - split-правила: `15_domain-split.sh --dev xray0 --mark 0x23000 --table 23000
   --nft-table xray_split`; домены/исключения — те же `domains.txt`/`exclude.txt`;
 - kill-switch: `ExecStopPost=vds-xsplit-cleanup` — остановка/падение юнита

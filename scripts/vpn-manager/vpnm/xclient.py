@@ -24,6 +24,27 @@ from .links import (
 # Интервал смены порта при хоппинге (Hysteria2: минимум 5s, дефолт 30s).
 HY2_HOP_INTERVAL = "30s"
 
+# GR-25 (SPEC-20261116-xhttp-xmux-padding §2.2): анти-ML профиль XHTTP.
+# `xPaddingBytes` размывает гистограмму размеров служебных фреймов (SPLT-анализ),
+# `xmux` превращает одну долгоживущую H2/TLS-«трубу» в серию коротких
+# перекрывающихся HTTPS-сессий (ротация сокетов 3–5 минут, 2–4 параллельно).
+# Значения совпадают с серверным инблэндом vds (`src/xray/config.py`).
+XHTTP_PADDING_BYTES = "100-1000"
+XHTTP_XMUX: Dict[str, Any] = {
+    # 2–4 параллельных суб-соединения — как Chrome к HTTP/2 origin.
+    "maxConcurrency": "2-4",
+    # Потолок числа соединений отключён (иначе конфликтует с maxConcurrency).
+    "maxConnections": 0,
+    # Один TCP/TLS-сокет живёт не более 32–64 туннельных сессий.
+    "cMaxReuseTimes": "32-64",
+    # Не более 64–128 HTTP-запросов внутри одного соединения.
+    "hMaxRequestTimes": "64-128",
+    # Жёсткий TTL сокета: 180–300 с (3–5 мин) с рандомным джиттером.
+    "hMaxReusableSecs": "180-300",
+    # Без пинг-метронома в простое (нет трафика — нет маяков).
+    "keepAlivePeriod": 0,
+}
+
 
 def _hysteria2_server(link: ProfileLink) -> str:
     """Адрес сервера: обычный `host:port` либо multi-port `host:443,20000-20500`.
@@ -44,7 +65,9 @@ def _hysteria2_server(link: ProfileLink) -> str:
 
 def _xray_outbound(link: ProfileLink, tag: str = "proxy") -> Dict[str, Any]:
     """VLESS outbound (reality / xhttp / ws) из share-link. Общий для
-    socks- и tun-конфигов; mux не добавляется (откачен, G4 2026-11-13)."""
+    socks- и tun-конфигов; outbound-level `mux` не добавляется (откачен,
+    G4 2026-11-13) — для XHTTP вместо него работает `xhttpSettings.xmux`
+    (GR-25): ротация сокетов живёт внутри транспорта, а не в мультиплексоре."""
     users: Dict[str, Any] = {
         "id": link.credential,
         "encryption": "none",
@@ -90,6 +113,12 @@ def _xray_outbound(link: ProfileLink, tag: str = "proxy") -> Dict[str, Any]:
             "xhttpSettings": {
                 "path": link.params.get("path", "/"),
                 "host": link.params.get("host", sni),
+                # Пустой параметр трактуем как отсутствующий: сервер (vds
+                # GR-25) работает с mode=auto и принимает stream-one/stream-up/
+                # packet-up; старые share-ссылки mode не несут вовсе.
+                "mode": link.params.get("mode") or "auto",
+                "xPaddingBytes": XHTTP_PADDING_BYTES,
+                "xmux": dict(XHTTP_XMUX),
             },
         }
     else:
@@ -123,9 +152,11 @@ def xray_config(link: ProfileLink, socks_port: int) -> str:
 
 
 # Xray-бинарь, который знает tun-инбаунд: появился в v26.1.23 (PR #5464/#5509);
-# пин vpnm 25.1.1 tun не знает — проверено `xray -test` на живом бинаре
-# (OQ-1 SPEC-20261114-xhttp-split). Split-юнит ставит СВОЙ пиннутый бинарь
-# (scripts/17_xray-split.sh), socks-профили остаются на 25.1.1.
+# пин vpnm 25.1.1 tun не знал — проверено `xray -test` на живом бинаре
+# (OQ-1 SPEC-20261114-xhttp-split). С GR-25 (SPEC-20261116-xhttp-xmux-padding)
+# пин vpnm (vpnm/bins.py: XRAY_VERSION) поднят до 26.1.23: socks- и tun-конфиги
+# идут на одной версии, оба знают `xPaddingBytes` и `xmux`. Константа остаётся
+# минимально требуемой для tun.
 XRAY_TUN_MIN_VERSION = "26.1.23"
 
 
@@ -136,10 +167,11 @@ def xray_tun_config(link: ProfileLink, tun_name: str = "xray0",
 
     Схема проверена на живом xray 26.1.23 (`xray -test` → Configuration OK):
     tun-инбаунд {name, mtu} + vless outbound из профиля + freedom-direct +
-    routing inboundTag=tun → proxy. mux нет; hysteria2 не поддерживается
-    (tun строится только от xray-протоколов). Файл НЕ пишет — конфиг в
-    /etc/vpn-manager кладёт vpnm.xsplit через sudo (config_dir используется
-    там же для имени файла).
+    routing inboundTag=tun → proxy. Outbound-level `mux` нет; для XHTTP
+    ротация сокетов приходит из `xhttpSettings.xmux` общего `_xray_outbound`
+    (GR-25). hysteria2 не поддерживается (tun строится только от
+    xray-протоколов). Файл НЕ пишет — конфиг в /etc/vpn-manager кладёт
+    vpnm.xsplit через sudo (config_dir используется там же для имени файла).
     """
     del config_dir  # путь файла выбирает xsplit; функция чистая
     if link.protocol not in (PROTOCOL_XRAY_REALITY, PROTOCOL_XRAY_XHTTP,

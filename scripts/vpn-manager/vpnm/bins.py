@@ -19,7 +19,11 @@ from typing import Callable, List, Tuple
 BIN_DIR = Path(os.environ.get(
     "VPN_MANAGER_BIN_DIR", str(Path.home() / ".local" / "lib" / "vpn")))
 
-XRAY_VERSION = "25.1.1"
+# GR-25 (SPEC-20261116-xhttp-xmux-padding §3): унификация клиентского бинаря с
+# сервером — 25.1.1 не знает ни `tun`-инбаунда, ни `xPaddingBytes`/`xmux`
+# в xhttpSettings. Один пин на socks-профили (`vpn up`) и tun-split
+# (`vpn start xhttp`); сервер asv1 тоже на 26.1.23 (ADR-010).
+XRAY_VERSION = "26.1.23"
 HYSTERIA_VERSION = "v2.13.0"
 
 XRAY_URL = (f"https://github.com/XTLS/Xray-core/releases/download/"
@@ -80,7 +84,11 @@ def _install_file(data: bytes, dest: Path) -> None:
 
 def install_xray(bin_dir: Path = BIN_DIR, fetch: Callable[[List[str]], bytes] = _fetch,
                  version_ok: Callable[[Path], bool] = xray_version_ok) -> str:
-    """Install xray + geoip.dat + geosite.dat. Returns 'installed'|'skipped'."""
+    """Install xray + geoip.dat + geosite.dat. Returns 'installed'|'skipped'.
+
+    Идемпотентность — по версии на диске: бинарь 25.1.1 не пройдёт проверку
+    на пин 26.1.23 (GR-25) и будет переустановлен.
+    """
     target = bin_dir / "xray"
     if target.exists() and version_ok(target):
         return "skipped"

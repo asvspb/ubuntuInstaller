@@ -4,8 +4,9 @@
 # (SPEC-20261114-xhttp-split WP-2)
 #
 # Механика та же, что у AWG (dnsmasq → nft set → fwmark → table → dev), но
-# dev = xray0 — tun-инбаунд xray-клиента (Xray v26.1.23+, свой пиннутый
-# бинарь: socks-профили vpnm остаются на 25.1.1 без регресса).
+# dev = xray0 — tun-инбаунд xray-клиента (Xray v26.1.23+; с GR-25 пин vpnm
+# унифицирован — socks- и tun-профили обе на 26.1.23, split-юнит ставит свой
+# бинарь из этого скрипта).
 #
 #   vpn-xray-split@<профиль>.service:
 #      ExecStart     = xray (26.x) run -c /etc/vpn-manager/xray-split-%i.json

@@ -38,7 +38,7 @@ ubuntuInstaller/
 │   ├── 14_awg-split.sh         # AmneziaWG split-tunnel
 │   ├── 15_domain-split.sh      # Доменный split: dnsmasq + nft + fwmark
 │   ├── 20_vds-migrate.sh       # Перенос state.json + secrets + сертификатов между серверами
-│   └── vpn-manager/            # 🔐 VPN-менеджер клиента (vpnm): Xray/Hysteria2, TUI, vpn guard (doc/vpn-manager.md)
+│   └── vpn-manager/            # 🔐 VPN-менеджер клиента (vpnm): Xray 26.1.23 / Hysteria2, TUI, vpn guard (doc/vpn-manager.md)
 ├── $USER/                      # Пользовательские dotfiles и конфигурации
 │   ├── .bashrc / .zshrc        # Расширенная shell-конфигурация с алиасами
 │   ├── .zt-functions.sh        # Функции управления ZeroTier (ztup, ztd, ztswitch)
@@ -54,6 +54,11 @@ ubuntuInstaller/
 > [my-first-vds](https://github.com/asvspb/my-first-vds) — здесь её копии нет
 > (vendored `vds/` удалён 2026-11-12; `8_vds-server.sh` и `11_vds-deploy.sh`
 > берут рабочий репозиторий, путь переопределяется через `VDS_REPO`).
+>
+> Клиентский Xray-core пин — **26.1.23** (`scripts/vpn-manager/vpnm/bins.py`,
+> константа `XRAY_VERSION`): одна версия для socks-профилей (`vpn up`) и
+> tun-split (`vpn start xhttp`). Это нужно для `xPaddingBytes`/`xmux` в
+> XHTTP-конфиге (GR-25) и для tun-инбаунда; Hysteria2 — `v2.13.0`.
 
 ---
 

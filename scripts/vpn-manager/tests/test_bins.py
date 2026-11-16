@@ -134,10 +134,83 @@ def test_install_rejects_bad_version_after_download(tmp_path):
                           version_ok=lambda p: False)
 
 
+def test_xray_pin_is_26_1_23():
+    """T-XM5 (SPEC-20261116-xhttp-xmux-padding §3): пин xray = 26.1.23.
+
+    До GR-25 socks-профили качали 25.1.1, который не знает ни tun-инбаунда,
+    ни `xPaddingBytes`/`xmux` в xhttpSettings.
+    """
+    assert bins.XRAY_VERSION == "26.1.23"
+    assert "/v26.1.23/" in bins.XRAY_URL
+    assert bins.XRAY_URL.endswith("/Xray-linux-64.zip")
+    assert bins.HYSTERIA_VERSION == "v2.13.0"
+
+
+def test_installed_old_xray_triggers_reinstall(tmp_path):
+    """Бинарь, сообщающий 25.1.1, не проходит version-логику пина 26.1.23.
+
+    Идемпотентность по версии: старый бинарь не даёт `skipped`, архив качается
+    и распаковывается; мок продолжает отдавать 25.1.1, поэтому установка честно
+    падает на пост-проверке (а не рапортует ложный успех).
+    """
+    target = tmp_path / "xray"
+    target.write_bytes(b"#!/bin/sh\n")
+    calls = []
+
+    def fake_run(cmd, capture_output, text, check, timeout):
+        calls.append(cmd)
+
+        class Proc:
+            stdout = "Xray 25.1.1 (Xray, Penetrates All.)"
+            stderr = ""
+        return Proc()
+
+    fetched = []
+
+    def fake_fetch(urls):
+        fetched.append(urls)
+        return make_zip({"xray": b"new-bin", "geoip.dat": b"",
+                         "geosite.dat": b""})
+
+    orig = bins.subprocess.run
+    bins.subprocess.run = fake_run  # type: ignore[assignment]
+    try:
+        assert bins.xray_version_ok(target) is False
+        with pytest.raises(bins.BinError, match="failed version check"):
+            bins.install_xray(tmp_path, fetch=fake_fetch)
+    finally:
+        bins.subprocess.run = orig
+    assert fetched, "old pin must trigger a download"
+    assert target.read_bytes() == b"new-bin"
+    assert calls, "version check must be executed"
+
+
+def test_installed_current_xray_is_skipped_without_download(tmp_path):
+    target = tmp_path / "xray"
+    target.write_bytes(b"#!/bin/sh\n")
+
+    def fake_run(cmd, capture_output, text, check, timeout):
+        class Proc:
+            stdout = "Xray 26.1.23 (Xray, Penetrates All.)"
+            stderr = ""
+        return Proc()
+
+    def no_download(urls):
+        raise AssertionError("must not download when the pin matches")
+
+    orig = bins.subprocess.run
+    bins.subprocess.run = fake_run  # type: ignore[assignment]
+    try:
+        assert bins.xray_version_ok(target) is True
+        assert bins.install_xray(tmp_path, fetch=no_download) == "skipped"
+    finally:
+        bins.subprocess.run = orig
+
+
 def test_version_check_output_parsing(tmp_path):
     fake = tmp_path / "xray"
     fake.write_text("#!/bin/sh\n")
-    outputs = {"text": "Xray 25.1.1 (Xray, Penetrates All.)"}
+    outputs = {"text": "Xray 26.1.23 (Xray, Penetrates All.)"}
 
     def fake_run(cmd, capture_output, text, check, timeout):
         class Proc:
@@ -150,6 +223,8 @@ def test_version_check_output_parsing(tmp_path):
     bins.subprocess.run = monkeypatch_run  # type: ignore[assignment]
     try:
         assert bins.xray_version_ok(fake) is True
+        outputs["text"] = "Xray 25.1.1 (Xray, Penetrates All.)"
+        assert bins.xray_version_ok(fake) is False
         outputs["text"] = "Xray 24.9.30"
         assert bins.xray_version_ok(fake) is False
         assert bins.hysteria_version_ok(fake) is False

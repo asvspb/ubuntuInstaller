@@ -8,8 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vpnm.links import ProfileLink  # noqa: E402
 from vpnm.xclient import (  # noqa: E402
+    XHTTP_PADDING_BYTES,
+    XHTTP_XMUX,
     hysteria2_config,
     xray_config,
+    xray_tun_config,
     generate,
 )
 
@@ -75,6 +78,86 @@ def test_xhttp_json_contains_path():
     assert ss["tlsSettings"]["serverName"] == "example-test.invalid"
     assert ss["xhttpSettings"]["path"] == "/xhttp/route"
     assert cfg["inbounds"][0]["port"] == 2084
+
+
+# --- GR-25 (SPEC-20261116-xhttp-xmux-padding, T-XM4) -------------------------
+# Ожидания спеки §2.2 записаны литералами: тест падает, если боевые значения
+# xmux/xPaddingBytes «поедут» мимо согласованного профиля.
+SPEC_XMUX = {
+    "maxConcurrency": "2-4",
+    "maxConnections": 0,
+    "cMaxReuseTimes": "32-64",
+    "hMaxRequestTimes": "64-128",
+    "hMaxReusableSecs": "180-300",
+    "keepAlivePeriod": 0,
+}
+
+
+def test_xhttp_constants_match_spec_profile():
+    assert XHTTP_PADDING_BYTES == "100-1000"
+    assert XHTTP_XMUX == SPEC_XMUX
+
+
+def test_xhttp_socks_config_has_padding_and_xmux():
+    """T-XM4, половина 1: socks-конфиг (`vpn up`) несёт padding и полный xmux."""
+    cfg = json.loads(xray_config(xhttp_link(), 2084))
+    xh = cfg["outbounds"][0]["streamSettings"]["xhttpSettings"]
+    assert xh["path"] == "/xhttp/route"
+    assert xh["host"] == "example-test.invalid"
+    assert xh["mode"] == "auto"
+    assert xh["xPaddingBytes"] == "100-1000"
+    assert xh["xmux"] == SPEC_XMUX
+    assert isinstance(xh["xmux"]["maxConnections"], int)
+    assert isinstance(xh["xmux"]["keepAlivePeriod"], int)
+
+
+def test_xhttp_tun_config_has_padding_and_xmux():
+    """T-XM4, половина 2: tun-конфиг (`vpn start xhttp`) несёт то же самое."""
+    cfg = json.loads(xray_tun_config(xhttp_link()))
+    proxy = cfg["outbounds"][0]
+    assert proxy["tag"] == "proxy"
+    ss = proxy["streamSettings"]
+    assert ss["network"] == "xhttp"
+    assert ss["sockopt"] == {"mark": 0xCA6C}
+    xh = ss["xhttpSettings"]
+    assert xh["path"] == "/xhttp/route"
+    assert xh["mode"] == "auto"
+    assert xh["xPaddingBytes"] == "100-1000"
+    assert xh["xmux"] == SPEC_XMUX
+    assert cfg["inbounds"][0]["protocol"] == "tun"
+
+
+def test_xhttp_xmux_block_is_not_shared_mutable():
+    """`xmux` в конфиге — копия константы: правка одного конфига не течёт в другие."""
+    first = json.loads(xray_config(xhttp_link(), 2084))
+    first["outbounds"][0]["streamSettings"]["xhttpSettings"]["xmux"]["maxConcurrency"] = "999"
+    second = json.loads(xray_config(xhttp_link(), 2085))
+    assert second["outbounds"][0]["streamSettings"]["xhttpSettings"]["xmux"] == SPEC_XMUX
+    assert XHTTP_XMUX == SPEC_XMUX
+
+
+def test_xhttp_mode_param_passthrough_and_empty_defaults_to_auto():
+    explicit = xhttp_link()
+    explicit.params["mode"] = "packet-up"
+    rendered = json.loads(xray_config(explicit, 2084))
+    assert rendered["outbounds"][0]["streamSettings"]["xhttpSettings"]["mode"] == "packet-up"
+
+    blank = xhttp_link()
+    blank.params["mode"] = ""
+    rendered = json.loads(xray_config(blank, 2084))
+    assert rendered["outbounds"][0]["streamSettings"]["xhttpSettings"]["mode"] == "auto"
+
+
+def test_reality_configs_have_no_xhttp_padding_or_xmux():
+    """Reality (socks и tun) не должен получить ни xPaddingBytes, ни xmux."""
+    for text in (xray_config(reality_link(), 2080),
+                 xray_tun_config(reality_link())):
+        assert "xPaddingBytes" not in text
+        assert "xmux" not in text
+        ss = json.loads(text)["outbounds"][0]["streamSettings"]
+        assert "xhttpSettings" not in ss
+        assert ss["network"] == "tcp"
+        assert ss["security"] == "reality"
 
 
 def test_hy2_yaml_contains_required_fields():
