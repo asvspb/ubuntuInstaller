@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.coverage/1",
+  "title": "guard.coverage/1",
+  "description": "Honest observability map: which sources work, which signals are blind. A missing source is 'denied'/'lost', never 'ok'.",
+  "type": "object",
+  "required": ["schema", "sources", "signals", "unparsed_ratio", "dropped"],
+  "properties": {
+    "schema": {"const": "guard.coverage/1"},
+    "sources": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"type": "string", "maxLength": 64},
+          "status": {
+            "enum": ["ok", "degraded", "denied", "off", "lost", "unavailable"]
+          },
+          "last_event_ts": {"type": ["string", "null"], "format": "date-time"},
+          "lag_ms": {"type": ["integer", "null"], "minimum": 0},
+          "note": {"type": ["string", "null"], "maxLength": 200}
+        }
+      }
+    },
+    "signals": {
+      "type": "object",
+      "description": "Per-protocol app-signal coverage: ok | blind | counters | missing.",
+      "additionalProperties": {
+        "enum": ["ok", "blind", "counters", "missing"]
+      }
+    },
+    "unparsed_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+    "dropped": {"type": "integer", "minimum": 0},
+    "blind": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"type": "string", "maxLength": 64},
+      "description": "Known unobservable classes, e.g. whitelist_mode_unobservable."
+    },
+    "disk_full": {"type": "boolean", "default": false},
+    "notes": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"type": "string", "maxLength": 200}
+    }
+  }
+}

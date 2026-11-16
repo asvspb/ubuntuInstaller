@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.event/1",
+  "title": "guard.event/1",
+  "description": "Normalized client event of vpn guard. Raw log text is never stored: only signals, counters, a template hash and an endpoint allowlist. Additive fields are allowed inside major /1; consumers MUST ignore unknown keys.",
+  "type": "object",
+  "required": [
+    "schema",
+    "ts",
+    "source",
+    "proto",
+    "signal",
+    "template",
+    "count"
+  ],
+  "properties": {
+    "schema": {"const": "guard.event/1"},
+    "ts": {"type": "string", "format": "date-time"},
+    "mono_us": {"type": "integer", "minimum": 0},
+    "source": {"$ref": "#/$defs/source"},
+    "unit": {"type": ["string", "null"]},
+    "profile": {"type": ["string", "null"]},
+    "proto": {"$ref": "#/$defs/proto"},
+    "level": {"$ref": "#/$defs/level"},
+    "signal": {"$ref": "#/$defs/signal"},
+    "template": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$",
+      "description": "sha1(normalized line)[:12]; the line itself is not kept."
+    },
+    "endpoint": {"$ref": "#/$defs/endpoint"},
+    "fields": {
+      "type": "object",
+      "description": "Allowlisted scalar fields of the signal (timeouts, counts). Never free text."
+    },
+    "count": {"type": "integer", "minimum": 1},
+    "clock_fallback": {
+      "type": "boolean",
+      "default": false,
+      "description": "true when mono_us was synthesized from wall clock."
+    },
+    "invocation_id": {
+      "type": ["string", "null"],
+      "description": "INVOCATION_ID of the unit instance; G-01 works inside one instance."
+    }
+  },
+  "$defs": {
+    "source": {
+      "enum": ["journal:user", "journal:system", "file", "state", "sysfs", "verdict"]
+    },
+    "proto": {
+      "enum": ["xray", "hysteria2", "amneziawg", "systemd", "dns", "zapret", "unknown"]
+    },
+    "level": {
+      "enum": ["debug", "info", "warn", "error"]
+    },
+    "signal": {
+      "description": "Frozen catalogue of SPEC §7.2 (vpnm.guard.events.SIGNALS).",
+      "enum": [
+        "unit_start",
+        "unit_stop",
+        "unit_exit",
+        "unit_restart_scheduled",
+        "job_failed",
+        "app_banner_ok",
+        "dial_start",
+        "tcp_connected",
+        "tls_handshake_ok",
+        "handshake_ok",
+        "conn_established",
+        "conn_closed",
+        "conn_reset",
+        "conn_eof",
+        "dial_timeout",
+        "conn_refused",
+        "address_in_use",
+        "network_unreachable",
+        "no_route",
+        "quic_handshake_ok",
+        "quic_handshake_fail",
+        "quic_idle_timeout",
+        "quic_no_recent_activity",
+        "auth_ok",
+        "auth_fail",
+        "dns_lookup_fail",
+        "dns_timeout",
+        "dns_servfail",
+        "dns_nxdomain",
+        "tls_cert_error",
+        "tls_alert",
+        "tls_stall",
+        "read_timeout",
+        "write_timeout",
+        "slow_consumer",
+        "awg_tx_growth",
+        "awg_rx_flat",
+        "awg_iface_gone",
+        "unparsed",
+        "source_lost",
+        "clock_skew",
+        "no_signal_window"
+      ]
+    },
+    "endpoint": {
+      "type": ["object", "null"],
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      },
+      "required": ["host", "port"]
+    }
+  }
+}

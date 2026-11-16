@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.config/1",
+  "title": "guard.config/1",
+  "description": "Guard configuration: thresholds and flags only. User-supplied regex is forbidden (determinism/security); an unknown key is an error, not a silent no-op.",
+  "type": "object",
+  "required": ["schema", "sources", "thresholds"],
+  "properties": {
+    "schema": {"const": "guard.config/1"},
+    "sources": {
+      "type": "object",
+      "required": ["user_journal"],
+      "properties": {
+        "user_journal": {"type": "boolean", "const": true},
+        "system_journal": {"type": "boolean", "default": false},
+        "files": {"type": "boolean", "default": true},
+        "awg_counters": {"type": "boolean", "default": true},
+        "netlink": {"type": "boolean", "default": false},
+        "server_verdict": {"type": "boolean", "default": true}
+      }
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "desktop": {"type": "boolean", "default": false},
+        "min_severity": {"enum": ["info", "low", "medium", "high"]}
+      }
+    },
+    "redact": {
+      "type": "object",
+      "properties": {
+        "hosts_in_export": {"type": "boolean", "default": true},
+        "snippets": {"type": "boolean", "default": false}
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0},
+      "properties": {
+        "handshake_timeout_s": {"type": "number", "minimum": 1},
+        "startup_banner_s": {"type": "number", "minimum": 1},
+        "reset_storm_count": {"type": "number", "minimum": 1},
+        "post_handshake_drop_count": {"type": "number", "minimum": 1},
+        "udp_blackhole_count": {"type": "number", "minimum": 1},
+        "awg_window_s": {"type": "number", "minimum": 30},
+        "awg_tx_min_bytes": {"type": "number", "minimum": 1},
+        "awg_rx_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "cooldown_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "retention_days": {"type": "integer", "minimum": 1, "maximum": 90, "default": 14}
+  }
+}

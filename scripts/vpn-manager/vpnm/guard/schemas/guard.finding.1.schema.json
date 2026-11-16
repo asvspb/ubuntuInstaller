@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.finding/1",
+  "title": "guard.finding/1",
+  "description": "One rule outcome with evidence. Contains counters, template/counter hashes and explicit FP checks — never log text, secrets, share links or third-party IPs.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "rule",
+    "severity",
+    "confidence",
+    "category",
+    "window",
+    "count",
+    "evidence",
+    "fp_checks",
+    "action",
+    "schema_hash"
+  ],
+  "properties": {
+    "schema": {"const": "guard.finding/1"},
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$",
+      "description": "sha256(rule|unit|endpoint|window_start)[:12]."
+    },
+    "rule": {"$ref": "#/$defs/rule"},
+    "severity": {"$ref": "#/$defs/severity"},
+    "confidence": {"$ref": "#/$defs/confidence"},
+    "category": {"$ref": "#/$defs/category"},
+    "stage_hint": {
+      "anyOf": [{"$ref": "#/$defs/stage"}, {"type": "null"}]
+    },
+    "unit": {"type": ["string", "null"]},
+    "profile": {"type": ["string", "null"]},
+    "endpoint": {"$ref": "#/$defs/endpoint"},
+    "window": {
+      "type": "object",
+      "required": ["first", "last"],
+      "properties": {
+        "first": {"type": "string", "format": "date-time"},
+        "last": {"type": "string", "format": "date-time"}
+      }
+    },
+    "count": {"type": "integer", "minimum": 1},
+    "evidence": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "fp_checks": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"type": "string", "maxLength": 120},
+      "description": "Explicit checks that were executed. A missing check means 'unknown', not 'passed'."
+    },
+    "hypothesis": {"type": "string", "maxLength": 240},
+    "alternatives": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {"type": "string", "maxLength": 120}
+    },
+    "action": {"type": "string", "maxLength": 240},
+    "server": {"$ref": "#/$defs/server"},
+    "cross_vantage": {"type": "boolean", "default": false},
+    "expected_lockdown": {"type": "boolean", "default": false},
+    "incident_id": {"type": ["string", "null"]},
+    "redaction_hits": {"type": "integer", "minimum": 0, "default": 0},
+    "schema_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "rule": {
+      "enum": [
+        "G-01", "G-02", "G-03", "G-04", "G-05", "G-06",
+        "G-07", "G-08", "G-09", "G-10", "G-11", "G-12"
+      ]
+    },
+    "severity": {"enum": ["info", "low", "medium", "high"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "category": {
+      "enum": [
+        "tunnel_down",
+        "censorship_suspect",
+        "config",
+        "dns",
+        "local_net",
+        "local_fault",
+        "endpoint_unreachable",
+        "degraded",
+        "observability"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "pre_handshake",
+        "tls_stall",
+        "post_handshake",
+        "data_phase",
+        "udp_response",
+        "l3_silence",
+        "local"
+      ]
+    },
+    "endpoint": {
+      "type": ["object", "null"],
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      },
+      "required": ["host", "port"]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["signal_count", "cycle", "ratio", "absence", "counter"]
+        },
+        "signal": {"type": "string"},
+        "value": {"type": ["integer", "number", "null"]},
+        "metric": {"type": "string"},
+        "median": {"type": ["number", "null"]},
+        "unit": {"type": "string", "maxLength": 16},
+        "snippet": {
+          "type": ["string", "null"],
+          "maxLength": 120,
+          "description": "Only with redact.snippets=true, after masking; never raw text."
+        }
+      }
+    },
+    "server": {
+      "type": ["object", "null"],
+      "properties": {
+        "threat_level": {"enum": ["quiet", "elevated", "high", null]},
+        "stage": {"type": ["string", "null"]},
+        "age_s": {"type": "integer", "minimum": 0},
+        "fresh": {"type": "boolean"},
+        "lockdown": {"type": "boolean"}
+      },
+      "required": ["threat_level", "fresh", "lockdown"]
+    }
+  }
+}

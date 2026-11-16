@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.incident/1",
+  "title": "guard.incident/1",
+  "description": "Grouping of findings within 180 s on one unit, with a root cause chosen by the fixed category priority (SPEC §9.2).",
+  "type": "object",
+  "required": ["schema", "id", "headline", "root_cause", "first", "last", "findings"],
+  "properties": {
+    "schema": {"const": "guard.incident/1"},
+    "id": {"type": "string", "pattern": "^i-[0-9a-f]{6}$"},
+    "headline": {"type": "string", "maxLength": 240},
+    "root_cause": {
+      "enum": [
+        "tunnel_down",
+        "censorship_suspect",
+        "config",
+        "dns",
+        "local_net",
+        "local_fault",
+        "endpoint_unreachable",
+        "degraded",
+        "observability"
+      ]
+    },
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "first": {"type": "string", "format": "date-time"},
+    "last": {"type": "string", "format": "date-time"},
+    "resolved_at": {"type": ["string", "null"], "format": "date-time"},
+    "unit": {"type": ["string", "null"]},
+    "profile": {"type": ["string", "null"]},
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"type": "string", "pattern": "^[0-9a-f]{12}$"},
+      "description": "Finding ids (guard.finding/1.id)."
+    },
+    "server": {
+      "type": ["object", "null"],
+      "properties": {
+        "threat_level": {"enum": ["quiet", "elevated", "high", null]},
+        "stage": {"type": ["string", "null"]},
+        "age_s": {"type": "integer", "minimum": 0},
+        "fresh": {"type": "boolean"},
+        "lockdown": {"type": "boolean"}
+      },
+      "required": ["threat_level", "fresh", "lockdown"]
+    }
+  }
+}

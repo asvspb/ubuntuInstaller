@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.server_verdict/1",
+  "title": "guard.server_verdict/1",
+  "description": "Client-side mirror of the server probe-watch verdict, written only by `vpn guard sync` from `vds gateway probe-watch watch --json` (read-only). Third-party IP lists (top/ru_top) are stripped.",
+  "type": "object",
+  "required": ["schema", "fetched_at", "source", "threat_level", "lockdown"],
+  "properties": {
+    "schema": {"const": "guard.server_verdict/1"},
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Client fetch time; freshness window is 65 min (hourly server tick)."
+    },
+    "host": {"type": ["string", "null"], "maxLength": 128},
+    "source": {"type": "string", "maxLength": 128},
+    "verdict": {"type": ["string", "null"], "maxLength": 64},
+    "threat_level": {"enum": ["quiet", "elevated", "high", null]},
+    "threat_reason": {"type": ["string", "null"], "maxLength": 240},
+    "window": {"type": ["string", "null"], "maxLength": 64},
+    "stage": {
+      "type": ["string", "null"],
+      "description": "Optional: arrives with survivability WP-S1; absence must not block."
+    },
+    "reasons": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"type": "string", "maxLength": 120}
+    },
+    "lockdown": {
+      "type": "object",
+      "required": ["active"],
+      "properties": {
+        "active": {"type": "boolean"},
+        "ttl_until": {"type": "string", "maxLength": 32}
+      }
+    },
+    "raw_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Hash of the raw server JSON — proves what was merged without storing it."
+    }
+  }
+}
