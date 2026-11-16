@@ -187,6 +187,44 @@ def test_job_failed_on_failed_result() -> None:
 # --- filtering and degradation --------------------------------------------------------
 
 
+def test_awg_quick_lifecycle_lines_and_infra_noise() -> None:
+    """awg-quick: add/delete → lifecycle; other shell lines → ignored_infra."""
+    parser = JournalParser()
+    started = parser.parse(entry(
+        "[#] ip link add laptop type amneziawg",
+        unit="awg-quick@laptop.service",
+    ))
+    stopped = parser.parse(entry(
+        "[#] ip link delete dev laptop",
+        unit="awg-quick@laptop.service",
+    ))
+    noise = parser.parse(entry(
+        "[#] ip -4 address add 10.9.0.2/32 dev laptop",
+        unit="awg-quick@laptop.service",
+    ))
+    assert started is not None and started["signal"] == "unit_start"
+    assert stopped is not None and stopped["signal"] == "unit_stop"
+    assert started["proto"] == "amneziawg"
+    assert noise is None
+    assert parser.stats.ignored_infra == 1
+    assert parser.stats.app_lines == 0
+    assert parser.stats.unparsed == 0
+
+
+def test_unparsed_ratio_ignores_infra_lines() -> None:
+    """AC-5: denominator — app lines only; awg-quick noise never dilutes it."""
+    parser = JournalParser()
+    parser.parse(entry("garbage app line"))
+    parser.parse(entry(
+        "[#] ip link set mtu 1420 up dev laptop",
+        unit="awg-quick@laptop.service",
+    ))
+    assert parser.stats.app_lines == 1
+    assert parser.stats.unparsed == 1
+    assert parser.stats.ignored_infra == 1
+    assert parser.stats.unparsed_ratio == pytest.approx(1.0)
+
+
 def test_foreign_unit_is_ignored() -> None:
     parser = JournalParser()
     assert parser.parse(entry(unit="gnome-shell.service", message="random noise")) is None

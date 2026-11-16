@@ -198,6 +198,25 @@ def test_planted_link_and_password_are_detected() -> None:
     assert any(":secret_marker" in h for h in hits)
 
 
+def test_bare_fixture_marker_is_detected_without_context() -> None:
+    """AC-13: ``FIXTURE_PW_*`` must block export even as a bare token."""
+    finding = clean_finding()
+    finding["hypothesis"] = "leftover FIXTURE_PW_alpha-1 in free text"
+    hits = redact.scan_secrets(finding)
+    assert any(h.startswith("$.hypothesis:fixture_marker") for h in hits)
+    code, _ = redact.export_gate([finding])
+    assert code == 2
+
+
+def test_fixture_marker_is_masked_on_write() -> None:
+    finding = clean_finding()
+    finding["action"] = "token FIXTURE_UUID_abc123"
+    clean, hits = redact.sanitize_finding(finding)
+    assert hits >= 1
+    assert "FIXTURE_" not in clean["action"]
+    assert redact.scan_secrets(clean) == []
+
+
 def test_masked_placeholders_do_not_trigger_scanner() -> None:
     finding = clean_finding()
     finding["hypothesis"] = (

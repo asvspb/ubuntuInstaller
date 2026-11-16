@@ -96,6 +96,12 @@ _URL_TOKEN_RE = re.compile(
     r"[^\s\"'&]+",
     re.IGNORECASE,
 )
+#: Canonical fixture prefix from AGENTS §6 / SPEC-20261116-vpn-guard AC-13.
+#: Must be caught even as a bare token without a ``password=`` context.
+_FIXTURE_RE = re.compile(
+    r"\bFIXTURE_(?:PW|UUID|SECRET)_[A-Za-z0-9_-]+",
+    re.IGNORECASE,
+)
 
 _VALUE = r"[^\s\"',;}\]]+"
 _CONTEXT_PATTERNS: Tuple[re.Pattern[str], ...] = (
@@ -134,6 +140,7 @@ _SCANNER_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
         r"(?i)\bauth\s*[=:]\s*[^\s<]+")),
     ("url_userinfo", _URL_USERINFO_RE),
     ("url_token", _URL_TOKEN_RE),
+    ("fixture_marker", _FIXTURE_RE),
     ("base64_blob", re.compile(r"\b[A-Za-z0-9+/]{32,}={0,2}\b")),
     ("hex_blob", re.compile(r"\b[0-9a-fA-F]{40,}\b")),
 )
@@ -157,6 +164,8 @@ def redact_text(text: str) -> Tuple[str, int]:
     out, n = _URL_TOKEN_RE.subn(URL_PLACEHOLDER, out)
     hits += n
     out, n = _UUID_RE.subn(UUID_PLACEHOLDER, out)
+    hits += n
+    out, n = _FIXTURE_RE.subn(REDACTED, out)
     hits += n
     out, n = _EMAIL_RE.subn(EMAIL_PLACEHOLDER, out)
     hits += n

@@ -49,6 +49,15 @@ AWG_UNIT_RES = ("vpn-awg-split@", "awg-quick@")
 GUARD_UNIT = "vpn-guard.service"
 GUARD_IDENTIFIER = "vpn-guard"
 
+#: App-log sources that make up the AC-5 denominator (``unparsed < 5%``).
+#: ``unknown`` is a vpnm unit whose proto hint was not supplied — it is still
+#: an app source, not infra.  dns/zapret/awg-quick lines never enter it.
+APP_PROTOS: Tuple[str, ...] = ("xray", "hysteria2", "unknown")
+
+#: awg-quick shell output: two lifecycle lines matter, the rest is infra noise.
+AWG_QUICK_ADD_RE = re.compile(r"^\s*\[#\]\s+ip link add\b")
+AWG_QUICK_DEL_RE = re.compile(r"^\s*\[#\]\s+ip link delete\b")
+
 #: journald truncates long messages itself (``LineMax``); the parser keeps its
 #: own bound so a single pathological line cannot stall the analyzer thread
 #: (§12 burst budget) and the template normalisation stays linear-ish.
@@ -253,13 +262,21 @@ class ParseStats:
     app_lines: int = 0
     parsed: int = 0
     unparsed: int = 0
+    #: Infra shell output (awg-quick, dns/zapret noise) — deliberately kept
+    #: out of ``unparsed``/``app_lines`` so AC-5 measures app logs only.
+    ignored_infra: int = 0
     #: structural failures (non-dict payload, broken types) — a bug shield,
     #: each one still produces no event and no exception.
     errors: int = 0
 
     @property
     def unparsed_ratio(self) -> float:
-        """unparsed / app lines over the collected window (0.0 when empty)."""
+        """unparsed / app lines over the window (0.0 when empty).
+
+        AC-5 defines the denominator as *app* lines (xray/hysteria2).  Infra
+        shell output (awg-quick, dnsmasq, zapret) is counted in
+        :attr:`ignored_infra` and never dilutes the ratio.
+        """
         return self.unparsed / self.app_lines if self.app_lines else 0.0
 
 
@@ -325,17 +342,43 @@ class JournalParser:
         if message is None or not message.strip():
             return None  # nothing recognizable and nothing to hash
 
+        if proto == "amneziawg" and unit.startswith("awg-quick@"):
+            # awg-quick emits shell output, not an app log.  Two lifecycle
+            # lines become events; everything else is infra noise (AC-5:
+            # it must not dilute the app-only unparsed denominator).
+            signal = None
+            if AWG_QUICK_ADD_RE.search(message):
+                signal = "unit_start"
+            elif AWG_QUICK_DEL_RE.search(message):
+                signal = "unit_stop"
+            if signal is None:
+                self.stats.ignored_infra += 1
+                return None
+            self.stats.parsed += 1
+            return _build_event(
+                source=source, unit=unit, proto=proto, level=level,
+                signal=signal, message=message, ts=ts, mono_us=mono_us,
+                clock_fallback=clock_fallback, invocation=invocation,
+                fields={}, endpoint=None,
+            )
+
         signal, fields, endpoint = self._app_signal(message)
         if signal is None:
-            # SPEC §7.2 step 3: unknown app text is counted, hashed and never
-            # a finding — except as the G-12 unparsed spike.
-            self.stats.unparsed += 1
+            if proto in APP_PROTOS:
+                # SPEC §7.2 step 3: unknown app text is counted, hashed and
+                # never a finding — except as the G-12 unparsed spike.
+                self.stats.unparsed += 1
+            else:
+                # Infra line (S2/dns/awg-split): visible as an event, but
+                # never in the AC-5 app denominator.
+                self.stats.ignored_infra += 1
             signal = "unparsed"
             fields = {}
             endpoint = None
         else:
             self.stats.parsed += 1
-        self.stats.app_lines += 1
+        if proto in APP_PROTOS:
+            self.stats.app_lines += 1
 
         return _build_event(
             source=source, unit=unit, proto=proto, level=level,
