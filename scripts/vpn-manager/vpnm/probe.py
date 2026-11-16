@@ -255,7 +255,29 @@ def run_probe(
 
     Returns a dict with ``rows`` (probe results), ``initial_active``,
     ``fastest`` (name or None) and ``switched_to`` (name or None).
+
+    Writes the FP-guard activity marker for the whole run (best-effort,
+    never affects the result or the output; SPEC-20261116-vpn-guard §8.4).
     """
+    from .guard.store import activity_scope
+    with activity_scope("probe"):
+        return _run_probe_impl(run=run, switch_best=switch_best,
+                               sleep_between=sleep_between, sleep_fn=sleep_fn,
+                               note=note, bulk=bulk, bulk_bytes=bulk_bytes,
+                               min_speed=min_speed,
+                               sample_pause=sample_pause)
+
+
+def _run_probe_impl(
+        run: Optional[RunCmd] = None,
+        switch_best: bool = True,
+        sleep_between: float = SLEEP_BETWEEN,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        note: Optional[Callable[[str], None]] = None,
+        bulk: bool = True,
+        bulk_bytes: int = BULK_BYTES,
+        min_speed: float = DEGRADED_MBPS,
+        sample_pause: float = SAMPLE_PAUSE) -> Dict[str, object]:
     rows: List[ProbeResult] = []
     initial_active = runners.get_active()
     for record in profiles.list_profiles():

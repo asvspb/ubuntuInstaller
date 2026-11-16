@@ -364,7 +364,25 @@ def run_speed(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
 
     include_cdn=False (по умолчанию) — CDN-профили не меряются (CF не отдаёт
     bulk); в отчёт попадает список пропущенных `skipped`.
+
+    Пишет FP-guard маркер активности на время замера (best-effort, вывод не
+    меняется; SPEC-20261116-vpn-guard §8.4).
     """
+    from .guard.store import activity_scope
+    with activity_scope("speed"):
+        return _run_speed_impl(socks_profiles, samples=samples, flows=flows,
+                               timeout=timeout, include_awg=include_awg,
+                               include_cdn=include_cdn, run=run,
+                               on_event=on_event, ttfb_samples=ttfb_samples)
+
+
+def _run_speed_impl(socks_profiles: List[str], samples: int = DEFAULT_SAMPLES,
+                    flows: int = DEFAULT_FLOWS,
+                    timeout: float = DEFAULT_TIMEOUT,
+                    include_awg: bool = True, include_cdn: bool = False,
+                    run: RunCmd = run_cmd,
+                    on_event: Optional[OnEvent] = None,
+                    ttfb_samples: int = DEFAULT_TTFB_SAMPLES) -> dict:
     emit: OnEvent = on_event or (lambda _e: None)
     channels = collect_channels(socks_profiles, include_awg, include_cdn)
     measured = {ch.name for ch in channels}

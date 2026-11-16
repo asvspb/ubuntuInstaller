@@ -17,6 +17,7 @@ from typing import Any, Optional, Tuple
 import typer
 
 from . import profiles
+from .guard.cli import guard_app
 from .links import LinkError, parse_link
 
 AUTOSTART_ACTIVE = "__active__"  # sentinel: --autostart without a value
@@ -199,6 +200,9 @@ app.add_typer(profile_app, name="profile")
 amneziawg_app = typer.Typer(help="Канал AmneziaWG: локальный split-туннель "
                                  "и клиенты на сервере")
 app.add_typer(amneziawg_app, name="amneziawg")
+# guard sub-app: light (typer + frozen contract); heavy modules load
+# lazily inside the commands (vpnm/guard/cli.py).
+app.add_typer(guard_app, name="guard")
 
 
 def _awg_resolve_host() -> str:

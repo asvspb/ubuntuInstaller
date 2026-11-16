@@ -590,7 +590,18 @@ def check_all(run: Optional[RunCmd] = None) -> List[Channel]:
 
 def run_monitor(run: Optional[RunCmd] = None,
                 peer_ip: Optional[str] = None) -> Dict[str, object]:
-    """Run all channel checks; return channels + healthy counters."""
+    """Run all channel checks; return channels + healthy counters.
+
+    Writes the FP-guard activity marker for the run (best-effort, output
+    unchanged; SPEC-20261116-vpn-guard §8.4).
+    """
+    from .guard.store import activity_scope
+    with activity_scope("monitor"):
+        return _run_monitor_impl(run=run, peer_ip=peer_ip)
+
+
+def _run_monitor_impl(run: Optional[RunCmd] = None,
+                      peer_ip: Optional[str] = None) -> Dict[str, object]:
     channels = [
         check_vpnm(run=run),
         check_cdn(run=run),
