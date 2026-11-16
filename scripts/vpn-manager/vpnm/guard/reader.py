@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -244,11 +245,24 @@ def realtime_iso(record: Dict[str, Any]) -> Optional[str]:
 # --- cursor persistence -------------------------------------------------------
 
 def _atomic_write_0600(path: Path, text: str) -> None:
+    """Атомарная запись 0600 с УНИКАЛЬНЫМ tmp-именем.
+
+    Два reader-потока (user/system) пишут cursor.json одновременно; общий
+    ``cursor.json.tmp`` приводил к гонке: один делает os.replace, второй
+    получает ENOENT → ложный ``cursor_write_failed`` (живой WP-G6).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class CursorStore:
@@ -321,6 +335,29 @@ def backoff_delays(count: int) -> List[float]:
         delays.append(min(value, BACKOFF_MAX_S))
         value *= 2
     return delays
+
+
+def _stderr_text(proc: Any) -> str:
+    """Текст stderr из Popen/FakeProc.
+
+    Реальный ``Popen(stderr=PIPE, text=True)`` отдаёт TextIOWrapper, а не str;
+    прежний ``stderr.lower()`` падал с AttributeError и убивал reader-поток
+    (живой дефект WP-G6).  Читаем файл-объект после завершения процесса.
+    """
+    stderr = getattr(proc, "stderr", None)
+    if stderr is None:
+        return ""
+    if isinstance(stderr, str):
+        return stderr
+    if isinstance(stderr, (bytes, bytearray)):
+        return bytes(stderr).decode("utf-8", errors="replace")
+    try:
+        data = stderr.read()
+    except (OSError, ValueError):
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return data if isinstance(data, str) else str(data)
 
 
 class _FakeablePopen:
@@ -469,7 +506,7 @@ class JournalReader:
             rc = proc.wait()
         self._persist_progress(force=True)
         if rc != 0 and not emitted_any:
-            self._classify_failure(getattr(proc, "stderr", "") or "")
+            self._classify_failure(_stderr_text(proc))
         elif rc != 0:
             self.status = "lost"
 

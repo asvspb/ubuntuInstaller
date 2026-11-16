@@ -6,10 +6,12 @@ that yields canned ``-o json`` lines (the same protocol journalctl uses).
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import stat
 import sys
+import threading
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
@@ -269,6 +271,39 @@ def test_system_journal_denied_without_awg_units_plain_note() -> None:
     assert list(rdr.records()) == []
     assert rdr.status == "denied"
     assert rdr.note is not None and "awg" not in rdr.note
+
+
+def test_file_like_stderr_is_read_not_crashed() -> None:
+    """Реальный Popen(stderr=PIPE, text=True) отдаёт TextIOWrapper, не str."""
+    denied = FakeProc([], rc=1)
+    denied.stderr = io.StringIO("journalctl: Permission denied")
+    rdr = reader.JournalReader(source="journal:system", user=False,
+                               units=("dnsmasq",),
+                               popen=FakePopen([denied]))
+    assert list(rdr.records()) == []
+    assert rdr.status == "denied"
+
+
+def test_cursor_store_concurrent_saves_do_not_race(tmp_path: Path) -> None:
+    """Два reader-потока пишут cursor.json: уникальный tmp, без ENOENT."""
+    store = reader.CursorStore(tmp_path / "cursor.json")
+    errors: list[BaseException] = []
+
+    def worker(i: int) -> None:
+        try:
+            for n in range(25):
+                store.save("journal:user", f"c{i}-{n}", recent=[f"r{i}-{n}"])
+        except BaseException as exc:  # noqa: BLE001 - тест фиксирует любую гонку
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == []
+    payload = json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))
+    assert isinstance(payload["journal:user"], str)
 
 
 def test_system_journal_lost_on_other_error() -> None:

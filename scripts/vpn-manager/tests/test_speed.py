@@ -190,7 +190,14 @@ class TestTtfbChannel:
             return ch
 
         monkeypatch.setattr(speed, "measure_channel", fake_measure)
-        report = speed.run_speed(["phone"], include_awg=False, ttfb_samples=5,
+        # Не зависим от реального profiles.json (asv1-профиль phone удалён):
+        # тест проверяет только проброс ttfb_samples.
+        monkeypatch.setattr(
+            speed, "collect_channels",
+            lambda *a, **k: [speed.Channel(name="fixture-profile", kind="socks",
+                                           protocol="xray-reality", socks_port=2080)],
+        )
+        report = speed.run_speed(["fixture-profile"], include_awg=False, ttfb_samples=5,
                                  run=lambda cmd: (0, "", ""))
         assert captured["ttfb_samples"] == 5
         assert report["params"]["ttfb_samples"] == 5
