@@ -629,6 +629,13 @@ censorship_suspect > endpoint_unreachable > degraded > observability`.
 - **G-12 не считает «потерей источника» штатные и локальные состояния:**
   остановленный AWG (`mode.json`/последний lifecycle `vpn_down`) и период
   suspend/resume (скачок realtime↔monotonic фиксируется как `clock_skew`).
+- **IPv6-ENETUNREACH — не падение сети.** На IPv4-only хосте (домашние сети
+  РФ, AWG/Xray-сплит без v6) `network is unreachable` на адресат из
+  `[2606:4700::…]` означает «нет v6-маршрута»: парсер такие строки не
+  эмитит как `network_unreachable`/`no_route` (учёт в `ignored_infra`,
+  AC-5 не раздувается), поэтому G-07 не спамит и не маскирует G-06.
+  Источник шума дополнительно убран: `cloudflared-proxy-dns` получает только
+  IPv4-литералы (`--upstream 1.1.1.1/1.0.0.1`, `--bootstrap 162.159.36.1/46.1`).
 
 ### Приватность и артефакты
 
