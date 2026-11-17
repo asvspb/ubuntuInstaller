@@ -398,6 +398,14 @@ class TestChannel:
         monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
             "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
             "detail": "mocked"})
+        # check_xraysplit остаётся настоящим, но его внешние пробы (systemctl/
+        # nft/ip/curl) изолированы: реальный system controller не трогаем.
+        monkeypatch.setattr(channels, "run_cmd", make_run())
+        monkeypatch.setattr(
+            xsplit, "status",
+            lambda run=None: {"profile": None, "configs": [],
+                              "iface_up": False, "nft_table": False,
+                              "ip_rule": False, "probe_ok": None})
         outcome = channels.run_monitor()
         names = [c["channel"] for c in outcome["channels"]]
         assert "xray-split" in names

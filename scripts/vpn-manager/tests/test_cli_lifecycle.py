@@ -40,6 +40,29 @@ def _add(name: str, link: str) -> None:
     profiles.add(parse_link(link), raw_link=link, name=name)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_system(monkeypatch):
+    """Не дёргать живой systemctl/ip/nft из CLI-тестов.
+
+    Инцидент 2026-11-18: ``vpn reset``/``vpn start`` в тестах реально вызывали
+    ``xsplit.stop()`` (``sudo -n bash 17_xray-split.sh --off``) и
+    ``amneziawg.instance_control`` (``sudo -n systemctl stop
+    vpn-awg-split@relay.service``) — то есть снесли живой туннель. Здесь
+    изолируем только read-only пробы и снос xsplit; мутирующие операции
+    (``tunnel_control``/``domain_split_apply``) тесты мокают сами, чтобы
+    проверять порядок вызовов.
+    """
+    from vpnm import amneziawg as awg
+    from vpnm import xsplit as xsplit_mod
+    monkeypatch.setattr(awg, "instance_active", lambda name, run=None: False)
+    monkeypatch.setattr(awg, "active_instances", lambda run=None: [])
+    monkeypatch.setattr(awg, "local_instance", lambda run=None: "laptop")
+    monkeypatch.setattr(xsplit_mod, "active_profile", lambda run=None: None)
+    monkeypatch.setattr(xsplit_mod, "stop",
+                        lambda run=None: (True, "xray-split демонтирован"))
+    yield
+
+
 # --- D-a ----------------------------------------------------------------------
 
 

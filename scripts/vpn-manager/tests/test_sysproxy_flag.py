@@ -49,6 +49,12 @@ def env(tmp_path, monkeypatch):
         return 0, "active\n" if "is-active" in cmd else "", ""
 
     monkeypatch.setattr(runners, "run_cmd", ok_run)
+    # `vpn down` спрашивает amneziawg.instance_active (свой run_cmd): без этой
+    # изоляции тест реально звал `systemctl is-active vpn-awg-split@relay` и,
+    # если релей жив, гасил его (инцидент 2026-11-18).
+    from vpnm import amneziawg as awg_mod
+    monkeypatch.setattr(awg_mod, "instance_active",
+                        lambda name, run=None: False)
     calls = {"on": [], "off": 0}
 
     def fake_on(port, run=None):

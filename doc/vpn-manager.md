@@ -1137,6 +1137,16 @@ tun-split (`vpn start xhttp`), — и **hysteria v2.13.0**. Идемпотент
 Тесты: `python3 -m pytest` из `scripts/vpn-manager/` (моки subprocess, без сети).
 Секреты (share-ссылки) не логируются; store и конфиги всегда 0600.
 
+> **Тесты не ходят в систему.** Autouse-предохранитель в `tests/conftest.py`
+> (`tests/sys_guard.py`) оборачивает `subprocess.run`/`Popen` и роняет тест
+> на любой системно-мутирующей команде: `systemctl`/`awg`/`nft`/`ip`/
+> `resolvectl`/`dnsmasq`/`cloudflared-proxy-dns`, запуске
+> `17_xray-split.sh`, а также `sudo rm|mv|cp|install|chmod|…`. Причина —
+> инцидент 2026-11-18: прогон `pytest` реально выполнил
+> `sudo bash 17_xray-split.sh --off` + `systemctl stop vpn-awg-split@relay`
+> и **снёс живой туннель**. Реальные system-команды в тестах запрещены;
+> осознанный «живой» прогон — только явным `VPNM_TEST_ALLOW_SYSTEM=1`.
+
 ### Синхронизация repo ↔ установленная команда
 После правок кода модуля переустанавливайте пакет: `pipx install --force scripts/vpn-manager` — установленный `vpn` не подхватывает изменения автоматически (не editable-инсталляция).
 

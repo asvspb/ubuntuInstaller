@@ -227,8 +227,17 @@ def test_cli_repair_bad_dns_arg(paths):
     assert result.exit_code == 2
 
 
-def test_cli_repair_dns_off(paths):
+def test_cli_repair_dns_off(paths, monkeypatch):
+    # Инцидент 2026-11-18: без изоляции CLI реально выполнял
+    # `sudo -n rm <dropin>` и `sudo -n systemctl restart systemd-resolved`
+    # (последнее снесло DNS/туннель). Тот же приём, что в dry-run тесте.
+    from vpnm import runners as runners_mod
+    run = FakeRun()
+    monkeypatch.setattr(runners_mod, "run_cmd", run)
+    monkeypatch.setattr(repair, "run_cmd", run)
     paths["dropin"].write_text("[Resolve]\nDNS=77.88.8.8\n")
     result = runner_cli.invoke(app, ["repair", "--dns", "off"])
     assert result.exit_code == 0, result.output
     assert "удалён" in result.output
+    # стаб получил вызовы (значит реальный run_cmd не вызывался)
+    assert any("rm" in c for c in run.recorded)

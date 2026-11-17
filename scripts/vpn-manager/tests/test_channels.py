@@ -383,6 +383,8 @@ def test_cli_monitor_json_structure(env, monkeypatch):
     add_profile("p1", 2080)
     runners.set_active("p1")
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: 0.1)
+    # hermetic: monitor must not shell out to systemctl/ip/nft on the dev box
+    monkeypatch.setattr(channels, "run_cmd", make_run())
     monkeypatch.setattr(channels, "check_dnsdoh", lambda **kw: {
         "channel": "dns-doh", "status": channels.STATUS_NOT_INSTALLED,
         "detail": "mocked"})
@@ -398,6 +400,8 @@ def test_cli_monitor_json_structure(env, monkeypatch):
 
 def test_cli_monitor_exit_1(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
+    # hermetic: no real systemctl/ip/nft from the monitor CLI
+    monkeypatch.setattr(channels, "run_cmd", make_run())
     from vpnm import zapret as zapret_mod  # noqa: E402
     monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
     # hermetic: this dev box has a live awg0-split iface and a live DoH unit
@@ -423,6 +427,8 @@ def test_cli_monitor_exit_1(env, monkeypatch):
 
 def test_cli_monitor_json_is_pure_json(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: None)
+    # hermetic: no real systemctl/ip/nft from the monitor CLI
+    monkeypatch.setattr(channels, "run_cmd", make_run())
     from vpnm import zapret as zapret_mod  # noqa: E402
     monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
     # hermetic: this dev box has a live awg0-split iface and a live DoH unit
@@ -479,6 +485,8 @@ def test_cli_monitor_zt_ping_flag(env, monkeypatch):
 
 def test_tui_menu_has_channels_action(env, monkeypatch):
     monkeypatch.setattr(channels.probe, "measure_latency", lambda *a, **k: 0.1)
+    # hermetic: the TUI monitor must not shell out to the live system
+    monkeypatch.setattr(channels, "run_cmd", make_run())
     from vpnm import tui
     assert "Мониторинг каналов" in tui.MENU_ACTIONS
     assert callable(tui.MENU_ACTIONS["Мониторинг каналов"])

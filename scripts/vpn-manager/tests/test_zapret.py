@@ -229,8 +229,13 @@ def test_tui_menu_has_zapret_action():
     assert callable(tui.MENU_ACTIONS["Канал 0 (zapret)"])
 
 
-def test_tui_action_zapret_status(env_none=None):
+def test_tui_action_zapret_status(monkeypatch):
     from vpnm import tui
+    from vpnm import zapret as zapret_mod
+
+    # изоляция: на dev-боксе nfqws установлен, и status_lines реально звал
+    # `systemctl is-active zapret` (guard 2026-11-18). Фиксируем «нет бинаря».
+    monkeypatch.setattr(zapret_mod, "find_binary", lambda: None)
 
     class FakeQ:
         class errors:
@@ -246,6 +251,6 @@ def test_tui_action_zapret_status(env_none=None):
     saved = tui.questionary
     tui.questionary = FakeQ()
     try:
-        tui.action_zapret()  # real status path: nfqws absent -> one warn line
+        tui.action_zapret()  # nfqws absent -> one warn line, no systemctl
     finally:
         tui.questionary = saved
