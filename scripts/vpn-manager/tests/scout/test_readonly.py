@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from vpnm import amneziawg as awg_mod  # noqa: E402
 from vpnm import profiles, runners  # noqa: E402
+from vpnm import settings as settings_mod  # noqa: E402
 from vpnm.guard import verdict as verdict_mod  # noqa: E402
 from vpnm.scout import cli as scout_cli  # noqa: E402
 from vpnm.scout.models import (  # noqa: E402
@@ -46,7 +47,7 @@ HY2_LINK = (
 @pytest.fixture()
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Path]:
     paths = {name: tmp_path / name
-             for name in ("config", "data", "guard", "awg")}
+             for name in ("config", "data", "guard", "awg", "awg-system")}
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("VPN_MANAGER_CONFIG_DIR", str(paths["config"]))
@@ -57,9 +58,14 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Path]:
                        str(paths["config"] / "state.json"))
     monkeypatch.setattr(profiles, "STORE_PATH",
                         paths["config"] / "profiles.json")
+    monkeypatch.setattr(settings_mod, "SETTINGS_PATH",
+                        paths["config"] / "settings.json")
     monkeypatch.setattr(runners, "STATE_PATH",
                         paths["config"] / "state.json")
     monkeypatch.setattr(awg_mod, "LOCAL_CONF_DIR", paths["awg"])
+    # The real /etc/amnezia/amneziawg must never leak into a test run.
+    monkeypatch.setattr(awg_mod, "AWG_SYSTEM_CONF_DIR",
+                        str(paths["awg-system"]))
 
     (paths["config"] / "profiles.json").write_text(json.dumps({
         "profiles": [

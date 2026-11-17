@@ -719,7 +719,8 @@ Exit-коды: `0` — рекомендация есть; `1` — нет ни о
 | Источник | Как читается | Кандидат |
 |----------|--------------|----------|
 | `~/.config/vpn-manager/profiles.json` | `vpnm.profiles.list_profiles` + `vpnm.links.parse_link` | `xray-reality` / `xray-xhttp` / `xray-cdn` (ws) / `hy2` |
-| `~/.awg/*.conf` | строка `Endpoint = host:port` (ключи/PSK не читаются) | `awg` (direct), `relay.conf` — `awg` (relay) |
+| `~/.awg/*.conf` | строка `Endpoint = host:port` (ключи/PSK не читаются) | `awg`; маршрут — по endpoint: relay-хост → `relay`, иначе `direct` |
+| `/etc/amnezia/amneziawg/*.conf` | тот же `Endpoint`, только если каталог читается без root (иначе молча пропускается) | `awg` (как правило `direct`, профиль `system:<имя>`) |
 | `~/.config/vpn-manager/state.json` | `runners.get_active()` | активный профиль (для проверки «текущий канал заблокирован») |
 
 Уточнения, которые важно знать:
@@ -729,12 +730,24 @@ Exit-коды: `0` — рекомендация есть; `1` — нет ни о
 - **Hy2 port-hop** — параметр `mport` ссылки (`20000-20500`), он же попадает в
   multi-port адрес сервера в сгенерированном конфиге; в отчёте это
   `port_hop_range`;
-- **маршрут**: `relay` только для профиля с именем `relay-reality` (socks-фолбэк
-  `vpn start relay --proto reality`) и для `~/.awg/relay.conf`; остальные
+- **маршрут AWG определяется по Endpoint, а не по имени файла**:
+  `android.conf`, `windows.conf`, `relay.conf` — это один и тот же физический
+  туннель, если их endpoint совпадает. Relay-хосты берутся из факта: `Endpoint`
+  из `relay.conf` (если есть) + канонический `relay.asvpersonal.ru` + опциональный
+  `relay_endpoint`/`relay_host` в `settings.json`; сравнение хоста без учёта
+  регистра и точки в конце. Конфиг с relay-endpoint получает `route=relay`,
+  любой другой — `direct`. Поэтому клиентские копии на один endpoint
+  схлопываются в **один** кандидат `relay/awg` (при совпадении имени
+  предпочитается инстанс `relay`), а не дают фальшивую пару
+  «direct/awg primary + relay/awg fallback»;
+- **маршрут store-профилей** по-прежнему по имени: `relay` только для профиля
+  `relay-reality` (socks-фолбэк `vpn start relay --proto reality`), остальные
   профили — `direct`. Секреты (uuid/пароль/obfs/приватный ключ) в Candidate и в
   отчёт не попадают;
-- дубли (одинаковые route/proto/host:port из разных профилей) схлопываются,
-  факт дубля печатается в `context.notes`.
+- дубли между store-профилями и AWG-конфигами (одинаковый route/proto/host:port)
+  схлопываются, факт дубля печатается в `context.notes`; копии одного и того же
+  AWG-туннеля (`android`/`windows`/`relay` на один endpoint) схлопываются молча —
+  это не дубль маршрута, а одно устройство под разными именами.
 
 Вердикт сервера учитывается только **свежий (≤10 мин)** — строже, чем 65 мин у
 самого guard: решение о маршруте по часовому `lockdown` было бы догадкой. Если

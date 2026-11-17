@@ -6,7 +6,11 @@ hardcoded here):
 1. **candidates** — built from the real profile store
    (:func:`vpnm.profiles.list_profiles`, share links parsed by
    :func:`vpnm.links.parse_link`) and from the real AmneziaWG client configs
-   in ``~/.awg/*.conf`` (``Endpoint = host:port``);
+   in ``~/.awg/*.conf`` plus the system ones under
+   ``/etc/amnezia/amneziawg`` when readable (``Endpoint = host:port``).  The
+   AWG **route is decided by the endpoint host** (relay host → ``relay``),
+   never by the file name; client copies of one endpoint collapse into a
+   single candidate;
 2. **server verdict** — ``server-verdict.json`` via
    :func:`vpnm.guard.verdict.load_verdict`; the scout trusts it only while it
    is **fresh (≤ 10 min)**, tighter than the guard's own 65-min window: a
@@ -21,6 +25,7 @@ the store is never mutated.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +61,13 @@ RECENT_RULES: Tuple[str, ...] = ("G-01", "G-03", "G-04")
 #: Relay profile (``vpn start relay --proto reality``) and relay AWG instance.
 RELAY_PROFILE = "relay-reality"
 RELAY_INSTANCE = "relay"
+
+#: Canonical host of the RU-relay.  The actual relay host is discovered from
+#: ``relay.conf`` / settings; this constant only guarantees that the relay leg
+#: stays recognised if ``relay.conf`` is missing.
+CANONICAL_RELAY_HOST = "relay.asvpersonal.ru"
+#: settings.json keys that may carry a relay endpoint (best effort).
+RELAY_SETTINGS_KEYS: Tuple[str, ...] = ("relay_endpoint", "relay_host")
 
 #: Share-link protocol → scout protocol.
 LINK_PROTO_MAP: Mapping[str, str] = {
@@ -152,9 +164,151 @@ def _parse_endpoint(text: str) -> Optional[Tuple[str, int]]:
     return None
 
 
-def awg_candidates(conf_dir: Optional[Path] = None) -> Tuple[List[Candidate],
-                                                             List[str]]:
-    """AWG client configs → candidates (``relay.conf`` is the relay leg).
+def _normalize_host(host: str) -> str:
+    """Case- and trailing-dot-insensitive form used for host comparison."""
+    return host.strip().rstrip(".").lower()
+
+
+def _host_from_value(value: str) -> Optional[str]:
+    """``host[:port]`` or a bare host → host (a port is dropped)."""
+    text = value.strip()
+    if not text:
+        return None
+    parsed = _parse_endpoint(f"Endpoint = {text}")
+    if parsed is not None:
+        return parsed[0]
+    # A bare host (incl. an IPv6 literal without a port) has no port to drop.
+    if ":" not in text or text.count(":") > 1:
+        return text
+    return None
+
+
+def relay_hosts(conf_dir: Optional[Path] = None) -> List[str]:
+    """Hosts that mark an AWG client config as **the relay leg**.
+
+    Discovered from facts, not from the file name: the ``Endpoint`` of
+    ``relay.conf`` (when present) plus :data:`CANONICAL_RELAY_HOST`, plus an
+    optional relay endpoint in ``settings.json``.  Returns normalised hosts.
+    """
+    hosts: List[str] = [CANONICAL_RELAY_HOST]
+    if conf_dir is not None:
+        relay_conf = Path(conf_dir) / f"{RELAY_INSTANCE}.conf"
+        try:
+            text = relay_conf.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if text:
+            endpoint = _parse_endpoint(text)
+            if endpoint is not None:
+                hosts.append(endpoint[0])
+    hosts.extend(_settings_relay_hosts())
+    unique: List[str] = []
+    for host in hosts:
+        normalized = _normalize_host(host)
+        if normalized and normalized not in unique:
+            unique.append(normalized)
+    return unique
+
+
+def _settings_relay_hosts(path: Optional[Path] = None) -> List[str]:
+    """Relay hosts recorded in ``settings.json`` (best effort, never fatal)."""
+    from .. import settings as settings_mod
+    target = settings_mod.SETTINGS_PATH if path is None else path
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(raw, dict):
+        return []
+    hosts: List[str] = []
+    for key in RELAY_SETTINGS_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str):
+            host = _host_from_value(value)
+            if host:
+                hosts.append(host)
+    return hosts
+
+
+def _route_for_host(host: str, relay_hosts_: Sequence[str]) -> str:
+    """``relay`` when the endpoint points at the relay, ``direct`` otherwise."""
+    normalized = _normalize_host(host)
+    return (ROUTE_RELAY
+            if normalized in {_normalize_host(item) for item in relay_hosts_}
+            else ROUTE_DIRECT)
+
+
+def _read_awg_configs(directory: Path, *, quiet: bool = False
+                      ) -> Tuple[List[Tuple[str, str, int]], List[str]]:
+    """``(stem, host, port)`` of every readable ``*.conf`` plus notes.
+
+    ``quiet`` is for the system directory: a root-only ``/etc`` path is
+    simply skipped (no sudo here), not reported as a warning.
+    """
+    notes: List[str] = []
+    try:
+        paths = sorted(Path(directory).glob("*.conf"))
+    except OSError as exc:
+        return [], ([] if quiet else [f"awg: {directory}: {exc}"])
+    entries: List[Tuple[str, str, int]] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            if not quiet:
+                notes.append(f"awg '{path.stem}': {exc}")
+            continue
+        endpoint = _parse_endpoint(text)
+        if endpoint is None:
+            if not quiet:
+                notes.append(f"awg '{path.stem}': нет Endpoint в конфиге")
+            continue
+        entries.append((path.stem, endpoint[0], endpoint[1]))
+    return entries, notes
+
+
+def _collapse_awg_entries(
+        entries: Sequence[Tuple[str, str, int, bool]]
+) -> List[Tuple[str, str, int, bool]]:
+    """One entry per ``host:port``; the ``relay`` instance wins on a tie.
+
+    ``android.conf`` / ``windows.conf`` / ``relay.conf`` are the same physical
+    tunnel under different client names — they must not become separate
+    candidates (that was the «direct/awg» + «relay/awg» double report).  The
+    fourth tuple item marks a user config (``~/.awg``) vs a system one.
+    """
+    chosen: Dict[Tuple[str, int], str] = {}
+    for stem, host, port, _is_user in entries:
+        key = (_normalize_host(host), port)
+        current = chosen.get(key)
+        if current is None or (stem == RELAY_INSTANCE
+                               and current != RELAY_INSTANCE):
+            chosen[key] = stem
+    collapsed: List[Tuple[str, str, int, bool]] = []
+    seen: set = set()
+    for entry in entries:
+        stem, host, port, _is_user = entry
+        key = (_normalize_host(host), port)
+        if key in seen or chosen[key] != stem:
+            continue
+        seen.add(key)
+        collapsed.append(entry)
+    return collapsed
+
+
+def awg_candidates(conf_dir: Optional[Path] = None,
+                   system_conf_dir: Optional[Path] = None
+                   ) -> Tuple[List[Candidate], List[str]]:
+    """AWG client configs → candidates, **routed by endpoint**.
+
+    The route is decided by the ``Endpoint`` host (relay host → ``relay``,
+    anything else → ``direct``), not by the file name: a config called
+    ``android.conf`` that points at the relay is a relay leg.  Relay hosts
+    come from :func:`relay_hosts`.
+
+    Configs under the system directory (``/etc/amnezia/amneziawg``) are added
+    as candidates (profile ``system:<name>``) when readable without root; a
+    root-only path is skipped silently.
 
     Only the ``Endpoint`` is read: the config also holds the private key and
     preshared key, which never leave this function.
@@ -162,28 +316,26 @@ def awg_candidates(conf_dir: Optional[Path] = None) -> Tuple[List[Candidate],
     if conf_dir is None:
         from .. import amneziawg as awg_mod
         conf_dir = awg_mod.LOCAL_CONF_DIR
+    if system_conf_dir is None:
+        from .. import amneziawg as awg_mod
+        system_conf_dir = awg_mod.AWG_SYSTEM_CONF_DIR
+    conf_dir = Path(conf_dir)
+    relays = relay_hosts(conf_dir)
+
+    user_entries, notes = _read_awg_configs(conf_dir)
+    system_entries, _ = _read_awg_configs(Path(system_conf_dir), quiet=True)
+    # The user's copies win a name tie; the system copy is the last resort.
+    tagged = [(stem, host, port, True)
+              for stem, host, port in user_entries]
+    tagged += [(stem, host, port, False)
+               for stem, host, port in system_entries]
+
     candidates: List[Candidate] = []
-    notes: List[str] = []
-    try:
-        paths = sorted(Path(conf_dir).glob("*.conf"))
-    except OSError as exc:
-        return [], [f"awg: {conf_dir}: {exc}"]
-    for path in paths:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            notes.append(f"awg '{path.stem}': {exc}")
-            continue
-        endpoint = _parse_endpoint(text)
-        if endpoint is None:
-            notes.append(f"awg '{path.stem}': нет Endpoint в конфиге")
-            continue
-        host, port = endpoint
-        route = ROUTE_RELAY if path.stem == RELAY_INSTANCE else ROUTE_DIRECT
+    for stem, host, port, is_user in _collapse_awg_entries(tagged):
         candidates.append(Candidate(
-            route=route,
+            route=_route_for_host(host, relays),
             proto=PROTO_AWG,
-            profile=path.stem,
+            profile=stem if is_user else f"system:{stem}",
             host=host,
             port=port,
             sni=None,
