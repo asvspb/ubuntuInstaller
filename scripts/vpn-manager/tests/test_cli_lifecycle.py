@@ -305,3 +305,43 @@ def test_cli_start_unknown_scheme():
     result = CliRunner().invoke(cli_app, ["start", "wireguard"])
     assert result.exit_code == 2
     assert "expected 'awg'" in result.output
+
+
+def test_status_awg_scheme_does_not_report_missing_profile(env, monkeypatch):
+    """AWG-схема ≠ socks-профиль: status не должен говорить «no active profile».
+
+    Живой случай 2026-11-17: при рабочем `vpn-awg-split@laptop` вывод был
+    `DIRECT (awg laptop)` + `no active profile` — читалось как «схема не
+    работает».
+    """
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: ["laptop"])
+    monkeypatch.setattr(awg, "instance_active", lambda name: False)
+    monkeypatch.setattr(mode_mod, "read_mode",
+                        lambda: {"mode": "direct", "iface": "laptop"})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exception is None
+    assert result.exit_code == 0
+    assert "DIRECT (awg laptop)" in result.output
+    assert "awg-схема активна" in result.output
+    assert "vpn-awg-split@laptop.service" in result.output
+    assert "no active profile" not in result.output
+
+
+def test_status_without_any_scheme_still_says_no_profile(env, monkeypatch):
+    """Ни туннелей, ни профиля — прежняя строка остаётся (не маскируем пустоту)."""
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: [])
+    monkeypatch.setattr(awg, "instance_active", lambda name: False)
+    monkeypatch.setattr(mode_mod, "read_mode", lambda: {})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exception is None
+    assert "no active profile" in result.output

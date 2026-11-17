@@ -1221,7 +1221,7 @@ def switch(name: str) -> None:
 
 @app.command()
 def status() -> None:
-    """Режим (DIRECT/RELAY), активный профиль, unit, внешний IP через socks."""
+    """Режим (DIRECT/RELAY), awg-схема или активный профиль, unit, внешний IP."""
     from . import amneziawg as awg
     from . import mode as mode_mod
     from . import runners
@@ -1241,10 +1241,17 @@ def status() -> None:
     typer.echo(f"mode:           {line}")
     active = runners.get_active()
     if not active:
-        typer.echo("no active profile")
+        # «no active profile» относится к socks-профилям (xray/sing-box), а не
+        # к AWG: иначе выглядит так, будто схема не работает (2026-11-17).
         if relay_live:
             typer.echo("релей активен: весь трафик через awg-туннель до "
                        "релея (socks-профиль не нужен)")
+        elif instances:
+            typer.echo(f"awg-схема активна: доменный split через "
+                       f"{awg.AWG_UNIT_PREFIX}{instances[0]}.service "
+                       "(socks-профиль не нужен)")
+        else:
+            typer.echo("no active profile")
         return
     try:
         record = profiles.get(active)
