@@ -293,11 +293,38 @@ class FindingsStore:
 
     # --- read ----------------------------------------------------------------
 
+    @staticmethod
+    def _record_ts(payload: Mapping[str, Any]) -> str:
+        """Chronology key of one finding: ``window.last``, else ``ts``.
+
+        ISO-8601 UTC strings of the same shape compare lexicographically, so a
+        plain string sort is enough; a record without any timestamp sorts
+        first (oldest) instead of inventing a position.
+        """
+        window = payload.get("window")
+        if isinstance(window, Mapping):
+            last = window.get("last")
+            if isinstance(last, str) and last:
+                return last
+        ts = payload.get("ts")
+        return ts if isinstance(ts, str) else ""
+
     def read(self, since_ts: Optional[float] = None,
              limit: int = 50) -> List[dict]:
-        """Findings newest-first, filtered by ``window.last``/``ts``."""
-        found: List[dict] = []
-        for segment in self.segment_paths():
+        """Findings newest-first, filtered by ``window.last``/``ts``.
+
+        Ordering is **strict chronology**, not file order: a batch is written
+        in whatever order the rules fired (WP-G6 field checkpoint:
+        ``vpn guard findings`` showed a triple G-09 out of time order) and
+        rotation spreads one window across segments.  Ties on the timestamp
+        keep insertion order (the later-appended record comes first), which
+        makes the output stable and reproducible.
+        """
+        found: List[Tuple[str, int, dict]] = []
+        # Insertion sequence in append order: oldest segment first, then lines
+        # as written — this is the tie-breaker of the sort below.
+        sequence = 0
+        for segment in reversed(self.segment_paths()):
             try:
                 lines = segment.read_text(encoding="utf-8").splitlines()
             except OSError:
@@ -307,6 +334,7 @@ class FindingsStore:
                     payload = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
+                sequence += 1
                 if since_ts is not None:
                     ts = None
                     window = payload.get("window")
@@ -321,9 +349,11 @@ class FindingsStore:
                             stamp = None
                         if stamp is not None and stamp < since_ts:
                             continue
-                found.append(payload)
-        found.reverse()  # newest first
-        return found[:limit] if limit > 0 else found
+                found.append((self._record_ts(payload), sequence, payload))
+        found.sort(key=lambda item: (item[0], item[1]))  # oldest first, stable
+        ordered = [item[2] for item in found]
+        ordered.reverse()  # newest first; ties → later insertion first
+        return ordered[:limit] if limit > 0 else ordered
 
 
 # --- activity markers (FP-guard, SPEC §8.4) -----------------------------------

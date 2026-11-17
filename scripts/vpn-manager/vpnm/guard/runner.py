@@ -36,7 +36,8 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence
+from typing import (Any, Callable, Deque, Dict, List, Mapping, Optional,
+                    Sequence, Tuple)
 
 from . import counters, parse, reader, store, verdict
 from . import notify as notify_mod
@@ -49,6 +50,9 @@ DEFAULT_POLL_S = 1.0
 DEFAULT_QUEUE_MAX = 10_000
 #: How many queued records are folded before the loop checks its timers.
 DRAIN_BATCH = 512
+#: Realtime↔monotonic divergence that means the machine slept (or the wall
+#: clock jumped): smaller drifts are ordinary NTP steering.
+SUSPEND_DRIFT_S = 5.0
 
 
 @dataclass
@@ -135,6 +139,8 @@ class GuardRunner:
         self.notes: List[str] = []
         self._app_proto: Dict[str, str] = {}
         self._last_dropped = 0
+        #: (monotonic, realtime) of the previous loop pass (suspend detector).
+        self._last_clock: Optional[Tuple[float, float]] = None
         self._server: Optional[ServerContext] = None
         self._initial_server()
         if restore_speed_ring:
@@ -316,6 +322,10 @@ class GuardRunner:
     def poll_sysfs(self) -> None:
         if self.poller is None:
             return
+        # "AWG is off" and "AWG source is lost" are different states: mode.json
+        # (written by `vpn start`/`vpn down`) tells G-12 whether sysfs is even
+        # expected (WP-G6 field checkpoint).
+        self.engine.note_awg_expected(self._awg_expected())
         sample = self.poller.poll(self.now_s())
         if sample is None:
             gone = bool(self.poller.iface_gone)
@@ -331,6 +341,28 @@ class GuardRunner:
         if window is not None:
             # D-07: exactly one note per closed 120 s window.
             self._handle(self.engine.note_awg_window(window))
+
+    def _awg_expected(self) -> Optional[bool]:
+        """Is AmneziaWG expected up?  ``None`` = let the engine decide.
+
+        ``mode.json`` is the user's own declaration (``vpn start``/``vpn down``):
+        ``proto=amneziawg`` → expected, ``mode=none`` or a non-AWG proto →
+        not expected.  A missing/foreign file yields ``None`` and the engine
+        falls back to the last AWG lifecycle event.
+        """
+        try:
+            from ..mode import read_mode
+            payload = read_mode()
+        except (ImportError, OSError):
+            return None
+        proto = payload.get("proto")
+        if proto == "amneziawg":
+            return True
+        if payload.get("mode") == "none":
+            return False
+        if isinstance(proto, str) and proto:
+            return False  # direct/relay поверх xray/hysteria
+        return None
 
     # -- ticker --------------------------------------------------------------
 
@@ -361,6 +393,25 @@ class GuardRunner:
 
     # -- daemon -------------------------------------------------------------
 
+    def _note_clock_drift(self) -> None:
+        """Suspend/resume detector: realtime and monotonic must move together.
+
+        A sleep makes realtime advance while monotonic pauses; NTP steering
+        stays inside :data:`SUSPEND_DRIFT_S`.  The jump is reported as a
+        ``clock_skew`` (G-12) and as ``note_suspend`` so tunnel rules and
+        ``source_lost`` are not blamed on the guard (SPEC §8.4).
+        """
+        mono = time.monotonic()
+        wall = self.wall_now().timestamp()
+        previous = self._last_clock
+        self._last_clock = (mono, wall)
+        if previous is None:
+            return
+        drift = (wall - previous[1]) - (mono - previous[0])
+        if abs(drift) >= SUSPEND_DRIFT_S:
+            self.engine.note_suspend(self.now_us())
+            self.engine.note_clock_skew(drift, self.now_us())
+
     def run_forever(self,
                     stop: Optional[threading.Event] = None) -> RunCounters:
         """Streaming loop; returns when *stop* is set (SIGTERM/SIGINT)."""
@@ -379,6 +430,7 @@ class GuardRunner:
         next_state = time.monotonic()
         while not stop_event.is_set():
             moment = time.monotonic()
+            self._note_clock_drift()
             wait = max(0.02, min(next_poll, next_tick) - moment)
             drained = 0
             try:

@@ -50,6 +50,33 @@ from .window import (FIRE, MONO_US_PER_S, PENDING, Clock, Coalescer,
 VPNM_PREFIX = "vpnm-"
 #: AmneziaWG template units: no app logs at all, own observability (§4.3).
 AWG_PREFIXES: Tuple[str, ...] = ("vpn-awg-split@", "awg-quick@")
+#: Client **VPN transports** — only their silence means "the endpoint is
+#: unreachable".  Everything else the guard reads is context: resolver units
+#: (``cloudflared-proxy-dns``, ``dnsmasq``, ``systemd-resolved``), ``zapret``
+#: and system/network units report resets and timeouts of the *local* layer,
+#: so endpoint rules must not attribute them to a remote host (WP-G6 field
+#: checkpoint: ``conn_reset`` from cloudflared produced a false G-09).
+VPN_TRANSPORT_PREFIXES: Tuple[str, ...] = (
+    VPNM_PREFIX,          # vpnm-<profile>.service — xray/hysteria профили
+    "vpn-xray-split@",    # tun xray0 (Reality/XHTTP)
+    "vpn-awg-split@",     # AWG split: direct/relay
+    "awg-quick@",
+    "vpn-relay-",         # релейный контур на клиенте (vpn-relay-*.service)
+)
+
+
+def is_vpn_transport_unit(name: Optional[str]) -> bool:
+    """``True`` only for a client VPN transport unit (not DNS/zapret/system).
+
+    Endpoint-scoped rules (G-09) use this so an auxiliary service that resets
+    its own upstream sockets never looks like a censored VPN endpoint.  The
+    predicate is **prefix-based and explicit**: an unknown unit is *not* a
+    transport, which fails closed (no finding) instead of inventing one.
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    return name.startswith(VPN_TRANSPORT_PREFIXES)
+
 
 HANDBOOK_SIGNALS: frozenset = frozenset(events.HANDBOOK_SIGNALS)
 BOOT_SIGNALS: frozenset = frozenset(events.BOOT_SIGNALS)
@@ -417,6 +444,13 @@ class _Verdict:
     finding: Optional[Callable[[], Dict[str, Any]]] = None
     status: Optional[str] = None
     reason: Optional[str] = None
+    #: Endpoint the finding actually reports (``rule|unit|endpoint|cause``
+    #: dedup key of §8.1).  Rules that pick a host:port out of the window must
+    #: set it, otherwise the key falls back to the *triggering event's*
+    #: endpoint and one physical fault emits several findings in one batch
+    #: (WP-G6 field checkpoint: triple G-09 with distinct upstream IPs and the
+    #: same timestamp).
+    dedup_endpoint: Optional[str] = None
 
 
 # --- finding builder ------------------------------------------------------------
@@ -513,6 +547,17 @@ class RuleEngine:
         self._awg_windows: Dict[str, Deque[Dict[str, Any]]] = {}
         self._awg_gone: Dict[str, bool] = {}
         self._awg_units: Dict[str, str] = {}
+        #: Does the user expect AmneziaWG to be up?  ``None`` = no opinion from
+        #: the caller; the engine then falls back to the last AWG lifecycle
+        #: (``vpn_down`` means "not expected").  G-12 must not call a stopped
+        #: AWG a "lost source" (WP-G6 field checkpoint: 61 s of ``sysfs:awg``
+        #: loss while AWG was off).
+        self._awg_expected: Optional[bool] = None
+        #: The batch currently being folded contains G-07 evidence.  Endpoint
+        #: rules consult the window anyway; G-06 also honours this so a drain
+        #: carrying "no route" and DNS errors in one go never reports DNS as
+        #: the cause (G-07 priority, §8.4).
+        self._batch_local_net = False
         # G-11: ring of observed (finished) speed reports, no URLs/secrets.
         self._speed_reports: Deque[Dict[str, Any]] = deque(maxlen=8)
         # G-12: the guard's own health, filled by the run loop.
@@ -563,6 +608,25 @@ class RuleEngine:
                               self._key("G-07", None, None,
                                         "default_route_removed"), stamp)
         return [outcome] if outcome is not None else []
+
+    def note_awg_expected(self, expected: Optional[bool]) -> None:
+        """AWG is supposed to be up (`mode.json`/контекст), or it is not.
+
+        Only ``sysfs:awg`` uses this: a stopped AWG has no interface on
+        purpose, so a missing sysfs source is "off", not a degraded guard.
+        """
+        self._awg_expected = None if expected is None else bool(expected)
+
+    def _awg_expected_active(self) -> bool:
+        """Whether the AWG source is meaningful right now (G-12 FP-guard)."""
+        if self._awg_expected is not None:
+            return self._awg_expected
+        if self._awg_units:
+            return True  # a unit_start was seen and no stop yet
+        for unit, cause in self._causes.items():
+            if unit.startswith(AWG_PREFIXES):
+                return cause != "vpn_down"
+        return False  # no evidence AWG was ever up → its sysfs is not "lost"
 
     def note_awg_gone(self, iface: Optional[str] = None,
                       now_us: Optional[int] = None) -> List[RuleOutcome]:
@@ -768,9 +832,17 @@ class RuleEngine:
         (a 20 ms burst of ``conn_reset`` is one G-02 event with ``count=3``).
         """
         survivors = [item for item in ready if not self.coalescer.fold(item)]
+        # Batch-scoped G-07 priority: the whole drain is known before the first
+        # rule sees it, so DNS cannot be blamed when the same batch also
+        # carried "no route" (order inside the drain is not meaningful).
+        self._batch_local_net = any(
+            item.get("signal") in LOCAL_NET_SIGNALS for item in survivors)
         outcomes: List[RuleOutcome] = []
-        for item in survivors:
-            outcomes.extend(self.feed(item))
+        try:
+            for item in survivors:
+                outcomes.extend(self.feed(item))
+        finally:
+            self._batch_local_net = False
         return self._sorted(outcomes)
 
     def feed(self, event: Mapping[str, Any]) -> List[RuleOutcome]:
@@ -798,8 +870,14 @@ class RuleEngine:
             verdict = self._evaluate(rule, unit, now_us)
             if verdict is None:
                 continue
+            # The dedup key must name what the finding *reports*, not the event
+            # that happened to trigger the evaluation: a rule that selects a
+            # host:port out of the window sets ``dedup_endpoint`` (§8.1).
+            key_endpoint = (verdict.dedup_endpoint
+                            if verdict.dedup_endpoint is not None
+                            else endpoint)
             outcome = self._apply(rule, unit, verdict,
-                                  self._key(rule, unit, endpoint,
+                                  self._key(rule, unit, key_endpoint,
                                             self._cause_key(rule)), now_us)
             if outcome is not None:
                 results.append(outcome)
@@ -819,8 +897,11 @@ class RuleEngine:
                 if verdict is None:
                     continue
                 endpoint = self._last_endpoint.get((rule, unit))
+                key_endpoint = (verdict.dedup_endpoint
+                                if verdict.dedup_endpoint is not None
+                                else endpoint)
                 outcome = self._apply(rule, unit, verdict,
-                                      self._key(rule, unit, endpoint,
+                                      self._key(rule, unit, key_endpoint,
                                                 self._cause_key(rule)), stamp)
                 if outcome is not None:
                     results.append(outcome)
@@ -1401,7 +1482,7 @@ class RuleEngine:
                 server=self._server_block(),
                 expected_lockdown=lockdown, cross_vantage=cross)
 
-        return _Verdict(True, finding=build)
+        return _Verdict(True, finding=build, dedup_endpoint=endpoint)
 
     # -- G-03 post_handshake_drop -------------------------------------------
 
@@ -1543,7 +1624,7 @@ class RuleEngine:
                 server=self._server_block(),
                 expected_lockdown=lockdown, cross_vantage=cross)
 
-        return _Verdict(True, finding=build)
+        return _Verdict(True, finding=build, dedup_endpoint=endpoint)
 
     # -- G-04 udp_response_blackhole (Hysteria2 branch) ----------------------
 
@@ -1782,9 +1863,14 @@ class RuleEngine:
         names.discard(None)
         if count < t.dns_fail_count and len(names) < 2:
             return _Verdict(False)
-        if self._fp(unit, now_us, LOCAL_NET_SIGNALS, t.dns_fail_window_s):
-            # no route/unreachable: G-07 owns the cause, DNS is a symptom
-            return _Verdict(False, status="suppressed", reason="local_network")
+        if self._fp(unit, now_us, LOCAL_NET_SIGNALS, t.dns_fail_window_s) \
+                or self._batch_local_net:
+            # G-07 owns the cause, DNS is a symptom: one fault must not produce
+            # two high findings (SPEC §8.4 suppression matrix).  Two sources of
+            # proof: the window already holds "no route", or the drain being
+            # folded carries it alongside the DNS errors (``_batch_local_net``).
+            return _Verdict(False, status="suppressed",
+                            reason="local_net_down")
         kinds = {event.get("signal") for event in failures}
         confidence = "high" if (len(names) >= 2 or len(kinds) >= 2) \
             else self._boost("medium")
@@ -1798,6 +1884,12 @@ class RuleEngine:
              "value": count},
             {"kind": "ratio", "metric": "distinct_names", "value": len(names)},
         ]
+        # Honest wording: without a resolvable endpoint/template the parser
+        # gives no name at all — that is "not extracted", not "0 names broken".
+        if names:
+            names_check = f"{len(names)} distinct names affected"
+        else:
+            names_check = "distinct names not extracted (no endpoint/template)"
         profile = self._profile(unit)
 
         def build() -> Dict[str, Any]:
@@ -1808,7 +1900,7 @@ class RuleEngine:
                 fp_checks=[
                     "no network_unreachable/no_route in 60s",
                     "resolver errors within 60s",
-                    f"{len(names)} distinct names affected",
+                    names_check,
                 ],
                 severity="high", confidence=confidence,
                 category="dns", stage_hint="local",
@@ -1967,13 +2059,18 @@ class RuleEngine:
                               "MITM/подмена сертификата"],
                 server=self._server_block(), cross_vantage=False)
 
-        return _Verdict(True, finding=build)
+        return _Verdict(True, finding=build, dedup_endpoint=endpoint)
 
     # -- G-09 endpoint_silent -------------------------------------------------
 
     def _g09(self, unit: Optional[str], now_us: int) -> Optional[_Verdict]:
         if not isinstance(unit, str):
             return None
+        if not is_vpn_transport_unit(unit):
+            # DNS/zapret/system units also reset their upstream sockets, but
+            # their silence is local context, never a silent VPN endpoint
+            # (G-09 is transport-only; §8.2).
+            return _Verdict(False)
         window = self.windows.peek(unit)
         if window is None:
             return None
@@ -2105,7 +2202,7 @@ class RuleEngine:
                 server=self._server_block(),
                 expected_lockdown=lockdown, cross_vantage=cross)
 
-        return _Verdict(True, finding=build)
+        return _Verdict(True, finding=build, dedup_endpoint=endpoint)
 
     # -- G-10 unit_flap -------------------------------------------------------
 
@@ -2301,9 +2398,23 @@ class RuleEngine:
         breaches: List[Tuple[str, str, float]] = []
         stamps: List[str] = []
         lost_us = t.self_lost_s * MONO_US_PER_S
+        # A lost source is only a guard degradation when the source was
+        # expected: a suspend/resume makes monotonic-based age jump (the
+        # realtime↔monotonic skew is its own G-12 breach) and a stopped AWG has
+        # no sysfs interface by design (WP-G6 field checkpoint).
+        suspend_recent = self._suspend_blocked(now_us)
+        skew_recent = bool(
+            self._skew_us is not None
+            and self._clock_skew_s > t.self_skew_s
+            and 0 <= int(now_us) - self._skew_us
+            <= t.self_drop_window_s * MONO_US_PER_S)
         for name, record in sorted(self._source_status.items()):
             if record.get("status") != "lost":
                 continue  # §8.2: only `lost` > 60 s is a G-12 breach
+            if suspend_recent or skew_recent:
+                continue  # resume/skew artifact, not a lost source
+            if name == "sysfs:awg" and not self._awg_expected_active():
+                continue  # AWG is off on purpose: no interface is normal
             age_s = (int(now_us) - int(record["since_us"])) / MONO_US_PER_S
             if age_s * MONO_US_PER_S >= lost_us:
                 breaches.append(("source_lost", name, round(age_s, 1)))
