@@ -221,12 +221,37 @@ class AwgCounterPoller:
         if self._candidates:
             return self._poll_candidates(stamp)
         if self._iface is None:
-            return None
+            # No channel yet (e.g. the guard started before `vpn start`): a
+            # sysfs rescan here is what lets a later AWG unit be picked up
+            # without a journal hint (system_journal is opt-in/off).
+            self.resolve_iface()
+            if self._iface is None:
+                return None
+            if self._candidates:
+                return self._poll_candidates(stamp)
         if not iface_exists(self._iface, self.sysfs_root):
-            self.iface_gone = True
-            self.consecutive_tx_no_rx = 0
+            # The tracked interface disappeared. This is the *normal* shape of
+            # a direct↔relay switch (`@laptop` → `@relay`): re-discover once
+            # instead of staying `iface_gone` until restart — a stale poller
+            # silently disabled the G-04 branch after every switch (W1 relay).
+            previous = self._iface
             self._window_base = None
-            return None
+            self.consecutive_tx_no_rx = 0
+            self.resolve_iface()
+            if (self._iface is None or self._iface == previous
+                    or not iface_exists(self._iface, self.sysfs_root)):
+                self.iface_gone = True
+                return None
+            self.iface_gone = False
+            sample = read_sample(self._iface, self.sysfs_root, stamp)
+            if sample is None:
+                return None
+            self._samples.append(sample)
+            closed = self._maybe_close_window(sample)
+            if closed is not None:
+                self._evaluated_window = closed
+                self._last_window = closed
+            return sample
         self.iface_gone = False
         sample = read_sample(self._iface, self.sysfs_root, stamp)
         if sample is None:

@@ -612,7 +612,14 @@ def build_runner(*, config_root: Optional[Path] = None,
         watcher = reader.open_file_watcher()
     if poller is None and enabled.get("awg_counters", True):
         poller = counters.AwgCounterPoller()
-        poller.resolve_iface()
+        hint = None
+        try:
+            from ..mode import read_mode
+            stored_iface = read_mode().get("iface")
+            hint = stored_iface if isinstance(stored_iface, str) else None
+        except Exception:  # noqa: BLE001 - optional deployment artefact
+            hint = None
+        poller.resolve_iface(hint)
     if sink is None:
         sink = store.FindingsStore(
             path=sink_path, config_root=config_root)

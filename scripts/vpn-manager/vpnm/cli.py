@@ -62,6 +62,7 @@ app = VpnTyper(
 Активация VPN — из вкладки терминала:
 
   vpn start                  # AWG + доменный split (по умолчанию)
+  vpn start relay            # RU-релей: весь трафик → релей → exit (ADR-007)
   vpn start reality          # Reality-split: tun xray0, TCP 443
   vpn start xhttp            # XHTTP-split: tun xray0, TCP 8443
   vpn up <profile>           # один socks-профиль (Reality/XHTTP/Hy2/CDN)
@@ -100,8 +101,8 @@ app = VpnTyper(
 Типовая сессия — выключить VPN:
 
   vpn amneziawg tunnel off   # опустить AWG-туннель
-  vpn down                   # остановить socks-клиент (системный прокси
-                             # выключится автоматически)
+  vpn down                   # остановить профили и релей (системный прокси
+                             # выключится; vpn-guard.service остаётся жив)
   vpn doh off                # DNS мгновенно вернётся к провайдеру (DHCP),
                              # сервисы остановятся; статус: vpn doh status
   vpn reset                  # выключить ВСЁ: туннели, split, sysproxy, DoH —
@@ -675,15 +676,50 @@ def up(name: str) -> None:
 
 @app.command()
 def down(name: Optional[str] = typer.Argument(None)) -> None:
-    """Остановить активный socks-клиент (системный прокси выключится сам)."""
+    """Остановить туннели: профиль(и) и/или релей (guard не трогается).
+
+    ``vpn down`` без аргумента — штатное выключение VPN: гасит все активные
+    socks-профили и релейный AWG-инстанс (``vpn-awg-split@relay``), если он
+    жив; ``vpn-guard.service`` продолжает работать.  ``vpn down <profile>`` —
+    только указанный профиль. Идемпотентно.
+    """
+    from . import amneziawg as awg
+    from . import mode as mode_mod
     from . import runners
-    try:
-        stopped = runners.down(name)
-    except (profiles.ProfileStoreError, runners.RunnerError) as exc:
-        _err(str(exc))
-        raise typer.Exit(code=2)
-    _ok(f"stopped '{stopped}'")
-    _sync_sysproxy_off_after()
+    if name:
+        try:
+            stopped = runners.down(name)
+        except (profiles.ProfileStoreError, runners.RunnerError) as exc:
+            _err(str(exc))
+            raise typer.Exit(code=2)
+        _ok(f"stopped '{stopped}'")
+        _sync_sysproxy_off_after()
+        return
+
+    failures: list = []
+    stopped, profile_failures = runners.stop_all_profiles()
+    if stopped:
+        _sync_sysproxy_off_after()
+        _ok("остановлены профили: " + ", ".join(stopped))
+    failures.extend(profile_failures)
+
+    relay_was_active = awg.instance_active(RELAY_INSTANCE)
+    ok_r, msg_r = _stop_relay_contour()
+    if relay_was_active:
+        (_ok if ok_r else _err)(msg_r)
+        if not ok_r:
+            failures.append(msg_r)
+
+    if failures:
+        _err("не всё остановлено: " + "; ".join(failures))
+        raise typer.Exit(code=1)
+    if not stopped and not relay_was_active:
+        mode_mod.clear_mode()
+        typer.echo("нет активных туннелей (профили и релей не запущены)")
+        return
+    mode_mod.clear_mode()
+    _ok("VPN выключен: профили и релей остановлены; vpn guard продолжает "
+        "работать")
 
 
 @app.command("scheme")
@@ -728,22 +764,38 @@ def scheme_cmd(preset: str = typer.Argument(
     preset = preset.strip().lower()
 
     if preset == "awg":
+        ok_r, msg_r = _stop_relay_contour()
+        (_ok if ok_r else _err)(msg_r)
+        if not ok_r:
+            raise typer.Exit(code=1)
         ok, msg = _apply_awg_scheme()
         if not ok:
             _err(f"{msg} — повторите 'vpn scheme awg'")
             raise typer.Exit(code=1)
+        from . import amneziawg as awg
+        instance = awg.local_instance() or awg.DEFAULT_LOCAL_INSTANCE
+        _write_direct_mode("amneziawg", iface=instance,
+                           unit=f"{awg.AWG_UNIT_PREFIX}{instance}.service")
         _ok("схема awg активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую")
         return
 
     if preset in ("xray-split", "xhttp-split"):
         from . import xsplit as xsplit_mod
+        ok_r, msg_r = _stop_relay_contour()
+        (_ok if ok_r else _err)(msg_r)
+        if not ok_r:
+            raise typer.Exit(code=1)
         # xhttp-split — исторический алиас: при автовыборе ограничиваем XHTTP.
         default_protocol = ("xray-xhttp" if preset == "xhttp-split" else None)
         ok, msg = xsplit_mod.apply(profile, default_protocol=default_protocol)
         (_ok if ok else _err)(f"{preset}: {msg}")
         if not ok:
             raise typer.Exit(code=1)
+        chosen = xsplit_mod.active_profile(xsplit_mod.run_cmd)
+        _write_direct_mode("xray", iface=xsplit_mod.DEV,
+                           unit=(xsplit_mod.unit_name(chosen)
+                                 if chosen else None))
         _ok("схема xray-split активна: split-зоны через tun xray0 → "
             "Reality/XHTTP, GLM/RU напрямую (kill-switch: остановка юнита "
             "снимает правила); откат — 'vpn scheme awg'/'vpn scheme reset'")
@@ -835,28 +887,231 @@ def _browser_restart_hint() -> None:
                "TCP/QUIC-соединения идут мимо split")
 
 
+# --- режимы direct ↔ relay (взаимоисключение) --------------------------------
+#
+# В v1 одновременно живёт ровно один контур: прямой (AWG-split @laptop или
+# tun xray0) либо релейный (vpn-awg-split@relay, весь трафик в RU-релей →
+# exit-нода). Иначе маршруты split-юнитов и relay-туннеля передерутся.
+# vpn-guard.service — системный юнит с другим префиксом; ни один helper его
+# не трогает (в user-списке фильтруется clean-proxy, guard-префикса там нет).
+
+RELAY_INSTANCE = "relay"
+RELAY_REALITY_PROFILE = "relay-reality"
+
+
+def _relay_conf() -> Path:
+    from . import amneziawg as awg
+    return awg.LOCAL_CONF_DIR / f"{RELAY_INSTANCE}.conf"
+
+
+def _endpoint_host(conf: Path) -> Optional[str]:
+    """``Endpoint = host:port`` → host (для подписи режима; не секрет)."""
+    try:
+        text = conf.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().lower() == "endpoint" and value.strip():
+            return value.strip().rsplit(":", 1)[0]
+    return None
+
+
+def _stop_relay_contour() -> Tuple[bool, str]:
+    """Погасить релейный контур (если активен); режим → none.
+
+    Возвращает ``(ok, message)``; при ошибке systemctl ok=False — вызывающий
+    решает, фатально это или нет (перед прямым стартом — фатально, иначе два
+    контура окажутся живыми).
+    """
+    from . import amneziawg as awg
+    from . import mode as mode_mod
+    if not awg.instance_active(RELAY_INSTANCE):
+        return True, "релей не активен"
+    ok, msg = awg.instance_control(RELAY_INSTANCE, "off")
+    if ok:
+        mode_mod.clear_mode()
+    return ok, msg
+
+
+def _teardown_direct() -> list:
+    """Снять прямой контур перед релеем; вернуть список сбоев.
+
+    Останавливает все socks-профили (sysproxy off), xray-split и все
+    AWG-инстансы (включая @laptop), доменный split — до остановки туннеля.
+    """
+    from . import amneziawg as awg
+    from . import runners
+    from . import xsplit as xsplit_mod
+    failures: list = []
+
+    stopped, profile_failures = runners.stop_all_profiles()
+    if stopped:
+        _sync_sysproxy_off_after()
+        _ok("остановлены профили: " + ", ".join(stopped))
+    failures.extend(profile_failures)
+
+    active_x = xsplit_mod.active_profile(runners.run_cmd)
+    if active_x:
+        ok_x, msg_x = xsplit_mod.stop()
+        (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
+        if not ok_x:
+            failures.append(f"xsplit: {msg_x}")
+
+    if awg.active_instances():
+        direct_instances = [name for name in awg.active_instances()
+                            if name != RELAY_INSTANCE]
+        if direct_instances:
+            ok_s, msg_s = awg.domain_split_apply("off")
+            (_ok if ok_s else _warn)(f"split: {msg_s}")
+            stopped_awg, awg_failures = awg.stop_instances(keep=RELAY_INSTANCE)
+            if stopped_awg:
+                _ok("остановлены AWG-инстансы: " + ", ".join(stopped_awg))
+            failures.extend(awg_failures)
+    return failures
+
+
+def _write_direct_mode(proto: str, iface: Optional[str] = None,
+                       unit: Optional[str] = None,
+                       target: Optional[str] = None) -> None:
+    from . import mode as mode_mod
+    if not mode_mod.write_mode("direct", proto=proto, iface=iface,
+                               unit=unit, target=target):
+        _warn("не удалось записать mode.json (vpn guard покажет режим по "
+              "sysfs)")
+
+
+def _start_relay(proto: Optional[str]) -> None:
+    """``vpn start relay``: AWG-контур через релей (или socks-фолбэк)."""
+    from . import amneziawg as awg
+    from . import mode as mode_mod
+    from . import profiles
+    from . import runners
+
+    want = (proto or "awg").strip().lower()
+    if want in ("amneziawg", "awg"):
+        conf = _relay_conf()
+        if not conf.is_file():
+            _err(f"нет {conf} — получите конфиг на релее "
+                 f"('vds relay add-client laptop') и положите в ~/.awg/"
+                 f"{RELAY_INSTANCE}.conf (0600)")
+            raise typer.Exit(code=2)
+        if not awg.sudo_available():
+            _err("нужен passwordless sudo для /etc/amnezia и systemctl — "
+                 "без него прямой контур не гасится, релей не поднят "
+                 "(ничего не изменено); настройте sudo -n или поднимите "
+                 "релей вручную (DEPLOY-RU-RELAY.md §2.0)")
+            raise typer.Exit(code=1)
+        failures = _teardown_direct()
+        if failures:
+            _err("прямой контур не снят полностью: " + "; ".join(failures)
+                 + " — релей не поднят, чтобы не смешать маршруты")
+            raise typer.Exit(code=1)
+        ok_c, msg_c = awg.install_instance_conf(RELAY_INSTANCE, conf)
+        (_ok if ok_c else _err)(msg_c)
+        if not ok_c:
+            raise typer.Exit(code=1)
+        ok_t, msg_t = awg.instance_control(RELAY_INSTANCE, "on")
+        (_ok if ok_t else _err)(msg_t)
+        if not ok_t:
+            raise typer.Exit(code=1)
+        target = _endpoint_host(conf)
+        if not mode_mod.write_mode(
+                "relay", proto="amneziawg", iface=RELAY_INSTANCE,
+                unit=f"{awg.AWG_UNIT_PREFIX}{RELAY_INSTANCE}.service",
+                target=target):
+            _warn("mode.json не записан (vpn guard покажет режим по sysfs)")
+        _ok(f"режим RELAY активен: весь трафик → {target or 'релей'} → "
+            "exit-нода; RU-CIDR релей ведёт напрямую (ADR-007). "
+            "Доменный split не применяется — его роль играет policy на релее")
+        return
+
+    if want in ("reality", "xray", "relay-reality"):
+        failures = _teardown_direct()
+        ok_r, msg_r = _stop_relay_contour()
+        (_ok if ok_r else _err)(msg_r)
+        if not ok_r:
+            failures.append(msg_r)
+        if failures:
+            _err("контуры не сняты полностью: " + "; ".join(failures)
+                 + " — фолбэк не поднят")
+            raise typer.Exit(code=1)
+        try:
+            config_path = runners.up(RELAY_REALITY_PROFILE)
+        except (profiles.ProfileStoreError, runners.RunnerError,
+                LinkError) as exc:
+            _err(f"{RELAY_REALITY_PROFILE}: {exc} — импортируйте ссылку с "
+                 f"релея ('vds xray add-client relay-laptop')")
+            raise typer.Exit(code=2)
+        record = profiles.get(RELAY_REALITY_PROFILE)
+        port = int(record["socks_port"])
+        if not mode_mod.write_mode(
+                "relay", proto="xray",
+                unit=f"vpnm-{RELAY_REALITY_PROFILE}.service",
+                target="relay-reality socks"):
+            _warn("mode.json не записан")
+        _ok(f"режим RELAY (фолбэк Reality) активен: socks "
+            f"127.0.0.1:{port}, профиль '{RELAY_REALITY_PROFILE}' "
+            f"(config: {config_path})")
+        _warn("socks-фолбэк не маршрутизирует весь трафик сам — включите "
+              "'vpn sysproxy on' или укажите приложению socks "
+              f"127.0.0.1:{port}")
+        return
+
+    _err(f"неизвестный proto '{proto}': ожидается 'awg' | 'reality'")
+    raise typer.Exit(code=2)
+
+
 @app.command()
 def start(scheme: str = typer.Argument(
-        "awg", help="'awg' (по умолчанию) | 'reality' | 'xhttp'")) -> None:
-    """Поднять основную схему: AWG / Reality-split / XHTTP-split.
+        "awg", help="'awg' (по умолчанию) | 'relay' | 'reality' | 'xhttp'"),
+        proto: Optional[str] = typer.Option(
+            None, "--proto",
+            help="для relay: 'awg' (по умолчанию, весь трафик через релей) "
+                 "| 'reality' (socks-фолбэк relay-reality)")) -> None:
+    """Поднять основную схему: AWG / релей / Reality-split / XHTTP-split.
 
     vpn start          — AWG-туннель + доменный split (по умолчанию, как
-                         'vpn scheme awg'; зеркало 'vpn reset')
+                         'vpn scheme awg'; зеркало 'vpn reset'); гасит релей,
+                         если он был активен
+    vpn start relay    — RU-релей (ADR-007): весь трафик → awg-туннель до
+                         релея, его policy сам делит RU-CIDR/мир; гасит прямой
+                         контур (профили + AWG-split + xray-split)
+    vpn start relay --proto reality
+                       — фолбэк: socks-профиль relay-reality
     vpn start reality  — Reality-split: tun xray0 → VLESS Reality (TCP 443)
     vpn start xhttp    — XHTTP-split: tun xray0 → VLESS XHTTP (TCP 8443)
 
+    Контуры взаимоисключающие: одновременно живёт либо прямой, либо релейный.
     Reality/XHTTP берут первый подходящий профиль из 'vpn profile list'
-    (конкретный — 'vpn scheme xray-split <profile>') и снимают AWG-схему;
-    'vpn start' / 'vpn start awg' снимает xray-split — взаимоисключимы.
-    Идемпотентно.
+    (конкретный — 'vpn scheme xray-split <profile>'). Идемпотентно.
     """
     name = scheme.strip().lower()
-    if name in ("awg", "default"):
+    if name in ("relay", "relay-reality"):
+        if name == "relay-reality" and proto is None:
+            proto = "reality"
+        _start_relay(proto)
+        return
+
+    is_direct_awg = name in ("awg", "default")
+    if name in ("awg", "default", "reality", "xray", "xray-split",
+                "xhttp", "xhttp-split"):
+        ok_r, msg_r = _stop_relay_contour()
+        (_ok if ok_r else _err)(msg_r)
+        if not ok_r:
+            _err("релейный контур не снят — прямой старт отменён, чтобы не "
+                 "смешать маршруты")
+            raise typer.Exit(code=1)
+    if is_direct_awg:
         ok, msg = _apply_awg_scheme()
         if not ok:
             _warn(f"{msg} — повторите 'vpn start' или выполните "
                   "подсказки выше")
             raise typer.Exit(code=1)
+        from . import amneziawg as awg
+        instance = awg.local_instance() or awg.DEFAULT_LOCAL_INSTANCE
+        _write_direct_mode("amneziawg", iface=instance,
+                           unit=f"{awg.AWG_UNIT_PREFIX}{instance}.service")
         _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
         return
@@ -866,6 +1121,10 @@ def start(scheme: str = typer.Argument(
         (_ok if ok else _err)(f"reality: {msg}")
         if not ok:
             raise typer.Exit(code=1)
+        _write_direct_mode("xray", iface=xsplit_mod.DEV,
+                           unit=xsplit_mod.unit_name(
+                               xsplit_mod.active_profile(xsplit_mod.run_cmd)
+                               or "reality"))
         _ok("основная схема активна: Reality-split через tun xray0 (TCP 443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
         _browser_restart_hint()
@@ -876,11 +1135,15 @@ def start(scheme: str = typer.Argument(
         (_ok if ok else _err)(f"xhttp: {msg}")
         if not ok:
             raise typer.Exit(code=1)
+        _write_direct_mode("xray", iface=xsplit_mod.DEV,
+                           unit=xsplit_mod.unit_name(
+                               xsplit_mod.active_profile(xsplit_mod.run_cmd)
+                               or "xhttp"))
         _ok("основная схема активна: XHTTP-split через tun xray0 (TCP 8443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
         _browser_restart_hint()
         return
-    _err("unknown scheme: expected 'awg' | 'reality' | 'xhttp'")
+    _err("unknown scheme: expected 'awg' | 'relay' | 'reality' | 'xhttp'")
     raise typer.Exit(code=2)
 
 
@@ -922,6 +1185,14 @@ def reset() -> None:
     (_ok if ok_t else _warn)(f"AWG: {msg_t}")
     if not ok_t:
         failures.append("AWG")
+    relay_was_active = awg.instance_active(RELAY_INSTANCE)
+    ok_r, msg_r = _stop_relay_contour()
+    if relay_was_active:
+        (_ok if ok_r else _warn)(f"релей: {msg_r}")
+        if not ok_r:
+            failures.append("релей")
+    from . import mode as mode_mod
+    mode_mod.clear_mode()
     ok_d, msg_d = doh_mod.disable()
     (_ok if ok_d else _warn)(f"DoH: {msg_d}")
     if not ok_d:
@@ -950,11 +1221,30 @@ def switch(name: str) -> None:
 
 @app.command()
 def status() -> None:
-    """Активный профиль, состояние unit, внешний IP (замер через socks)."""
+    """Режим (DIRECT/RELAY), активный профиль, unit, внешний IP через socks."""
+    from . import amneziawg as awg
+    from . import mode as mode_mod
     from . import runners
+    stored = mode_mod.read_mode()
+    instances = awg.active_instances()
+    relay_live = awg.instance_active(RELAY_INSTANCE)
+    if relay_live:
+        target = stored.get("target") if stored.get("mode") == "relay" else None
+        line = f"RELAY (awg {RELAY_INSTANCE}"
+        line += f" → {target})" if target else ")"
+    elif instances:
+        line = f"DIRECT (awg {instances[0]})"
+    elif stored.get("mode") in ("direct", "relay"):
+        line = mode_mod.describe(stored)
+    else:
+        line = "unknown (mode.json нет, туннелей не найдено)"
+    typer.echo(f"mode:           {line}")
     active = runners.get_active()
     if not active:
         typer.echo("no active profile")
+        if relay_live:
+            typer.echo("релей активен: весь трафик через awg-туннель до "
+                       "релея (socks-профиль не нужен)")
         return
     try:
         record = profiles.get(active)

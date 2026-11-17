@@ -79,11 +79,11 @@ vpn install --linger
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
-| `vpn start [awg\|reality\|xhttp]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `reality` — Reality-split, `xhttp` — XHTTP-split / полный сброс в состояние «как после перезагрузки» |
+| `vpn start [awg\|relay\|reality\|xhttp] [--proto awg\|reality]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `relay` — RU-релей (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`), `reality`/`xhttp` — xray-split / полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
-| `vpn status` | Активный профиль, состояние unit, внешний IP через SOCKS |
+| `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль, состояние unit, внешний IP через SOCKS |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
@@ -109,10 +109,13 @@ vpn install --linger
 Схемы и профили включаются обычной командой в любой вкладке терминала:
 
 ```bash
-vpn start              # AWG + доменный split (по умолчанию)
+vpn start              # AWG + доменный split (по умолчанию); гасит релей
+vpn start relay        # RU-релей: весь трафик → релей → exit-нода
+vpn start relay --proto reality   # фолбэк: socks-профиль relay-reality
 vpn start reality      # Reality-split (tun xray0, TCP 443)
 vpn start xhttp        # XHTTP-split (tun xray0, TCP 8443)
 vpn up <profile>       # socks-профиль (Reality/XHTTP/Hy2/CDN)
+vpn down               # выключить профили и релей (guard остаётся)
 vpn reset              # выключить всё
 ```
 
@@ -943,6 +946,7 @@ split-юнит идут на **26.1.23** — `vpnm/bins.py: XRAY_VERSION`, у sp
 
 ```bash
 vpn start                          # по умолчанию: AWG + доменный split
+vpn start relay                    # RU-релей (см. «Канал 1в» ниже)
 vpn start reality                  # Reality-split
 vpn start xhttp                    # XHTTP-split
 vpn scheme xray-split <profile>    # Reality/XHTTP; <profile> — имя из
@@ -986,6 +990,52 @@ sudo bash scripts/17_xray-split.sh --status | --off
   остаётся AWG (`vpn scheme awg`);
 - провайдерский троттлинг порта схемой не лечится; Reality-split идёт через
   tcp/443, XHTTP-split — через tcp/8443.
+
+
+## Канал 1в: RU-релей (`vpn start relay`, ADR-007)
+
+Прямой и релейный контуры **взаимоисключающие**: `vpn start` всегда гасит
+релей, `vpn start relay` — прямой контур (socks-профили, AWG-split `@laptop`,
+xray-split). Если снять старый контур не удалось, новый не поднимается —
+лучше явная ошибка, чем два маршрута одновременно.
+
+```bash
+vpn start relay                            # AWG → релей (весь трафик)
+vpn start relay --proto reality            # фолбэк: socks relay-reality
+vpn start relay-reality                    # алиас того же фолбэка
+vpn down                                   # профили + релей off, guard жив
+vpn status                                 # mode: RELAY (awg relay → <IP>)
+```
+
+- конфиг клиента: `~/.awg/relay.conf` (0600) — выдаётся на релее
+  (`vds relay add-client laptop`); CLI копирует его в
+  `/etc/amnezia/amneziawg/relay.conf` (0600) и поднимает
+  `vpn-awg-split@relay.service` (шаблон `14_awg-split.sh`);
+- доменный split на ноутбуке **не применяется**: RU-CIDR/мир делит policy
+  самого релея (`vds-relay-policy`), клиентский AWG гонит всё в туннель;
+- фолбэк `--proto reality` поднимает обычный socks-профиль `relay-reality`
+  (весь трафик сам не заворачивает — включите `vpn sysproxy on` или укажите
+  приложению socks-порт);
+- `vpn-guard.service` не останавливается и не перезапускается ни одной из
+  этих команд (`vpn down` тоже); guard лишь перечитывает sysfs-интерфейс.
+
+### `mode.json` — контракт с `vpn guard`
+
+Какой контур активен, CLI пишет в `~/.local/share/vpn-manager/mode.json`
+(0600, schema `vpnm.mode/1`):
+
+```json
+{"schema": "vpnm.mode/1", "mode": "relay", "proto": "amneziawg",
+ "iface": "relay", "unit": "vpn-awg-split@relay.service",
+ "target": "203.0.113.10", "updated": "..."}
+```
+
+Это **не** `guard/activity.json`: тот файл — probe-маркер
+`{cmd,started,until}` для FP-guard на время `probe`/`speed`/`monitor`, и
+запись режима туда сломала бы `mark_activity_end`/`activity_active`. Guard
+читает `mode.json` только как подсказку для статуса/`resolve_iface(hint)`;
+источник правды о счётчиках — sysfs. При переключении `@laptop` → `@relay`
+poller сам переразрешает интерфейс (без ложного `G-04 awg_iface_gone`).
 
 ## Планы: split для других транспортов
 

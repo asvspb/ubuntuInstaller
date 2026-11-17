@@ -159,6 +159,109 @@ def local_instance(run: Optional[RunCmd] = None) -> Optional[str]:
     return None
 
 
+def instance_active(name: str, run: Optional[RunCmd] = None) -> bool:
+    """True when ``vpn-awg-split@<name>.service`` is active.
+
+    ``systemctl is-active`` на несуществующем юните возвращает exit 4 — для
+    взаимоисключения это «не активен», без sudo и без побочных эффектов.
+    """
+    runner: RunCmd = run or run_cmd
+    rc, out, _err = runner(
+        ["systemctl", "is-active", f"{AWG_UNIT_PREFIX}{name}.service"])
+    return rc == 0 and out.strip().startswith("active")
+
+
+def active_instances(run: Optional[RunCmd] = None) -> List[str]:
+    """All active ``vpn-awg-split@<name>`` instances (order = systemctl)."""
+    runner: RunCmd = run or run_cmd
+    rc, out, _err = runner([
+        "systemctl", "list-units", "--type=service", "--plain",
+        "--no-legend", AWG_UNIT_PREFIX + "*",
+    ])
+    if rc != 0:
+        return []
+    names: List[str] = []
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) < 3 or cols[2] not in ("active", "activating"):
+            continue
+        match = re.match(re.escape(AWG_UNIT_PREFIX) + r"(.+)\.service$",
+                         cols[0])
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def install_instance_conf(name: str, source: Path,
+                          run: Optional[RunCmd] = None) -> Tuple[bool, str]:
+    """Copy a client conf into root's ``/etc/amnezia/amneziawg/<name>.conf``.
+
+    The template unit only reads root-owned configs (``awg-quick up`` as root,
+    0600).  Uses ``sudo -n install -D -m 600``; never raises.
+    """
+    runner: RunCmd = run or run_cmd
+    target = f"{AWG_SYSTEM_CONF_DIR}/{name}.conf"
+    rc, _out, err = runner(["sudo", "-n", "install", "-D", "-m", "600",
+                            str(source), target])
+    if rc == 0:
+        return True, f"конфиг установлен: {target} (0600)"
+    detail = (err or "").strip().splitlines()
+    hint = f"sudo install -D -m 600 {source} {target}"
+    return False, (f"не удалось установить {target} "
+                   f"({detail[-1] if detail else f'exit {rc}'}); вручную: "
+                   f"{hint}")
+
+
+def instance_control(name: str, action: str,
+                     run: Optional[RunCmd] = None) -> Tuple[bool, str]:
+    """on/off any ``vpn-awg-split@<name>`` instance via ``sudo -n systemctl``.
+
+    Same contract as :func:`tunnel_control` (never raises; manual hint on
+    failure) but the instance is explicit — the relay lives in
+    ``vpn-awg-split@relay`` next to the direct ``@laptop`` one.
+    """
+    runner: RunCmd = run or run_cmd
+    if action not in ("on", "off"):
+        return False, f"неизвестное действие '{action}' (ожидается on|off)"
+    verb = "start" if action == "on" else "stop"
+    rc, _out, err = runner(
+        ["sudo", "-n", "systemctl", verb, f"{AWG_UNIT_PREFIX}{name}.service"])
+    if rc == 0:
+        word = "запущен" if action == "on" else "остановлен"
+        return True, f"туннель {AWG_UNIT_PREFIX}{name} {word}"
+    detail_lines = (err or "").strip().splitlines()
+    detail = detail_lines[-1] if detail_lines else f"exit {rc}"
+    return False, (f"не удалось {verb} {AWG_UNIT_PREFIX}{name} ({detail}); "
+                   f"выполните вручную: sudo systemctl {verb} "
+                   f"{AWG_UNIT_PREFIX}{name}.service")
+
+
+def stop_instances(keep: Optional[str] = None,
+                   run: Optional[RunCmd] = None) -> Tuple[List[str], List[str]]:
+    """Stop every active AWG instance except *keep*.
+
+    Returns ``(stopped, failures)``; used for the direct↔relay mutual
+    exclusion.  Never touches ``vpn-guard.service`` (different unit family).
+    """
+    stopped: List[str] = []
+    failures: List[str] = []
+    for name in active_instances(run):
+        if keep is not None and name == keep:
+            continue
+        ok, msg = instance_control(name, "off", run)
+        if ok:
+            stopped.append(name)
+        else:
+            failures.append(msg)
+    return stopped, failures
+
+
+def sudo_available(run: Optional[RunCmd] = None) -> bool:
+    """True when ``sudo -n true`` succeeds (passwordless sudo present)."""
+    rc, _out, _err = (run or run_cmd)(["sudo", "-n", "true"])
+    return rc == 0
+
+
 def local_status_lines(run: Optional[RunCmd] = None,
                        conf_dir: Optional[Path] = None) -> List[str]:
     """Human-readable LOCAL section (instance, unit, awg show, iface, confs).

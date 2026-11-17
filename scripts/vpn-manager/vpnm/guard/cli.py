@@ -524,6 +524,14 @@ def status(as_json: bool = typer.Option(
                 + (f", awg iface={iface}" if iface else
                    ", awg не обнаружен"),
                 fg=typer.colors.CYAN)
+    try:
+        from ..mode import describe, read_mode
+        mode_payload = read_mode()
+    except Exception:  # noqa: BLE001 - mode.json is best-effort telemetry
+        mode_payload = {}
+    if mode_payload:
+        typer.secho(f"[info] mode={describe(mode_payload)}",
+                    fg=typer.colors.CYAN)
     lifecycle = payload.get("last_lifecycle")
     if isinstance(lifecycle, dict):
         typer.secho(f"[info] last_lifecycle={lifecycle.get('signal')} "

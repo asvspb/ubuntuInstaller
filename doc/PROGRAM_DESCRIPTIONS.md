@@ -218,7 +218,10 @@ templated-юнит `vpn-awg-split@<CONF>.service` (awg-quick up/down, enabled).
 Полный туннель сервера (0.0.0.0/0) предупреждается и заменяется на
 split-список `STRATEGY_IPS` (google + telegram, редактируется в шапке) —
 с подтверждением. Верификация: `awg show` handshake + ping первого IP из
-AllowedIPs.
+AllowedIPs. Инстанс `@relay` (RU-релей, ADR-007) ставит `vpn start relay`:
+конфиг `~/.awg/relay.conf` → `/etc/amnezia/amneziawg/relay.conf` (0600),
+взаимоисключение с прямым контуром, режим пишется в
+`~/.local/share/vpn-manager/mode.json` для `vpn guard`.
 
 ### `scripts/15_domain-split.sh`
 Доменный split-туннель поверх AWG (канал 1+): через туннель идёт трафик

@@ -241,6 +241,57 @@ def enabled_vpnm_units(run: Optional[RunCmd] = None) -> List[str]:
     return names
 
 
+def active_vpnm_units(run: Optional[RunCmd] = None) -> List[str]:
+    """Active ``vpnm-*`` client units (profile names), in systemctl order.
+
+    ``vpnm-clean-proxy.service`` is the boot-policy oneshot, not a VPN channel
+    — it stays out of the list so a scheme switch never "stops the VPN" by
+    disabling the clean-boot policy.  ``vpn-guard.service`` is a *system* unit
+    with a different prefix, so it can never match here.
+    """
+    rc, out, _err = (run or run_cmd)(["systemctl", "--user", "list-units",
+                                      "--type=service", "--plain",
+                                      "--no-legend", "vpnm-*.service"])
+    if rc != 0:
+        return []
+    names: List[str] = []
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) < 3 or cols[2] not in ("active", "running"):
+            continue
+        unit = cols[0]
+        if not (unit.startswith("vpnm-") and unit.endswith(".service")):
+            continue
+        name = unit[len("vpnm-"):-len(".service")]
+        if name in ("clean-proxy", "guard"):
+            continue
+        names.append(name)
+    return names
+
+
+def stop_all_profiles(run: Optional[RunCmd] = None) -> Tuple[List[str], List[str]]:
+    """Stop every active profile; returns ``(stopped, failures)``.
+
+    Used by the relay/direct mutual exclusion (``vpn start relay``/``vpn
+    down``).  The active marker is cleared even when a unit is already gone.
+    """
+    stopped: List[str] = []
+    failures: List[str] = []
+    active = active_vpnm_units(run)
+    current = get_active()
+    if current and current not in active:
+        active.append(current)
+    for name in active:
+        rc, _out, err = systemctl_stop(name, run)
+        if rc == 0:
+            stopped.append(name)
+        else:
+            failures.append(f"{unit_name(name)}: {err.strip() or f'exit {rc}'}")
+    if get_active() in active or (current and not active):
+        set_active(None)
+    return stopped, failures
+
+
 def enable_autostart(name: str, run: Optional[RunCmd] = None) -> None:
     """Enable the profile unit; raise RunnerError on systemctl failure."""
     rc, _out, err = systemctl_enable(name, run)
