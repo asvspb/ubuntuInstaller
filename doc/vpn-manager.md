@@ -43,7 +43,8 @@ scripts/vpn-manager/
 │   ├── amneziawg.py       # AWG: локальный туннель + клиенты на сервере
 │   ├── doctor.py          # диагностика окружения
 │   ├── repair.py          # снимок состояния + возврат трафика/DNS
-│   └── guard/             # vpn guard: потоковый разбор клиентских логов (см. раздел)
+│   ├── guard/             # vpn guard: потоковый разбор клиентских логов (см. раздел)
+│   └── scout/             # vpn scout: активная разведка маршрутов (модель, контекст, пробы, скоринг, CLI)
 └── tests/                 # pytest, без сети/root (моки subprocess)
 ```
 
@@ -78,7 +79,8 @@ vpn install --linger
 | `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`) |
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
-| `vpn up <name>` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units) |
+| `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план) |
+| `vpn scout [--json] [--sync]` | Активная разведка маршрутов: TCP/TLS, QUIC, AWG + свежий server-verdict → RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
 | `vpn start [awg\|relay\|reality\|xhttp] [--proto awg\|reality]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `relay` — RU-релей (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`), `reality`/`xhttp` — xray-split / полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
@@ -690,6 +692,133 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
 `guard.status/1`, `guard.coverage/1`, `guard.server_verdict/1`, `guard.config/1`
 (`vpnm/guard/schemas/`, package-data); `vpn guard selftest` проверяет, что
 `pip install` довёз схемы, парсер, правила и пост-сканер.
+
+## `vpn scout` — активная разведка маршрутов (2026-11-17, WP-S1…S4)
+
+Демон `vpn-guard.service` принципиально не открывает сокетов: он видит только
+то, что уже лежит на диске. Вопрос «какой маршрут сейчас реально жив, если
+сервер на локдауне, а TSPU фильтрует TLS» требует активных проб — их делает
+только явная команда `vpn scout`. Она read-only: `findings.jsonl`,
+`guard.json` и `server-verdict.json` не пишутся (проверяется тестом по
+sha256 + `st_mtime_ns`).
+
+```bash
+vpn scout                  # таблица: RECOMMENDED / FALLBACK / «отсеяны» с причинами
+vpn scout --json           # scout.report/1 (см. ниже) — для скриптов
+vpn scout --sync           # сначала vpn guard sync (единственный ssh), затем разведка
+vpn scout --sync --host root@asv1
+vpn up --scout             # разведка + поднять рекомендованный маршрут
+vpn up --scout --dry-run   # только напечатать, что было бы запущено
+```
+
+Exit-коды: `0` — рекомендация есть; `1` — нет ни одного маршрута с score ≥50
+(отчёт всё равно печатается), `2` — ошибка аргументов.
+
+### Откуда берутся кандидаты (не выдуманы)
+
+| Источник | Как читается | Кандидат |
+|----------|--------------|----------|
+| `~/.config/vpn-manager/profiles.json` | `vpnm.profiles.list_profiles` + `vpnm.links.parse_link` | `xray-reality` / `xray-xhttp` / `xray-cdn` (ws) / `hy2` |
+| `~/.awg/*.conf` | строка `Endpoint = host:port` (ключи/PSK не читаются) | `awg` (direct), `relay.conf` — `awg` (relay) |
+| `~/.config/vpn-manager/state.json` | `runners.get_active()` | активный профиль (для проверки «текущий канал заблокирован») |
+
+Уточнения, которые важно знать:
+
+- **SNI** берётся из той же параметрики, что рендерит `xclient`: `sni` из
+  share-ссылки, иначе host (для ws/CDN — `sni`, затем `host`-заголовок);
+- **Hy2 port-hop** — параметр `mport` ссылки (`20000-20500`), он же попадает в
+  multi-port адрес сервера в сгенерированном конфиге; в отчёте это
+  `port_hop_range`;
+- **маршрут**: `relay` только для профиля с именем `relay-reality` (socks-фолбэк
+  `vpn start relay --proto reality`) и для `~/.awg/relay.conf`; остальные
+  профили — `direct`. Секреты (uuid/пароль/obfs/приватный ключ) в Candidate и в
+  отчёт не попадают;
+- дубли (одинаковые route/proto/host:port из разных профилей) схлопываются,
+  факт дубля печатается в `context.notes`.
+
+Вердикт сервера учитывается только **свежий (≤10 мин)** — строже, чем 65 мин у
+самого guard: решение о маршруте по часовому `lockdown` было бы догадкой. Если
+файл устарел, `context.notes` прямо говорит «lock не учитывается; `vpn guard
+sync`». Дополнительно читаются недавние (30 мин) findings G-01/G-03/G-04.
+
+### Пробы (WP-S2)
+
+| Проба | Что делает | Статусы |
+|-------|------------|----------|
+| TCP/TLS | TCP connect → TLS 1.3 handshake с настоящим SNI | `ok` (RTT), `timeout` (нет SYN-ACK), `refused` (RST на connect), `TSPU_TLS_FILTER` (RST **или** зависший ClientHello после connect), `tls_error`, `dns_error`, `no_route` |
+| QUIC (Hy2) | QUIC Initial ≥1200 байт со случайным DCID → ждём QUIC-ответ | `ok` (что-то ответило), `silence` (**неизвестно**, не «заблокировано»), `udp_refused` (ICMP unreachable — твёрдый минус) |
+| AWG | UDP-достижимость (AWG не отвечает на неаутентифицированные пакеты) + история G-04 за 30 мин | `reachable` (ICMP не пришёл — норма), `udp_refused` (ICMP), `RECENT_UDP_BLACKHOLE` (G-04 ≤30 мин) |
+| lock-443 | `lockdown.active` в свежем вердикте | `SERVER_LOCKDOWN` для direct xray-443 **без сетевого коннекта** (не нагружаем только что закрытый порт) |
+
+Честное ограничение QUIC-пробы: без ключей сервера датаграмму можно только
+**сформировать** как Initial — расшифровать её сервер не сможет и не ответит.
+Проба измеряет UDP-достижимость (ICMP unreachable vs тишина), а не «Hysteria2
+работает»; поэтому `silence` не понижает score.
+
+Бюджет: `ThreadPoolExecutor(max_workers=8)`, сокет-таймаут 1500 мс, общий
+бюджет прогона 2500 мс. Таймаут каждой пробы урезается до остатка бюджета;
+не успевшие получают `timeout`/`budget`, а не пропадают молча (тест: 4
+«зависших» сокета по 1.5 с → весь прогон < 2.5 с).
+
+### Скоринг и вывод (WP-S3)
+
+| База | Score |
+|------|-------|
+| direct + awg | 90 |
+| direct + reality | 88 |
+| direct + hy2 | 85 |
+| relay + awg | 82 |
+| relay + reality / hy2 | 80 |
+| xhttp (любой маршрут) | 75 |
+| cdn (любой маршрут) | 65 |
+
+Поправки: **lock-443** — direct xray-443 → 0, relay/AWG/Hy2 +10; **TSPU TLS
+filter** — direct Reality → 0, relay +15; **недавний G-04 на direct AWG** −60;
+**RTT** −1 за каждые полные 25 мс.
+
+Вывод: `RECOMMENDED` — лучший score ≥50; `FALLBACK` — лучший на **другом
+маршруте** (при равенстве — другом протоколе); остальные — «отсеяны» с
+человекочитаемыми причинами (`probe: TSPU_TLS_FILTER — ...`, `lock-443: ...`,
+`score N < 50` и т.д.). Если рекомендации нет, `vpn up --scout` откажется
+запускать что-либо (exit 1) и предложит полный отчёт.
+
+JSON-контракт `scout.report/1`:
+
+```json
+{
+  "schema": "scout.report/1",
+  "created": "2026-11-17T12:00:00Z",
+  "context": {"verdict": {}, "verdict_fresh": true, "verdict_age_s": 42,
+              "threat_level": "quiet", "server_verdict": "quiet",
+              "lockdown_443": false, "findings_recent": 1,
+              "g04_endpoints": [], "notes": [], "active_profile": "phone"},
+  "recommended": {"route": "direct", "proto": "awg", "profile": "laptop",
+                  "host": "203.0.113.10", "port": 51820, "sni": null,
+                  "port_hop_range": null,
+                  "probe": {"status": "reachable", "rtt_ms": null,
+                            "detail": "ICMP не пришёл; ..."},
+                  "score": 90, "status": "recommended", "reasons": []},
+  "fallback": null,
+  "rejected": [],
+  "candidates": [],
+  "notify": {"attempted": false}
+}
+```
+
+Если **текущий** активный канал сам заблокирован (`SERVER_LOCKDOWN`,
+`TSPU_TLS_FILTER`, `refused`, `timeout`), scout переиспользует существующий
+`guard-notify` (его opt-in и rate limit не меняются): баннер содержит
+следующую команду — `vpn switch <profile>`, для AWG — `vpn start` /
+`vpn start relay`. Ничего не отправляется, если `notify.desktop=false`.
+
+### Чего scout не делает
+
+- не пишет `findings.jsonl`, `guard.json`, `server-verdict.json` (только
+  `--sync` — и то штатным `vpn guard sync`);
+- не требует root: непривилегированные сокеты, чтение `~/.awg/*.conf`;
+- не запускает и не останавливает туннели сам (это делает `vpn up`/`vpn start`
+  по явной команде или `vpn up --scout`);
+- не делает фоновых сетевых вызовов: демон остаётся без сети.
 
 ## Мониторинг каналов (`vpn monitor`)
 

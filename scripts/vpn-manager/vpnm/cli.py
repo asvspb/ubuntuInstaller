@@ -138,6 +138,10 @@ app = VpnTyper(
   vpn speed                  # живой замер скорости: все каналы, несколько
                              # эндпоинтов, real-time таблица (bulk, не latency)
   vpn probe --no-switch      # замерить задержки, ничего не переключать
+  vpn scout                  # активная разведка маршрутов (read-only):
+                             # TCP/TLS, QUIC, AWG + вердикт сервера →
+                             # RECOMMENDED/FALLBACK и «отсеяны» с причинами;
+                             # 'vpn up --scout [--dry-run]' — сразу поднять
 
 Канал выживания (CDN за Cloudflare, переживает блок IP asv1):
 
@@ -649,7 +653,16 @@ def _sync_sysproxy_off_after() -> None:
 
 
 @app.command()
-def up(name: str) -> None:
+def up(name: Optional[str] = typer.Argument(
+        None, help="Профиль из 'vpn profile list'; с --scout можно не "
+                   "указывать"),
+        scout: bool = typer.Option(
+            False, "--scout",
+            help="Сначала активная разведка (vpn scout), затем поднять "
+                 "рекомендованный маршрут"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run",
+            help="С --scout: только показать, что было бы запущено")) -> None:
     """Запустить профиль: vpn up <profile> (socks-порт см. в vpn profile list).
 
     Поднимает только локальный socks-клиент: маршруты и системный прокси не
@@ -657,8 +670,38 @@ def up(name: str) -> None:
     одной вкладке терминала — 'vpncli on'; в браузере — расширение
     (SwitchyOmega/FoxyProxy) или отдельный Chrome с --proxy-server
     (см. 'vpn --help', блок про одну вкладку).
+
+    ``vpn up --scout`` сначала выполняет read-only разведку маршрутов
+    (probe TCP/TLS, QUIC, AWG) и поднимает рекомендованный; ``--dry-run``
+    печатает только план. Если рекомендация — AWG, выполняется 'vpn start'
+    (или 'vpn start relay' для релейного маршрута).
     """
     from . import runners
+    if scout and name:
+        _err("укажите либо профиль, либо --scout (не оба)")
+        raise typer.Exit(code=2)
+    if scout:
+        from .scout.cli import build_report, plan_lines, up_target
+        payload = build_report()
+        target = up_target(payload)
+        for line in plan_lines(payload):
+            typer.echo(line)
+        if dry_run:
+            return
+        if target["kind"] == "none":
+            _err("scout: рекомендации нет — смотрите полный отчёт "
+                 "'vpn scout'")
+            raise typer.Exit(code=1)
+        if target["kind"] == "awg":
+            if target.get("route") == "relay":
+                start("relay", proto="awg")
+            else:
+                start("awg")
+            return
+        name = target.get("profile")
+    if not name:
+        _err("укажите профиль: vpn up <profile> (или --scout)")
+        raise typer.Exit(code=2)
     try:
         config_path = runners.up(name)
     except (profiles.ProfileStoreError, runners.RunnerError, LinkError) as exc:
@@ -1905,6 +1948,36 @@ def speed_cmd(
 
     if as_json:
         typer.echo(payload)
+
+
+@app.command()
+def scout(as_json: bool = typer.Option(
+              False, "--json", help="scout.report/1 в stdout (машинный формат)"),
+          sync: bool = typer.Option(
+              False, "--sync",
+              help="Сначала 'vpn guard sync' (один ssh — единственный сетевой "
+                   "шаг), затем разведка по свежему вердикту"),
+          host: Optional[str] = typer.Option(
+              None, "--host", help="ssh-хост для --sync (по умолчанию "
+                                   "settings.json:ssh_host)"),
+          ) -> None:
+    """Активная разведка маршрутов: read-only probe + скоринг + рекомендация.
+
+    Демон guard сеть не трогает — разведку делает только эта команда.
+    Для каждого реального кандидата (профили клиента + AWG-конфиги):
+    TCP+TLS 1.3 handshake с настоящим SNI (refused/timeout/TSPU TLS filter
+    различаются), QUIC Initial ≥1200 байт для Hysteria2 (ICMP unreachable
+    и тишина различимы) и UDP-достижимость AWG + история G-04 за 30 мин.
+    Бюджет прогона — 2500 мс, сокет-таймаут 1500 мс, 8 воркеров.
+
+    Вывод: RECOMMENDED (score ≥50), FALLBACK на другом маршруте/протоколе
+    и «отсеяны» с причинами. Ничего не пишется: findings.jsonl, guard.json
+    и server-verdict.json остаются неизменными (--sync пишет вердикт
+    штатной командой vpn guard sync). Exit: 0 — рекомендация есть, 1 — нет.
+    """
+    from .scout.cli import run_scout_cli
+    raise typer.Exit(code=run_scout_cli(as_json=as_json, sync=sync,
+                                        host=host))
 
 
 @app.command()
