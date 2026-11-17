@@ -15,6 +15,7 @@ JSON contract — ``scout.report/1``::
                   "server_verdict": null, "lockdown_443": false,
                   "findings_recent": 0, "g04_endpoints": [],
                   "notes": []},
+      "threat_level": null,
       "recommended": <row>|null,
       "fallback": <row>|null,
       "rejected": [<row>, ...],
@@ -25,6 +26,10 @@ JSON contract — ``scout.report/1``::
 where ``<row>`` is the candidate (route/proto/profile/host/port/sni/
 port_hop_range) plus ``probe`` (status/rtt_ms/detail), ``score``, ``status``
 (``recommended``/``fallback``/``rejected``) and human-readable ``reasons``.
+
+The top-level ``threat_level`` mirrors ``context.threat_level`` (additive in
+the same ``scout.report/1`` version: old consumers that only read
+``context.threat_level`` are unaffected).
 """
 
 from __future__ import annotations
@@ -156,6 +161,7 @@ def build_report(*, sync: bool = False,
         "schema": SCHEMA,
         "created": _iso_now(now),
         "context": _context_payload(context),
+        "threat_level": context.threat_level,
         "recommended": (report.recommended.as_dict()
                         if report.recommended is not None else None),
         "fallback": (report.fallback.as_dict()
@@ -204,6 +210,9 @@ def render_lines(payload: Dict[str, Any]) -> List[str]:
         f"findings (G-01/03/04, 30 мин): "
         f"{context.get('findings_recent', 0)}",
     ]
+    if context.get("verdict_fresh") and threat in ("elevated", "high"):
+        lines.append(f"[info] threat={threat} — 443/tcp может уйти в lock-443; "
+                     "держите relay/AWG под рукой")
     recommended = payload.get("recommended")
     fallback = payload.get("fallback")
     if recommended:

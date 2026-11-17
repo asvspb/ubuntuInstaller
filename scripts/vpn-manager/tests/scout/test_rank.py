@@ -188,10 +188,11 @@ def test_no_recommendation_when_everything_is_hard_failed() -> None:
     assert all(row.reasons for row in report.rejected)
 
 
-def test_hy2_silence_is_unknown_and_keeps_the_base_score() -> None:
+def test_hy2_silence_is_unknown_and_costs_six_points() -> None:
     candidate = cand("direct", "hy2", "hy2-main")
     score, reasons = score_candidate(candidate, status(STATUS_SILENCE))
-    assert score == 85
+    assert score == 85 - 6
+    assert any("silence" in reason for reason in reasons)
     assert all("проба" not in reason for reason in reasons)
 
 
@@ -203,3 +204,91 @@ def test_rows_are_sorted_by_score_descending() -> None:
     report = rank(candidates, results)
     scores = [row.score for row in report.rows]
     assert scores == sorted(scores, reverse=True)
+
+
+# --- calibration 2026-11-18: silence −6 and RTT cap −6 -------------------------------
+
+
+def test_silence_penalty_applies_to_any_silent_protocol() -> None:
+    candidate = cand("relay", "hy2", "hy2-relay")
+    score, reasons = score_candidate(candidate, status(STATUS_SILENCE))
+    assert score == 80 - 6
+    assert any("UDP без ответа (silence): −6" in reason for reason in reasons)
+
+
+def test_awg_reachable_is_not_silence_and_keeps_the_base_score() -> None:
+    candidate = cand("direct", "awg", "laptop", port=51820)
+    probe = ProbeResult("reachable",
+                        detail="ICMP не пришёл; AWG не отвечает на "
+                               "неаутентифицированные пакеты")
+    score, reasons = score_candidate(candidate, probe)
+    assert score == 90
+    assert all("silence" not in reason for reason in reasons)
+
+
+def test_rtt_penalty_is_capped_at_six() -> None:
+    candidate = cand("direct", "xray-reality", "phone")
+    score_400, reasons = score_candidate(candidate, ok(400.0))
+    assert score_400 == 88 - 6  # 400 // 25 == 16, capped to 6
+    assert any("(cap −6)" in reason for reason in reasons)
+
+
+def test_rtt_penalty_regression_below_the_cap() -> None:
+    candidate = cand("direct", "xray-reality", "phone")
+    assert score_candidate(candidate, ok(40.0))[0] == 88 - 1
+    assert score_candidate(candidate, ok(200.0))[0] == 88 - 6
+    assert score_candidate(candidate, ok(175.0))[0] == 88 - 6  # exactly 7 → cap
+    assert score_candidate(candidate, ok(100.0))[0] == 88 - 4  # no cap note
+
+
+def test_rtt_cap_note_only_when_the_penalty_was_cut() -> None:
+    candidate = cand("direct", "xray-reality", "phone")
+    _score, reasons = score_candidate(candidate, ok(150.0))
+    # 150 // 25 == 6 — at the cap, not over it: no (cap −6) suffix
+    assert any("RTT" in reason for reason in reasons)
+    assert all("cap" not in reason for reason in reasons)
+
+
+def test_owner_scenario_proven_ok_beats_blind_silence() -> None:
+    # Live run 2026-11-18: reality ok @218 ms scored 80, hy2 silence scored
+    # 85 and won. With the calibration: 88 − 6 = 82 > 85 − 6 = 79.
+    reality = cand("direct", "xray-reality", "phone")
+    hy2 = cand("direct", "hy2", "hy2-main")
+    candidates = [reality, hy2]
+    results = {reality.key: ok(218.0), hy2.key: status(STATUS_SILENCE)}
+    report = rank(candidates, results)
+    assert report.recommended is not None
+    assert report.recommended.candidate.profile == "phone"
+    assert report.recommended.score == 82
+    hy2_row = report.row_for_profile("hy2-main")
+    assert hy2_row is not None and hy2_row.score == 79
+    assert report.fallback is hy2_row
+
+
+def test_hy2_silence_vs_relay_reality_arithmetic_is_pinned() -> None:
+    # relay/reality base 80 has no silence penalty; hy2/direct silence is 79.
+    # So a relay reality with a short RTT outranks silent hy2, a slow one does
+    # not — the pinned order is exactly what the arithmetic gives.
+    hy2 = cand("direct", "hy2", "hy2-main")
+    relay = cand("relay", "xray-reality", "relay-reality")
+    cases = {
+        0.0: 80,    # 80 − 0  > 79 → relay wins
+        25.0: 79,   # 80 − 1 == 79 → tie on score
+        218.0: 74,  # 80 − 6  < 79 → silent hy2 ranks above relay
+    }
+    for rtt, expected in cases.items():
+        report = rank([hy2, relay],
+                      {hy2.key: status(STATUS_SILENCE),
+                       relay.key: ok(rtt)})
+        relay_row = report.row_for_profile("relay-reality")
+        assert relay_row is not None
+        assert relay_row.score == expected, (rtt, relay_row.reasons)
+    assert 80 > 79, "relay reality @RTT 0 must beat silent hy2"
+    assert 74 < 79, "relay reality @RTT 218 must lose to silent hy2"
+
+
+def test_hard_fail_still_zeroes_even_with_silence_cap_logic() -> None:
+    candidate = cand("direct", "hy2", "hy2-main")
+    score, reasons = score_candidate(candidate, ProbeResult("udp_refused"))
+    assert score == 0
+    assert all("silence" not in reason for reason in reasons)

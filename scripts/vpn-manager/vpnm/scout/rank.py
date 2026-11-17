@@ -21,7 +21,12 @@ Adjustments:
   direct Reality scores 0; relay routes get +15;
 - **recent G-04** on a direct AWG endpoint: −60 (a black hole seen in the
   last 30 minutes is strong evidence, not a proof — hence a penalty, not 0);
-- **RTT**: −1 for every full 25 ms of measured round-trip time.
+- **silence** (UDP, no answer at all — Hy2): −6, because silence is an
+  *unknown*, not a proof of reachability; a transport that answered both ways
+  must outrank one that never answered;
+- **RTT**: −1 for every full 25 ms of measured round-trip time, capped at
+  −6 (a slow-but-working channel is still working; the cap keeps a 400 ms RTT
+  from erasing the difference between transports).
 
 Output: one ``RECOMMENDED`` (score ≥ :data:`RECOMMENDED_MIN`), one
 ``FALLBACK`` on a different route or protocol, everything else ``rejected``
@@ -45,6 +50,7 @@ from .models import (
     Candidate,
     ProbeResult,
     STATUS_RECENT_UDP_BLACKHOLE,
+    STATUS_SILENCE,
     STATUS_TSPU_TLS_FILTER,
 )
 
@@ -66,7 +72,9 @@ BASE_SCORES: Mapping[Tuple[str, str], int] = {
 LOCKDOWN_BONUS = 10
 TSPU_RELAY_BONUS = 15
 G04_PENALTY = 60
+SILENCE_PENALTY = 6
 RTT_STEP_MS = 25
+RTT_PENALTY_CAP = 6
 RECOMMENDED_MIN = 50
 
 STATUS_RECOMMENDED = "recommended"
@@ -139,11 +147,19 @@ def score_candidate(candidate: Candidate, probe: ProbeResult, *,
         score -= G04_PENALTY
         reasons.append(f"недавний G-04 (≤30 мин) на direct AWG −{G04_PENALTY}")
 
+    if probe.status == STATUS_SILENCE:
+        score -= SILENCE_PENALTY
+        reasons.append(f"UDP без ответа (silence): −{SILENCE_PENALTY} за "
+                       "недоказанную проходимость")
+
     if needs_network_view(candidate) and probe.rtt_ms is not None:
-        penalty = int(probe.rtt_ms // RTT_STEP_MS)
+        raw_penalty = int(probe.rtt_ms // RTT_STEP_MS)
+        penalty = min(RTT_PENALTY_CAP, raw_penalty)
         if penalty:
             score -= penalty
-            reasons.append(f"RTT {probe.rtt_ms:.1f} мс: −{penalty}")
+            note = (f" (cap −{RTT_PENALTY_CAP})"
+                    if raw_penalty > RTT_PENALTY_CAP else "")
+            reasons.append(f"RTT {probe.rtt_ms:.1f} мс: −{penalty}{note}")
 
     score = max(0, score)
     if not reasons:
@@ -273,9 +289,11 @@ __all__ = [
     "G04_PENALTY",
     "LOCKDOWN_BONUS",
     "RECOMMENDED_MIN",
+    "RTT_PENALTY_CAP",
     "RTT_STEP_MS",
     "RankReport",
     "RankedCandidate",
+    "SILENCE_PENALTY",
     "TSPU_RELAY_BONUS",
     "base_score",
     "detects_tspu_tls_filter",

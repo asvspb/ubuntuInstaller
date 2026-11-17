@@ -180,6 +180,28 @@ def test_build_report_writes_nothing(env, monkeypatch) -> None:
     assert after == before  # byte-identical, mtime-identical, same mode
 
 
+def test_report_json_keys_are_backward_compatible(env, monkeypatch) -> None:
+    # scout.report/1 gains exactly one additive top-level key (threat_level);
+    # everything the old consumers read stays in place.
+    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    payload = scout_cli.build_report(**paths_of(env),
+                                     notifier=RecordingNotifier())
+    assert set(payload) == {
+        "schema", "created", "context", "threat_level", "recommended",
+        "fallback", "rejected", "candidates", "notify",
+    }
+    assert payload["threat_level"] == payload["context"]["threat_level"]
+    assert set(payload["context"]) >= {
+        "verdict", "verdict_fresh", "verdict_age_s", "threat_level",
+        "server_verdict", "lockdown_443", "findings_recent",
+        "g04_endpoints", "notes",
+    }
+    row = payload["recommended"]
+    assert set(row) >= {"route", "proto", "profile", "host", "port", "sni",
+                        "port_hop_range", "probe", "score", "status",
+                        "reasons"}
+
+
 def test_scout_cli_writes_nothing(env, monkeypatch, capsys) -> None:
     monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
     monkeypatch.setattr(scout_cli, "_notify_blocked",
