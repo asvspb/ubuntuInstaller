@@ -426,6 +426,29 @@ class TestScriptSyntax:
                               capture_output=True, text=True)
         assert proc.returncode == 0, proc.stderr
 
+    def test_15_dnsmasq_conf_has_no_strict_order(self):
+        """dnsmasq не должен ждать мёртвый DoH: скоринг апстримов, не strict-order.
+
+        WP-G6 2026-11-17: со strict-order каждый запрос сначала ловил таймаут
+        cloudflared (1.1.1.1:443 вне туннеля режется ТСПУ) → фризы DNS и
+        лавина dns_timeout в guard findings.
+        """
+        fifteen = xsplit._scripts_dir() / "15_domain-split.sh"
+        if not fifteen.exists():
+            pytest.skip("15_domain-split.sh не найден")
+        text = fifteen.read_text(encoding="utf-8")
+        # Смотрим только на *выводимые* строки конфига: слово может жить в
+        # комментарии-пояснении, но не должно попадать в dnsmasq.conf.
+        emitted = [
+            line.strip()[len('echo "'):-1]
+            for line in text.splitlines()
+            if line.strip().startswith('echo "') and line.strip().endswith('"')
+        ]
+        assert "strict-order" not in emitted
+        # Апстримы остаются оба: DoH-прокси и plaintext-fallback.
+        assert "server=127.0.0.1#${DOH_PORT}" in emitted
+        assert "server=77.88.8.8" in emitted
+
 
 class TestRealitySupport:
     REALITY_LINK = (

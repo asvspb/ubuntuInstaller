@@ -516,7 +516,11 @@ info "4. dnsmasq-конфиг: $DNSMASQ_CONF"
     echo "port=53"
     echo "no-resolv"
     echo "no-poll"
-    echo "strict-order"
+    # Без strict-order: dnsmasq сам скорит апстримы и при отказе DoH
+    # (127.0.0.1#PORT → 1.1.1.1:443, вне туннеля режется ТСПУ) сразу идёт в
+    # живой fallback. Со strict-order каждый запрос обязан был сначала словить
+    # таймаут DoH — искусственные фризы DNS и лавина dns_timeout (полевые
+    # findings WP-G6, 2026-11-17).
     echo "server=127.0.0.1#${DOH_PORT}"
     # fallback: plaintext Я.ДНС когда DoH-апстрим флапает (TSPU-окна 2026-11-11:
     # CF таймаутил минутами, весь DNS умирал). Деградация вместо полного блока:
