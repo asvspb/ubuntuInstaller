@@ -21,7 +21,10 @@ stays light.  Commands:
   ``denied``/``off``/``missing`` instead of "всё хорошо" (R-9);
 - ``install``/``remove`` — the ``vpn-guard.service`` user unit with the
   ``hardened`` → ``compat`` fallback that is only taken on an *observed*
-  start failure (AC-17).
+  start failure (AC-17);
+- ``notify-test`` — one test banner through the same opt-in/severity/
+  availability path (cooldown deliberately bypassed) plus the OK/failure
+  reason, so "уведомления не приходят" stops being a guess.
 
 Desktop notifications are opt-in (``notify.desktop=true``) and are wired by
 the run loop, not by a command (SPEC §10.4).
@@ -837,3 +840,97 @@ def selftest() -> None:
         raise typer.Exit(code=1)
     typer.secho("[ok] selftest пройден", fg=typer.colors.GREEN)
     raise typer.Exit(code=0)
+
+
+# --- notify-test (WP: проверка канала доставки) -------------------------------
+
+#: The banner is shaped like a real finding so it travels the exact same
+#: severity/redaction path — but it is **never written** to findings.jsonl.
+NOTIFY_TEST_RULE = "G-03"
+
+
+def _banner_finding(severity: str) -> Dict[str, Any]:
+    """Finding-shaped payload of the test banner (no secret, no endpoint)."""
+    return {
+        "rule": NOTIFY_TEST_RULE,
+        "severity": severity,
+        "confidence": "medium",
+        "unit": "vpn-guard-notify-test",
+        "profile": None,
+        "hypothesis": "тестовое уведомление guard (notify-test)",
+        "action": "если вы это видите — канал доставки работает",
+    }
+
+
+def _banner_notifier() -> Any:
+    """A :class:`Notifier` whose hourly cooldown is disabled on purpose.
+
+    ``notify-test`` checks **delivery**, not a finding: the 12/hour rate limit
+    exists to keep a storm of findings from spamming the desktop, so a manual
+    test must not be swallowed by it.  Everything else (opt-in, severity
+    floor, availability, redaction) stays exactly as in the daemon.
+    """
+    from . import notify as notify_mod
+
+    instance = notify_mod.Notifier()
+    instance.max_per_hour = 10 ** 9
+    return instance
+
+
+def send_test_banner(severity: str = "high",
+                     notifier: Optional[Any] = None) -> Tuple[
+                         bool, Optional[str]]:
+    """Deliver one test banner; returns ``(sent, reason)`` (never raises)."""
+    instance = notifier if notifier is not None else _banner_notifier()
+    sent = bool(instance.notify(_banner_finding(severity)))
+    return sent, getattr(instance, "last_reason", None)
+
+
+def _notify_reason_hint(reason: Optional[str]) -> str:
+    if reason == "desktop_notifications_off":
+        return ("уведомления выключены: включите \"notify\": {\"desktop\": "
+                "true} в guard.json (путь покажет 'vpn guard install')")
+    if reason == "below_severity_or_confidence":
+        return ("severity ниже notify.min_severity — понизьте порог в "
+                "guard.json или запустите с --severity high")
+    if reason and ("notify-send" in reason or "D-Bus" in reason):
+        return ("нет канала: установите libnotify-bin и запускайте из "
+                "графической сессии с D-Bus ($XDG_RUNTIME_DIR/bus)")
+    return ("проверьте: notify-send в PATH, D-Bus session bus, "
+            "notify.desktop=true в guard.json")
+
+
+@guard_app.command("notify-test")
+def notify_test(severity: str = typer.Option(
+        "high", "--severity",
+        help="Severity тестового баннера (info|low|medium|high): ниже "
+             "notify.min_severity — будет честно отказано")):
+    """Отправить тестовый баннер (в обход cooldown) и напечатать статус.
+
+    Проверяет фактическую доставку: opt-in (notify.desktop), порог
+    min_severity, наличие notify-send и D-Bus session bus — ровно то, что
+    решает судьбу настоящего уведомления.  Cooldown (12/час) намеренно
+    обойдён: это ручная проверка канала, а не находка guard.  В
+    findings.jsonl ничего не пишется.  Exit: 0 — баннер доставлен,
+    1 — не доставлен (причина и что делать — в выводе), 2 — плохой
+    --severity.
+    """
+    from . import events, store
+
+    severity = severity.strip().lower()
+    if severity not in events.SEVERITIES:
+        typer.secho(f"[error] --severity: ожидается одно из "
+                    f"{', '.join(events.SEVERITIES)}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    desktop, min_severity = store.notify_settings()
+    typer.echo(f"[info] notify: desktop={desktop} "
+               f"min_severity={min_severity}")
+    sent, reason = send_test_banner(severity)
+    if sent:
+        typer.secho("[ok] notify-test: баннер отправлен (cooldown обойдён)",
+                    fg=typer.colors.GREEN)
+        raise typer.Exit(code=0)
+    typer.secho(f"[error] notify-test: баннер не отправлен — "
+                f"{reason or 'причина не сообщена'}", fg=typer.colors.RED)
+    typer.secho(f"[info] {_notify_reason_hint(reason)}", fg=typer.colors.CYAN)
+    raise typer.Exit(code=1)

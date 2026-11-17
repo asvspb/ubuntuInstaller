@@ -97,6 +97,7 @@ vpn install --linger
 | `vpn guard rules [--json]` | Каталог правил, текущие пороги, `rules_hash`/`config_hash` |
 | `vpn guard export [--since 7d] [-o FILE] [--keep-hosts]` | Обезличенный бандл findings+coverage (≤5 МБ, хосты → `<host>`) |
 | `vpn guard selftest` | Проверка схем/парсера/правил/пост-сканера из установленного пакета |
+| `vpn guard notify-test [--severity high]` | Тестовый баннер через тот же opt-in/порог (cooldown 12/час намеренно обойдён) + статус OK/причина отказа |
 | `vpn guard sync [--host root@asv]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
 | `vpn guard install [--apply] [--linger] [--sync-timer]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию) |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
@@ -582,6 +583,7 @@ vpn guard explain G-03          # окно, счётчики, FP-проверк�
 vpn guard sources [--recheck]   # покрытие: права, слепые зоны, unparsed
 vpn guard export --since 7d -o /tmp/guard-bundle
 vpn guard selftest              # схемы/парсер/правила/пост-сканер (exit 0/1)
+vpn guard notify-test           # тестовый баннер: канал доставки жив? (cooldown обойдён)
 vpn guard sync --host root@asv1 # единственная сетевая команда (read-only ssh)
 vpn guard install --apply       # user-юнит vpn-guard.service (+ --linger)
 ```
@@ -652,6 +654,10 @@ censorship_suspect > endpoint_unreachable > degraded > observability`.
 - нотификации на десктоп — opt-in (`notify.desktop=true`, `min_severity=high`),
   `notify-send` вызывается списком аргументов (без shell), не чаще 12/час;
   без D-Bus finding не теряется — остаётся строка в журнале;
+  `vpn guard notify-test` проверяет **фактическую доставку** тем же путём
+  (opt-in, порог, наличие `notify-send`/D-Bus), печатает `OK` или причину
+  отказа с подсказкой; cooldown 12/час обойдён намеренно — это ручная
+  проверка канала, а не находка guard; в `findings.jsonl` ничего не пишется;
 - счётчик `redaction_hits` и кольцо G-11 живут в `guard/state.json` и
   переживают рестарт/`kill -9`.
 
