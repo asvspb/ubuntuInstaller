@@ -26,6 +26,15 @@ server will not answer it.  The probe therefore measures UDP reachability
 (ICMP unreachable vs silence), which is exactly what the WP asks for; it
 does not claim "Hysteria2 works".
 
+Address family order: both TCP/TLS and the UDP exchange walk **every** address
+``getaddrinfo`` returned, IPv4 first and IPv6 last, instead of taking
+``infos[0]``.  On an IPv4-only host a dual-stack name (A+AAAA) resolves with
+the AAAA record first, and the old code only ever tried it — so a working
+IPv4 path was reported as ``no_route``/``error``.  ENETUNREACH/EHOSTUNREACH on
+one address is *this address has no route*, not a verdict about the peer
+(guard fix 904212f): the next address is tried and the last error is kept
+only when every address has been exhausted.
+
 Concurrency: :func:`probe_all` uses ``ThreadPoolExecutor(max_workers=8)``,
 a per-socket timeout of 1.5 s and one shared budget of 2500 ms; the timeout
 handed to each socket is clamped to what is left of the budget, so four
@@ -78,10 +87,29 @@ _QUIC_VERSION = b"\x00\x00\x00\x01"
 #: UDP datagram size for the AWG reachability probe (padding, not a packet).
 _AWG_DATAGRAM_BYTES = 32
 
+#: Address families in the order the probes try them: IPv4 first, IPv6 last,
+#: anything else after.  ``sorted`` is stable, so the resolver's own order is
+#: kept inside one family — the order never depends on the host's OS.
+_FAMILY_ORDER = {socket.AF_INET: 0, socket.AF_INET6: 1}
+
+#: errno values that mean "no route to *this* address", not "peer is blocked".
+_NO_ROUTE_ERRNOS = (errno.ENETUNREACH, errno.EHOSTUNREACH)
+
 
 def _remaining(deadline: float) -> float:
     """Seconds left until ``deadline`` (never zero, so settimeout is valid)."""
     return max(0.05, deadline - time.monotonic())
+
+
+def _ordered_infos(infos: Sequence[Tuple]) -> Sequence[Tuple]:
+    """Deterministic IPv4-first order of ``getaddrinfo`` records.
+
+    A dual-stack name on an IPv4-only host resolves AAAA-first; trying that
+    address first only produces ENETUNREACH and used to hide a reachable
+    IPv4 path.  IPv4 therefore goes first, IPv6 last, and the relative order
+    inside a family is left to the resolver.
+    """
+    return sorted(infos, key=lambda info: _FAMILY_ORDER.get(info[0], 2))
 
 
 def _oserror_result(exc: OSError) -> ProbeResult:
@@ -118,7 +146,13 @@ def _tls_context() -> ssl.SSLContext:
 
 def probe_tcp_tls(host: str, port: int, sni: Optional[str] = None, *,
                   timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
-    """TCP connect → TLS 1.3 handshake with ``sni`` (read-only, bounded)."""
+    """TCP connect → TLS 1.3 handshake with ``sni`` (read-only, bounded).
+
+    Every resolved address is tried, IPv4 first.  A route failure
+    (ENETUNREACH/EHOSTUNREACH) or a connect timeout on one address moves on
+    to the next while the shared deadline still has time; the last failure is
+    returned only when every address is exhausted.
+    """
     started = time.monotonic()
     deadline = started + max(0.05, float(timeout))
     try:
@@ -127,11 +161,36 @@ def probe_tcp_tls(host: str, port: int, sni: Optional[str] = None, *,
         return ProbeResult(STATUS_DNS_ERROR, detail=f"DNS: {exc}")
     if not infos:
         return ProbeResult(STATUS_DNS_ERROR, detail="DNS: пустой ответ")
-    family, socktype, proto, _canon, sockaddr = infos[0]
+    last = ProbeResult(STATUS_ERROR, detail="проба не выполнялась")
+    for index, (family, socktype, proto, _canon, sockaddr) in enumerate(
+            _ordered_infos(infos)):
+        if index and _remaining(deadline) <= 0.05:
+            break  # бюджет исчерпан первым адресом — дальше не пробуем
+        last, retry = _tcp_tls_address(
+            family, socktype, proto, sockaddr,
+            host=host, sni=sni, started=started, deadline=deadline,
+            timeout=float(timeout))
+        if not retry:
+            return last
+    return last
+
+
+def _tcp_tls_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
+                     *, host: str, sni: Optional[str], started: float,
+                     deadline: float, timeout: float
+                     ) -> Tuple[ProbeResult, bool]:
+    """One TCP+TLS attempt against one resolved address.
+
+    Returns ``(result, retry)``; ``retry`` is true only when the failure is
+    about *this address* (no route, or a connect that timed out before the
+    shared deadline) — then the next address may still be reachable.  A
+    completed handshake, an RST, a hanging ClientHello and a TLS error are all
+    observations about the peer and end the probe.
+    """
     try:
         sock = socket.socket(family, socktype, proto)
     except OSError as exc:
-        return _oserror_result(exc)
+        return _oserror_result(exc), True
     phase = "connect"
     tls: Optional[object] = None
     try:
@@ -142,26 +201,29 @@ def probe_tcp_tls(host: str, port: int, sni: Optional[str] = None, *,
         sock.settimeout(_remaining(deadline))
         tls = _tls_context().wrap_socket(sock, server_hostname=sni or host)
         return ProbeResult(STATUS_OK, rtt_ms=rtt_ms,
-                           detail="TCP+TLS handshake ok")
+                           detail="TCP+TLS handshake ok"), False
     except (socket.timeout, TimeoutError):
         if phase == "handshake":
             # connected, but the ClientHello never got an answer: the
             # signature of a TLS filter that swallows instead of RSTing
             return ProbeResult(STATUS_TSPU_TLS_FILTER,
-                               detail="ClientHello без ответа (handshake timeout)")
+                               detail="ClientHello без ответа (handshake "
+                                      "timeout)"), False
         return ProbeResult(STATUS_TIMEOUT,
-                           detail=f"TCP connect timeout {timeout:g}s")
+                           detail=f"TCP connect timeout {timeout:g}s"), True
     except ConnectionResetError:
         return ProbeResult(STATUS_TSPU_TLS_FILTER,
-                           detail="RST после ClientHello/на connect")
+                           detail="RST после ClientHello/на connect"), False
     except ssl.SSLEOFError as exc:
         return ProbeResult(STATUS_TSPU_TLS_FILTER,
-                           detail=f"EOF во время handshake: {exc}")
+                           detail=f"EOF во время handshake: {exc}"), False
     except ssl.SSLError as exc:
         return ProbeResult(STATUS_TLS_ERROR,
-                           detail=f"TLS: {getattr(exc, 'reason', None) or exc}")
+                           detail=f"TLS: {getattr(exc, 'reason', None) or exc}"
+                           ), False
     except OSError as exc:
-        return _oserror_result(exc)
+        result = _oserror_result(exc)
+        return result, result.status in (STATUS_NO_ROUTE, STATUS_TIMEOUT)
     finally:
         for sock_obj in (tls, sock):
             if sock_obj is None:
@@ -179,10 +241,14 @@ def _udp_roundtrip(host: str, port: int, payload: bytes, *,
                    timeout: float) -> Tuple[str, Optional[float], str]:
     """Send one datagram and wait for an answer (connected UDP socket).
 
-    Returns ``(kind, rtt_ms, detail)`` with ``kind`` in ``answered`` (any UDP
+    Every resolved address is tried, IPv4 first.  Returns
+    ``(kind, rtt_ms, detail)`` with ``kind`` in ``answered`` (any UDP
     response), ``silence`` (nothing at all) or ``icmp`` (the kernel surfaced
-    an ICMP port/host unreachable).  ``dns_error``/``no_route``/``error`` are
-    deterministic failures, not observations about the peer's filter.
+    an ICMP port/host unreachable).  Those three are observations about the
+    peer and are final for the address that produced them.  ``dns_error`` is
+    final too.  ``no_route``/``error`` from a *single* address (no route to
+    it) only move on to the next address; they are returned once every address
+    is exhausted, keeping the last error in ``detail``.
     """
     started = time.monotonic()
     deadline = started + max(0.05, float(timeout))
@@ -192,11 +258,35 @@ def _udp_roundtrip(host: str, port: int, payload: bytes, *,
         return "dns_error", None, f"DNS: {exc}"
     if not infos:
         return "dns_error", None, "DNS: пустой ответ"
-    family, socktype, proto, _canon, sockaddr = infos[0]
+    last: Tuple[str, Optional[float], str] = (
+        "error", None, "проба не выполнялась")
+    for index, (family, socktype, proto, _canon, sockaddr) in enumerate(
+            _ordered_infos(infos)):
+        if index and _remaining(deadline) <= 0.05:
+            break  # бюджет исчерпан первым адресом — дальше не пробуем
+        kind, rtt, detail, retry = _udp_address(
+            family, socktype, proto, sockaddr, payload,
+            started=started, deadline=deadline, timeout=float(timeout))
+        last = (kind, rtt, detail)
+        if not retry:
+            return last
+    return last
+
+
+def _udp_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
+                 payload: bytes, *, started: float, deadline: float,
+                 timeout: float) -> Tuple[str, Optional[float], str, bool]:
+    """One UDP exchange against one resolved address.
+
+    Returns ``(kind, rtt_ms, detail, retry)``.  ``retry`` is true only when
+    the failure is "no route to this address" (ENETUNREACH/EHOSTUNREACH) —
+    reached on ``connect``, ``send`` or ``recv`` (UDP ``connect`` sends
+    nothing, so the kernel often reports the dead route later).
+    """
     try:
         sock = socket.socket(family, socktype, proto)
     except OSError as exc:
-        return "error", None, f"{type(exc).__name__}: {exc}"
+        return "error", None, f"{type(exc).__name__}: {exc}", True
     try:
         sock.settimeout(_remaining(deadline))
         sock.connect(sockaddr)
@@ -204,21 +294,24 @@ def _udp_roundtrip(host: str, port: int, payload: bytes, *,
         try:
             data = sock.recv(1500)
         except (socket.timeout, TimeoutError):
-            return "silence", None, f"нет ответа за {timeout:g}s"
+            return "silence", None, f"нет ответа за {timeout:g}s", False
         except ConnectionRefusedError:
-            return "icmp", None, "ICMP port unreachable"
+            return "icmp", None, "ICMP port unreachable", False
         except OSError as exc:
             code = getattr(exc, "errno", None)
             if code in (errno.ECONNREFUSED, errno.EHOSTUNREACH,
                         errno.ECONNRESET):
-                return "icmp", None, "ICMP unreachable"
+                return "icmp", None, "ICMP unreachable", False
             if code == errno.ENETUNREACH:
-                return "no_route", None, f"нет маршрута: {exc}"
-            return "error", None, f"{type(exc).__name__}: {exc}"
+                return "no_route", None, f"нет маршрута: {exc}", True
+            return "error", None, f"{type(exc).__name__}: {exc}", False
         return ("answered", round((time.monotonic() - started) * 1000.0, 1),
-                f"{len(data)} байт в ответ")
+                f"{len(data)} байт в ответ", False)
     except OSError as exc:
-        return "error", None, f"{type(exc).__name__}: {exc}"
+        code = getattr(exc, "errno", None)
+        if code in _NO_ROUTE_ERRNOS:
+            return "no_route", None, f"нет маршрута: {exc}", True
+        return "error", None, f"{type(exc).__name__}: {exc}", False
     finally:
         try:
             sock.close()

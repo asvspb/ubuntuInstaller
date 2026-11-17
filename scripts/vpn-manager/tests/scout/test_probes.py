@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from vpnm.scout import probes  # noqa: E402
 from vpnm.scout.models import (  # noqa: E402
+    STATUS_NO_ROUTE,
     STATUS_OK,
     STATUS_RECENT_UDP_BLACKHOLE,
     STATUS_REACHABLE,
@@ -43,40 +44,67 @@ class FakeIO:
                  handshake_error: Optional[BaseException] = None,
                  recv_result: Optional[bytes] = None,
                  recv_error: Optional[BaseException] = None,
-                 connect_delay: float = 0.0) -> None:
+                 connect_delay: float = 0.0,
+                 addrs: Optional[List[tuple]] = None,
+                 connect_errors_by_addr: Optional[dict] = None,
+                 send_errors_by_addr: Optional[dict] = None,
+                 recv_errors_by_addr: Optional[dict] = None) -> None:
         self.connect_error = connect_error
         self.handshake_error = handshake_error
         self.recv_result = recv_result
         self.recv_error = recv_error
         self.connect_delay = connect_delay
+        #: ``[(family, sockaddr)]`` returned by the fake ``getaddrinfo``; the
+        #: default is one IPv4 record built from the probe's host/port.
+        self.addrs = addrs
+        self.connect_errors_by_addr = connect_errors_by_addr or {}
+        self.send_errors_by_addr = send_errors_by_addr or {}
+        self.recv_errors_by_addr = recv_errors_by_addr or {}
         self.getaddrinfo_calls = 0
         self.connected = 0
         self.sent: List[bytes] = []
         self.sni: List[Optional[str]] = []
+        #: ``sockaddr`` of every ``connect()`` in call order (IPv4-first check).
+        self.connect_addrs: List[tuple] = []
         self.closed = 0
 
 
 class FakeSock:
-    def __init__(self, io: FakeIO) -> None:
+    def __init__(self, io: FakeIO, family: int = socket.AF_INET) -> None:
         self.io = io
+        self.family = family
+        self._addr: Optional[tuple] = None
 
     def settimeout(self, _value: float) -> None:
         pass
 
-    def connect(self, _addr) -> None:
+    def connect(self, addr) -> None:
+        self.io.connect_addrs.append(addr)
+        self._addr = addr
         if self.io.connect_delay:
             time.sleep(self.io.connect_delay)
-        if self.io.connect_error is not None:
-            raise self.io.connect_error
+        error = self.io.connect_error
+        if error is None:
+            error = self.io.connect_errors_by_addr.get(addr[0])
+        if error is not None:
+            raise error
         self.io.connected += 1
 
     def send(self, payload: bytes) -> int:
+        error = self.io.send_errors_by_addr.get(
+            self._addr[0] if self._addr else None)
+        if error is not None:
+            raise error
         self.io.sent.append(payload)
         return len(payload)
 
     def recv(self, _size: int) -> bytes:
-        if self.io.recv_error is not None:
-            raise self.io.recv_error
+        error = self.io.recv_errors_by_addr.get(
+            self._addr[0] if self._addr else None)
+        if error is None:
+            error = self.io.recv_error
+        if error is not None:
+            raise error
         return self.io.recv_result if self.io.recv_result is not None else b""
 
     def close(self) -> None:
@@ -106,6 +134,7 @@ class FakeSocketModule:
     """Only the surface ``probes`` uses; everything else is the real module."""
 
     AF_INET = socket.AF_INET
+    AF_INET6 = socket.AF_INET6
     SOCK_STREAM = socket.SOCK_STREAM
     SOCK_DGRAM = socket.SOCK_DGRAM
     timeout = socket.timeout
@@ -117,11 +146,18 @@ class FakeSocketModule:
 
     def getaddrinfo(self, host, port, type=0, **kwargs):  # noqa: A002
         self.io.getaddrinfo_calls += 1
-        return [(socket.AF_INET, type or socket.SOCK_STREAM,
-                 socket.IPPROTO_TCP, "", (host, port))]
+        socktype = type or socket.SOCK_STREAM
+        if self.io.addrs is not None:
+            proto = socket.IPPROTO_TCP if socktype == socket.SOCK_STREAM \
+                else socket.IPPROTO_UDP
+            return [(family, socktype, proto, "", addr)
+                    for family, addr in self.io.addrs]
+        return [(socket.AF_INET, socktype,
+                 socket.IPPROTO_TCP if socktype == socket.SOCK_STREAM
+                 else socket.IPPROTO_UDP, "", (host, port))]
 
     def socket(self, family, socktype, proto=0):
-        return FakeSock(self.io)
+        return FakeSock(self.io, family)
 
 
 def install_fake(monkeypatch: pytest.MonkeyPatch, io: FakeIO) -> FakeSocketModule:
@@ -257,6 +293,121 @@ def test_awg_icmp_unreachable_is_refused(
         recv_error=ConnectionRefusedError(111, "Connection refused")))
     result = probes.probe_awg_reachability("203.0.113.10", 51820)
     assert result.status == STATUS_UDP_REFUSED
+
+
+# --- dual stack: IPv4-first, IPv6 ENETUNREACH is not a verdict --------------------
+
+#: Field case (2026-11-17, IPv4-only laptop): A+AAAA name, AAAA first from the
+#: resolver, no IPv6 route — the datacenter IPv4 is where the relay lives.
+V6_HOST = "2a0b:4140:9a2e::2"
+V4_HOST = "185.80.91.135"
+
+
+def _dual_stack(port: int = 443) -> List[tuple]:
+    """Resolver order exactly as the field saw it: IPv6 first, IPv4 second."""
+    return [(socket.AF_INET6, (V6_HOST, port, 0, 0)),
+            (socket.AF_INET, (V4_HOST, port))]
+
+
+def _enetunreach() -> OSError:
+    return OSError(101, "Network is unreachable")
+
+
+def test_tcp_ipv6_enetunreach_falls_through_to_ipv4(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(),
+                connect_errors_by_addr={V6_HOST: _enetunreach()})
+    install_fake(monkeypatch, io)
+    result = probes.probe_tcp_tls("asv2.example.ru", 443, "www.microsoft.com")
+    assert result.status == STATUS_OK
+    assert result.rtt_ms is not None
+    # IPv4 was actually connected after the IPv6 route failure
+    assert io.connected == 1
+    assert io.connect_addrs[-1] == (V4_HOST, 443)
+    assert io.sni == ["www.microsoft.com"]
+
+
+def test_tcp_tries_ipv4_first_even_when_the_resolver_returns_it_last(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack())
+    install_fake(monkeypatch, io)
+    result = probes.probe_tcp_tls("asv2.example.ru", 443, "example.com")
+    assert result.status == STATUS_OK
+    assert io.connect_addrs == [(V4_HOST, 443)]  # IPv6 never touched
+
+
+def test_tcp_all_addresses_unreachable_is_no_route_with_the_last_error(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(), connect_errors_by_addr={
+        V4_HOST: _enetunreach(),
+        V6_HOST: _enetunreach(),
+    })
+    install_fake(monkeypatch, io)
+    result = probes.probe_tcp_tls("asv2.example.ru", 443, "example.com")
+    assert result.status == STATUS_NO_ROUTE
+    assert "нет маршрута" in (result.detail or "")
+    # every address was tried, IPv4 first, IPv6 last
+    assert io.connect_addrs == [(V4_HOST, 443), (V6_HOST, 443, 0, 0)]
+    assert io.connected == 0
+
+
+def test_udp_ipv6_enetunreach_falls_through_to_ipv4_silence(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(),
+                connect_errors_by_addr={V6_HOST: _enetunreach()},
+                recv_error=socket.timeout("timed out"))
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_SILENCE
+    assert result.hard_fail is False
+    assert io.connect_addrs[-1] == (V4_HOST, 443)
+    assert len(io.sent) == 1  # the datagram really went to IPv4
+
+
+def test_udp_ipv6_enetunreach_falls_through_to_an_ipv4_answer(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(),
+                connect_errors_by_addr={V6_HOST: _enetunreach()},
+                recv_result=b"\x00" * 64)
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_OK
+
+
+def test_udp_enetunreach_on_send_moves_to_the_next_address(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """UDP ``connect`` sends nothing; the dead route may surface on ``send``."""
+    io = FakeIO(addrs=_dual_stack(),
+                send_errors_by_addr={V6_HOST: _enetunreach()},
+                recv_error=socket.timeout("timed out"))
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_SILENCE
+    assert io.connect_addrs[-1] == (V4_HOST, 443)
+    assert len(io.sent) == 1
+
+
+def test_udp_all_addresses_unreachable_is_no_route(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(), connect_errors_by_addr={
+        V4_HOST: _enetunreach(),
+        V6_HOST: _enetunreach(),
+    })
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_NO_ROUTE
+    assert "нет маршрута" in (result.detail or "")
+
+
+def test_single_ipv4_host_behaves_exactly_as_before(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a plain A-only host still connects once and reports ok."""
+    io = FakeIO()
+    install_fake(monkeypatch, io)
+    result = probes.probe_tcp_tls("203.0.113.10", 443, "example.com")
+    assert result.status == STATUS_OK
+    assert io.connect_addrs == [("203.0.113.10", 443)]
+    assert io.getaddrinfo_calls == 1
 
 
 # --- budget -----------------------------------------------------------------------
