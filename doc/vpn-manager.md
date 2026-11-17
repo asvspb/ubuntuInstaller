@@ -595,19 +595,40 @@ vpn guard install --apply       # user-юнит vpn-guard.service (+ --linger)
 | G-03 | `post_handshake_drop` — ≥3 циклов handshake→обрыв (≤5 с) за 120 с | `censorship_suspect` / `data_phase` |
 | G-04 | `udp_response_blackhole` — QUIC ok, ответов нет; AWG `tx↑/rx≈0` | `censorship_suspect` / `udp_response` |
 | G-05 | `auth_failure` — `auth_fail` без `auth_ok` 5 мин | `config` / `pre_handshake` |
-| G-06 | `dns_broken` — ≥2 DNS-ошибок за 60 с | `dns` / `local` |
+| G-06 | `dns_broken` — ≥2 DNS-ошибок за 60 с (подавляется G-07: нет route → `local_net_down`) | `dns` / `local` |
 | G-07 | `local_network_down` — `network_unreachable`/нет route | `local_net` / `local` |
 | G-08 | `tls_cert_error` — сертификат без успешного TLS 5 мин | `config` / `tls_stall` |
-| G-09 | `endpoint_silent` — ≥5 pre-handshake сбоев на host:port за 10 мин | `endpoint_unreachable` / `pre_handshake` |
+| G-09 | `endpoint_silent` — ≥5 pre-handshake сбоев на host:port за 10 мин; **только VPN-транспорты** (`vpnm-*`, `vpn-xray-split@*`, `vpn-awg-split@*`, `awg-quick@*`, `vpn-relay-*`) | `endpoint_unreachable` / `pre_handshake` |
 | G-10 | `unit_flap` — ≥3 exit (non-zero)/start за 10 мин | `local_fault` / `local` |
 | G-11 | `degraded_throughput` — ≥2 отчётов `vpn speed` < 2.0 Мбит/с за 24 ч | `degraded` / `data_phase` |
-| G-12 | `guard_selfdegraded` — источник lost/очереди/unparsed/часы | `observability` / `local` |
+| G-12 | `guard_selfdegraded` — источник lost/очереди/unparsed/часы (AWG off и suspend/skew не считаются потерей источника) | `observability` / `local` |
 
 Пороги — только в `~/.config/vpn-manager/guard.json` (никаких пользовательских
 regex); актуальные значения и детерминированные `rules_hash`/`config_hash`
 печатает `vpn guard rules --json`. Корневая причина инцидента выбирается по
 SPEC §9.2: `local_net > local_fault > config > dns > tunnel_down >
 censorship_suspect > endpoint_unreachable > degraded > observability`.
+
+Уточнения по полевому чекпоинту WP-G6 (2026-11-17):
+
+- **G-09 — только для VPN-транспортов.** Вспомогательные сервисы
+  (`cloudflared-proxy-dns`, `dnsmasq`, `zapret`, системные/сетевые юниты)
+  тоже пишут `conn_reset`/`dial_timeout`, но их молчание — локальный контекст,
+  а не «молчащий эндпоинт». Классификация явная
+  (`rules.is_vpn_transport_unit`), неизвестный юнит транспортом не считается.
+- **Дедуп внутри батча.** Ключ `rule|unit|endpoint|cause` строится по
+  эндпоинту, который попадает в finding, а не по эндпоинту события-триггера;
+  один физический отказ даёт один finding (cooldown взводится на первом).
+- **Порядок findings.** `vpn guard findings` (и `--json`) отдаёт строгую
+  хронологию по `window.last` (при равенстве — порядок вставки), а не порядок
+  строк в файле.
+- **G-06 ↔ G-07.** Если в окне или в том же батче есть
+  `network_unreachable`/`no_route`, G-06 подавляется (`local_net_down`):
+  приоритет у G-07. G-06, сработавший *до* потери маршрута, не отзывается —
+  инцидент всё равно классифицируется как `local_net` (приоритет §9.2).
+- **G-12 не считает «потерей источника» штатные и локальные состояния:**
+  остановленный AWG (`mode.json`/последний lifecycle `vpn_down`) и период
+  suspend/resume (скачок realtime↔monotonic фиксируется как `clock_skew`).
 
 ### Приватность и артефакты
 

@@ -690,7 +690,7 @@ def test_g06_downgraded_when_the_network_is_unreachable() -> None:
                    ev("network_unreachable", 6.0),
                    ev("dns_lookup_fail", 10.0))
     assert findings(outcomes, "G-06") == []
-    assert outcome(outcomes, "G-06", "suppressed")["reason"] == "local_network"
+    assert outcome(outcomes, "G-06", "suppressed")["reason"] == "local_net_down"
 
 
 # --- G-07 local_network_down ---------------------------------------------------
