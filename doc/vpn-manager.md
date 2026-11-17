@@ -79,10 +79,10 @@ vpn install --linger
 | `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`) |
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
-| `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план) |
-| `vpn scout [--json] [--sync] [--probe-all]` | Активная разведка маршрутов: по умолчанию Stealth Cascade (локальная сортировка → одна проба до первого хорошего); `--probe-all` — полный параллельный опрос. RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
+| `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план). `<name>` и `--scout` взаимоисключающие (вместе → exit 2) |
+| `vpn scout [--json] [--sync [--host H]] [--probe-all]` | Активная разведка маршрутов: по умолчанию Stealth Cascade (локальная сортировка → одна проба до первого хорошего); `--probe-all` — полный параллельный опрос. RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
 | `vpn start [awg\|relay\|reality\|xhttp] [--proto awg\|reality]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `relay` — RU-релей (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`), `reality`/`xhttp` — xray-split / полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие |
-| `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
+| `vpn scheme awg\|xray-split [p]\|xhttp-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / только XHTTP / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
 | `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль / awg-схема, состояние unit, внешний IP через SOCKS. При AWG печатает `awg-схема активна: доменный split через vpn-awg-split@<iface>.service` — `no active profile` относится только к socks-профилям и в этом режиме не выводится. Если `mode.json` говорит `relay`/`direct`, а юнит **неактивен**, статус не рапортует живой режим, а печатает `mode: RELAY (юнит … неактивен — туннель не поднят)` и подсказку `vpn start relay` (direct — `vpn start`) |
@@ -90,18 +90,20 @@ vpn install --linger
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
 | `vpn doh on\|off\|status` | DoH-резолвер cloudflared (127.0.0.1:5053) |
-| `vpn amneziawg status\|add-client\|remove-client\|tunnel` | AWG: локальный туннель и клиенты на сервере |
+| `vpn amneziawg status\|add-client\|remove-client\|tunnel\|qr` | AWG: локальный туннель, клиенты на сервере, QR-конфиг для телефона |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
 | `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / ZeroTier / amneziawg / xray-split / zapret / dns-doh (N/7) |
-| `vpn guard run [--once] [--json] [--trace]` | Потоковый анализ журналов: правила G-01…G-12, инциденты, findings (read-only) |
-| `vpn guard status\|findings\|explain\|sources [--json]` | Состояние, история, «почему сработало», покрытие источников |
+| `vpn guard run [--once] [--json\|--quiet] [--foreground] [--since -2m] [--trace]` | Потоковый анализ журналов: правила G-01…G-12, инциденты, findings (read-only) |
+| `vpn guard status\|findings\|sources [--json]` | Состояние, история, покрытие источников |
+| `vpn guard explain <id\|G-xx>` | «Почему сработало»: окно, сигналы, FP-проверки, действия (без `--json`) |
 | `vpn guard rules [--json]` | Каталог правил, текущие пороги, `rules_hash`/`config_hash` |
 | `vpn guard export [--since 7d] [-o FILE] [--keep-hosts]` | Обезличенный бандл findings+coverage (≤5 МБ, хосты → `<host>`) |
 | `vpn guard selftest` | Проверка схем/парсера/правил/пост-сканера из установленного пакета |
 | `vpn guard notify-test [--severity high]` | Тестовый баннер через тот же opt-in/порог (cooldown 12/час намеренно обойдён) + статус OK/причина отказа |
-| `vpn guard sync [--host root@asv]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
-| `vpn guard install [--apply] [--linger] [--sync-timer]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию) |
+| `vpn guard sync [--host root@asv] [--timeout 10.0]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
+| `vpn guard install [--apply] [--linger] [--sync-timer] [--netlink]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию); `--netlink` — AF_NETLINK для sysfs-AWG |
+| `vpn guard remove [--apply] [--purge]` | Выключить/удалить юнит guard (dry-run по умолчанию); `--purge` — вместе с findings/state |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 | `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
@@ -588,6 +590,7 @@ vpn guard selftest              # схемы/парсер/правила/пос�
 vpn guard notify-test           # тестовый баннер: канал доставки жив? (cooldown обойдён)
 vpn guard sync --host root@asv1 # единственная сетевая команда (read-only ssh)
 vpn guard install --apply       # user-юнит vpn-guard.service (+ --linger)
+vpn guard remove --apply        # снять юнит (dry-run без --apply; --purge — с данными)
 ```
 
 ### Правила
@@ -599,12 +602,12 @@ vpn guard install --apply       # user-юнит vpn-guard.service (+ --linger)
 | G-03 | `post_handshake_drop` — ≥3 циклов handshake→обрыв (≤5 с) за 120 с | `censorship_suspect` / `data_phase` |
 | G-04 | `udp_response_blackhole` — QUIC ok, ответов нет; AWG `tx↑/rx≈0` | `censorship_suspect` / `udp_response` |
 | G-05 | `auth_failure` — `auth_fail` без `auth_ok` 5 мин | `config` / `pre_handshake` |
-| G-06 | `dns_broken` — ≥2 DNS-ошибок за 60 с (подавляется G-07: нет route → `local_net_down`) | `dns` / `local` |
+| G-06 | `dns_broken` — ≥2 DNS-ошибок за 60 с или SERVFAIL на ≥2 именах (подавляется G-07: нет route → `local_net_down`) | `dns` / `local` |
 | G-07 | `local_network_down` — `network_unreachable`/нет route | `local_net` / `local` |
 | G-08 | `tls_cert_error` — сертификат без успешного TLS 5 мин | `config` / `tls_stall` |
 | G-09 | `endpoint_silent` — ≥5 pre-handshake сбоев на host:port за 10 мин; **только VPN-транспорты** (`vpnm-*`, `vpn-xray-split@*`, `vpn-awg-split@*`, `awg-quick@*`, `vpn-relay-*`) | `endpoint_unreachable` / `pre_handshake` |
 | G-10 | `unit_flap` — ≥3 exit (non-zero)/start за 10 мин | `local_fault` / `local` |
-| G-11 | `degraded_throughput` — ≥2 отчётов `vpn speed` < 2.0 Мбит/с за 24 ч | `degraded` / `data_phase` |
+| G-11 | `degraded_throughput` — ≥2 отчётов `vpn speed` < 2.0 Мбит/с **подряд** за 24 ч | `degraded` / `data_phase` |
 | G-12 | `guard_selfdegraded` — источник lost/очереди/unparsed/часы (AWG off и suspend/skew не считаются потерей источника) | `observability` / `local` |
 
 Пороги — только в `~/.config/vpn-manager/guard.json` (никаких пользовательских
@@ -713,7 +716,8 @@ vpn up --scout --dry-run   # только напечатать, что было 
 ```
 
 Exit-коды: `0` — рекомендация есть; `1` — нет ни одного маршрута с score ≥50
-(отчёт всё равно печатается), `2` — ошибка аргументов.
+(отчёт всё равно печатается); `2` — только ошибка разбора аргументов (typer),
+сама команда возвращает 0 или 1.
 
 ### Stealth Cascade (2026-11-18) — не светиться перед ТСПУ и не взводить probe-watch
 
@@ -843,8 +847,11 @@ filter** — direct Reality → 0, relay +15; **недавний G-04 на UDP-�
 — 85, и выигрывал. Двусторонний доказанный канал проигрывал недоказанному.
 Поэтому: `silence` (UDP без ответа) — это −6 с причиной «UDP без ответа
 (silence): −6 за недоказанную проходимость»; применяется ко всем протоколам
-со статусом silence (сейчас Hy2; AWG отдаёт `reachable` и не штрафуется —
-он штатно молчит на неаутентифицированные пакеты). Подпись `silence` у Hy2 —
+со статусом silence (сейчас Hy2). AWG тоже не доказывает проходимость: его
+UDP-проба идёт как `local_route` (connect без единого байта в эфир) и получает
+те же −6 — молчание на неаутентифицированные пакеты ничего не подтверждает,
+а `reachable` в новом потоке (Stealth Cascade) не возникает вовсе. Подпись
+`silence` у Hy2 —
 **не приговор**: сервер штатно не отвечает на неаутентифицированный Initial,
 поэтому silence — неопределённость, а не доказательство блокировки; Hy2
 остаётся рабочей ставкой, когда Reality отфильтрован/залочен или AWG поймал
@@ -860,11 +867,12 @@ server-verdict **свежий** и `threat_level` = `elevated`/`high`:
 `threat_level` продублировано на верхнем уровне `scout.report/1` — аддитивно,
 прежние ключи не менялись.
 
-Вывод: `RECOMMENDED` — лучший score ≥50; `FALLBACK` — лучший на **другом
-маршруте** (при равенстве — другом протоколе); остальные — «отсеяны» с
-человекочитаемыми причинами (`probe: TSPU_TLS_FILTER — ...`, `lock-443: ...`,
-`score N < 50` и т.д.). Если рекомендации нет, `vpn up --scout` откажется
-запускать что-либо (exit 1) и предложит полный отчёт.
+Вывод: `RECOMMENDED` — лучший score ≥50; `FALLBACK` — лучший кандидат на
+**другом маршруте**; если другого маршрута нет — лучший с другим протоколом
+(в каскаде — только из непроверенных узлов, по `pre_score`); остальные —
+«отсеяны» с человекочитаемыми причинами (`probe: TSPU_TLS_FILTER — ...`,
+`lock-443: ...`, `score N < 50` и т.д.). Если рекомендации нет,
+`vpn up --scout` откажется запускать что-либо (exit 1) и предложит полный отчёт.
 
 JSON-контракт `scout.report/1`:
 
@@ -901,7 +909,8 @@ JSON-контракт `scout.report/1`:
 `(не проверялся)`.
 
 Если **текущий** активный канал сам заблокирован (`SERVER_LOCKDOWN`,
-`TSPU_TLS_FILTER`, `refused`, `timeout`), scout переиспользует существующий
+`TSPU_TLS_FILTER`, `refused`, `timeout`, `udp_refused`, `no_route`, `dns_error`,
+`tls_error`, `error`, `budget`), scout переиспользует существующий
 `guard-notify` (его opt-in и rate limit не меняются): баннер содержит
 следующую команду — `vpn switch <profile>`, для AWG — `vpn start` /
 `vpn start relay`. Ничего не отправляется, если `notify.desktop=false`.
@@ -1221,7 +1230,7 @@ vpn scheme xray-split <profile>    # Reality/XHTTP; <profile> — имя из
                                    # 'vpn profile list' (без имени — первый)
 vpn scheme xhttp-split [профиль]   # алиас: автовыбор только xray-xhttp
 vpn scheme awg                     # назад: снимает xsplit (взаимно исключительны)
-vpn scheme reset                   # снять всё
+vpn reset                          # снять всё (общий выключатель; не preset)
 sudo bash scripts/17_xray-split.sh --status | --off
 ```
 

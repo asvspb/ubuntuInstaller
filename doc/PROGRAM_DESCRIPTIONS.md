@@ -198,6 +198,12 @@
 - `vpn monitor` — матрица каналов (vpnm / cdn / ZeroTier / AmneziaWG /
   xray-split / zapret / dns-doh, healthy N/7); в таблице человекочитаемые
   статусы (✔ / ○ готов / — не настроен / ✖ ошибка), коды — в `--json`
+- `vpn guard` — real-time разбор клиентских логов (правила G-01…G-12),
+  read-only: демон ничего не рестартит и в сеть не ходит; сеть только у
+  `vpn guard sync`. Юнит `vpn-guard.service` — opt-in (`install --apply`)
+- `vpn scout` — активная разведка маршрутов: read-only probe + скоринг +
+  рекомендация; по умолчанию Stealth Cascade (0 байт в эфир для UDP,
+  TLS+`HEAD /` на 443/tcp); `vpn up --scout` поднимает рекомендованный
 - TUI-меню (`vpn` без аргументов) на questionary
 
 ### `scripts/13_dns-doh.sh`
