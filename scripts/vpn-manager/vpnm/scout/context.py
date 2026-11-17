@@ -445,6 +445,26 @@ def has_recent_udp_blackhole(findings: Sequence[Mapping[str, Any]],
     return f"{host}:{port}" in set(g04_keys(findings))
 
 
+def incident_profiles(findings: Sequence[Mapping[str, Any]]) -> List[str]:
+    """Profile names with a recent G-01/G-03 finding (order preserved).
+
+    G-01 is the threat signal and G-03 the "current channel unreachable"
+    finding the scout itself emits; both say *this profile* had a recent
+    incident, which is enough to demote an unproven UDP verdict to
+    ``recent_incident`` without sending a packet.
+    """
+    profiles: List[str] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            continue
+        if finding.get("rule") not in ("G-01", "G-03"):
+            continue
+        profile = finding.get("profile")
+        if isinstance(profile, str) and profile and profile not in profiles:
+            profiles.append(profile)
+    return profiles
+
+
 # --- the assembled context ----------------------------------------------------
 
 
@@ -464,6 +484,10 @@ class ScoutContext:
     @property
     def g04_endpoints(self) -> List[str]:
         return g04_keys(self.findings)
+
+    @property
+    def incident_profiles(self) -> List[str]:
+        return incident_profiles(self.findings)
 
     @property
     def threat_level(self) -> Optional[str]:

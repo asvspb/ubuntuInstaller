@@ -1995,6 +1995,10 @@ def scout(as_json: bool = typer.Option(
               False, "--sync",
               help="Сначала 'vpn guard sync' (один ssh — единственный сетевой "
                    "шаг), затем разведка по свежему вердикту"),
+          probe_all: bool = typer.Option(
+              False, "--probe-all",
+              help="Полный параллельный опрос всех узлов (по умолчанию — "
+                   "каскад: сортировка локально и остановка на первом хорошем)"),
           host: Optional[str] = typer.Option(
               None, "--host", help="ssh-хост для --sync (по умолчанию "
                                    "settings.json:ssh_host)"),
@@ -2002,20 +2006,28 @@ def scout(as_json: bool = typer.Option(
     """Активная разведка маршрутов: read-only probe + скоринг + рекомендация.
 
     Демон guard сеть не трогает — разведку делает только эта команда.
-    Для каждого реального кандидата (профили клиента + AWG-конфиги):
-    TCP+TLS 1.3 handshake с настоящим SNI (refused/timeout/TSPU TLS filter
-    различаются), QUIC Initial ≥1200 байт для Hysteria2 (ICMP unreachable
-    и тишина различимы) и UDP-достижимость AWG + история G-04 за 30 мин.
-    Бюджет прогона — 2500 мс, сокет-таймаут 1500 мс, 8 воркеров.
+    По умолчанию — **Stealth Cascade**: кандидаты сортируются локально
+    (pre_score: база + lock-443 + свежие G-04/G-01/G-03, без сети), затем
+    проверяются по одному до первого хорошего (`ok`/`reachable`/`local_route`);
+    к остальным узлам не уходит ни одного пакета. Между провалами — джиттер
+    150–400 мс, общий бюджет 6000 мс, таймаут пробы 1500 мс.
+    `--probe-all` — прежний полный параллельный опрос (2500 мс, 8 воркеров).
 
-    Вывод: RECOMMENDED (score ≥50), FALLBACK на другом маршруте/протоколе
-    и «отсеяны» с причинами. Ничего не пишется: findings.jsonl, guard.json
-    и server-verdict.json остаются неизменными (--sync пишет вердикт
-    штатной командой vpn guard sync). Exit: 0 — рекомендация есть, 1 — нет.
+    Пробы: TCP+TLS 1.3 с настоящим SNI → HEAD / (Host: SNI) → чтение первых
+    64 байт (HTTP/1.x|HTTP/2 → ok, TLS без HTTP → tls_only); Hysteria2 и AWG —
+    только локальная маршрутизируемость, 0 байт в эфир (connect без send),
+    плюс история G-04/G-01/G-03.
+
+    Вывод: RECOMMENDED (score ≥50), FALLBACK на другом маршруте/протоколе,
+    «отсеяны» с причинами. Бюджет каскада исчерпан → честный статус `budget`.
+    Ничего не пишется: findings.jsonl, guard.json и server-verdict.json
+    остаются неизменными (--sync пишет вердикт штатной командой vpn guard
+    sync). Exit: 0 — рекомендация есть, 1 — нет.
     """
     from .scout.cli import run_scout_cli
     raise typer.Exit(code=run_scout_cli(as_json=as_json, sync=sync,
-                                        host=host))
+                                        host=host,
+                                        probe_all_mode=probe_all))
 
 
 @app.command()

@@ -1,20 +1,33 @@
-"""WP-S4: the ``vpn scout`` command surface (also used by ``vpn up --scout``).
+"""WP-S4 + Stealth Cascade: the ``vpn scout`` command surface (also used by
+``vpn up --scout``).
 
 Read-only by construction: the report is built from the profile store, the
 guard artefacts and the probes; nothing is written.  The only network call
 is the explicit ``--sync``, which delegates to the existing
 :func:`vpnm.guard.verdict.sync` (one ssh fetch, unchanged contract).
 
+Two probe modes:
+
+- **cascade** (default) — candidates are ordered by the local, network-free
+  :func:`vpnm.scout.rank.pre_score`, then probed one at a time until the first
+  good node.  Nodes after the winner are never contacted; the report says
+  ``режим: каскад (проверен 1 узел)`` and the fallback is a *not probed* node
+  chosen by its pre-score;
+- **all** (``--probe-all``) — the old parallel full sweep, for when the owner
+  really wants the whole picture and accepts the traffic.
+
 JSON contract — ``scout.report/1``::
 
     {
       "schema": "scout.report/1",
       "created": "<RFC3339 UTC>",
+      "mode": "cascade"|"all",
+      "probed": ["<profile>", ...],
       "context": {"verdict": {...}|null, "verdict_fresh": false,
                   "verdict_age_s": null, "threat_level": null,
                   "server_verdict": null, "lockdown_443": false,
                   "findings_recent": 0, "g04_endpoints": [],
-                  "notes": []},
+                  "incident_profiles": [], "notes": []},
       "threat_level": null,
       "recommended": <row>|null,
       "fallback": <row>|null,
@@ -26,10 +39,8 @@ JSON contract — ``scout.report/1``::
 where ``<row>`` is the candidate (route/proto/profile/host/port/sni/
 port_hop_range) plus ``probe`` (status/rtt_ms/detail), ``score``, ``status``
 (``recommended``/``fallback``/``rejected``) and human-readable ``reasons``.
-
-The top-level ``threat_level`` mirrors ``context.threat_level`` (additive in
-the same ``scout.report/1`` version: old consumers that only read
-``context.threat_level`` are unaffected).
+``mode`` and ``probed`` are additive in the same ``scout.report/1`` version:
+old consumers are unaffected.
 """
 
 from __future__ import annotations
@@ -42,11 +53,20 @@ from typing import Any, Dict, List, Optional
 import typer
 
 from .context import ScoutContext, build_context
-from .models import PROTO_AWG, ROUTE_DIRECT, ROUTE_RELAY
-from .probes import DEFAULT_BUDGET_MS, DEFAULT_TIMEOUT_S, probe_all
-from .rank import RankReport, rank
+from .models import PROTO_AWG, ROUTE_DIRECT, ROUTE_RELAY, STATUS_NOT_PROBED
+from .probes import (
+    CASCADE_BUDGET_MS,
+    DEFAULT_BUDGET_MS,
+    DEFAULT_TIMEOUT_S,
+    probe_all,
+    probe_cascade,
+)
+from .rank import RankReport, presort, rank, rank_cascade
 
 SCHEMA = "scout.report/1"
+
+MODE_CASCADE = "cascade"
+MODE_ALL = "all"
 
 
 def _iso_now(now: Optional[float] = None) -> str:
@@ -65,6 +85,7 @@ def _context_payload(context: ScoutContext) -> Dict[str, Any]:
         "lockdown_443": context.lockdown_443,
         "findings_recent": len(context.findings),
         "g04_endpoints": context.g04_endpoints,
+        "incident_profiles": context.incident_profiles,
         "notes": list(context.notes),
     }
 
@@ -122,10 +143,16 @@ def build_report(*, sync: bool = False,
                  now: Optional[float] = None,
                  active_profile: Optional[str] = None,
                  notifier: Optional[Any] = None,
-                 budget_ms: int = DEFAULT_BUDGET_MS,
+                 probe_all_mode: bool = False,
+                 budget_ms: Optional[int] = None,
                  timeout_s: float = DEFAULT_TIMEOUT_S,
                  ) -> Dict[str, Any]:
-    """Assemble the ``scout.report/1`` payload (read-only without ``--sync``)."""
+    """Assemble the ``scout.report/1`` payload (read-only without ``--sync``).
+
+    ``probe_all_mode`` selects the explicit full sweep; the default is the
+    Stealth Cascade (sort locally, probe one node at a time, stop on the first
+    good one).
+    """
     notes: List[str] = []
     if sync:
         from ..guard import verdict as verdict_mod
@@ -148,18 +175,53 @@ def build_report(*, sync: bool = False,
                             findings_path=findings_path,
                             now=now)
     context.notes.extend(notes)
-    results = probe_all(context.candidates,
-                        budget_ms=budget_ms, timeout_s=timeout_s,
-                        lockdown_443=context.lockdown_443,
-                        recent_g04_endpoints=context.g04_endpoints)
-    report = rank(context.candidates, results,
-                  lockdown_443=context.lockdown_443,
-                  recent_g04_endpoints=context.g04_endpoints,
-                  active_profile=active_profile)
+    ordered = presort(context.candidates,
+                      lockdown_443=context.lockdown_443,
+                      recent_g04_endpoints=context.g04_endpoints,
+                      recent_incident_profiles=context.incident_profiles)
+    candidates = [candidate for candidate, _score, _reasons in ordered]
+    pre_scores = {candidate.key: score for candidate, score, _r in ordered}
+
+    if probe_all_mode:
+        results = probe_all(
+            candidates,
+            budget_ms=(DEFAULT_BUDGET_MS if budget_ms is None else budget_ms),
+            timeout_s=timeout_s,
+            lockdown_443=context.lockdown_443,
+            recent_g04_endpoints=context.g04_endpoints,
+            recent_incident_profiles=context.incident_profiles)
+        report = rank(candidates, results,
+                      lockdown_443=context.lockdown_443,
+                      recent_g04_endpoints=context.g04_endpoints,
+                      recent_incident_profiles=context.incident_profiles,
+                      active_profile=active_profile)
+        probed = [row.candidate.profile or row.candidate.key
+                  for row in report.rows]
+        mode = MODE_ALL
+    else:
+        results, probed_keys = probe_cascade(
+            candidates,
+            budget_ms=(CASCADE_BUDGET_MS if budget_ms is None else budget_ms),
+            timeout_s=timeout_s,
+            lockdown_443=context.lockdown_443,
+            recent_g04_endpoints=context.g04_endpoints,
+            recent_incident_profiles=context.incident_profiles)
+        report = rank_cascade(
+            candidates, results, pre_scores=pre_scores,
+            lockdown_443=context.lockdown_443,
+            recent_g04_endpoints=context.g04_endpoints,
+            recent_incident_profiles=context.incident_profiles,
+            active_profile=active_profile)
+        probed_set = set(probed_keys)
+        probed = [candidate.profile or candidate.key
+                  for candidate in candidates if candidate.key in probed_set]
+        mode = MODE_CASCADE
 
     payload: Dict[str, Any] = {
         "schema": SCHEMA,
         "created": _iso_now(now),
+        "mode": mode,
+        "probed": probed,
         "context": _context_payload(context),
         "threat_level": context.threat_level,
         "recommended": (report.recommended.as_dict()
@@ -193,7 +255,29 @@ def _row_line(tag: str, row: Dict[str, Any]) -> str:
             f"{str(candidate.get('profile') or '-'):<18} "
             f"{candidate.get('host')}:{candidate.get('port')} "
             f"score={candidate.get('score')} probe={probe.get('status')}")
+    if probe.get("status") == STATUS_NOT_PROBED:
+        head += " (не проверялся)"
     return head
+
+
+def _plural_nodes(count: int) -> str:
+    """Russian plural for the mode line: 1 узел / 2 узла / 5 узлов."""
+    if count % 10 == 1 and count % 100 != 11:
+        word = "узел"
+    elif 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        word = "узла"
+    else:
+        word = "узлов"
+    return f"{count} {word}"
+
+
+def _mode_line(payload: Dict[str, Any]) -> str:
+    probed = len(payload.get("probed") or [])
+    mode = payload.get("mode") or MODE_CASCADE
+    if mode == MODE_ALL:
+        return (f"[scout] режим: полный опрос "
+                f"({_plural_nodes(probed)})")
+    return f"[scout] режим: каскад (проверен {_plural_nodes(probed)})"
 
 
 def render_lines(payload: Dict[str, Any]) -> List[str]:
@@ -204,6 +288,7 @@ def render_lines(payload: Dict[str, Any]) -> List[str]:
     freshness = ("свежий" if context.get("verdict_fresh")
                  else "устарел/нет")
     lines: List[str] = [
+        _mode_line(payload),
         f"[scout] кандидатов: {len(payload.get('candidates') or [])}; "
         f"verdict={verdict} threat={threat} ({freshness}); "
         f"lockdown 443: {'да' if context.get('lockdown_443') else 'нет'}; "
@@ -241,9 +326,11 @@ def render_lines(payload: Dict[str, Any]) -> List[str]:
 
 
 def run_scout_cli(*, as_json: bool = False, sync: bool = False,
-                  host: Optional[str] = None) -> int:
+                  host: Optional[str] = None,
+                  probe_all_mode: bool = False) -> int:
     """Print the report; exit 0 when a route is recommended, 1 otherwise."""
-    payload = build_report(sync=sync, host=host)
+    payload = build_report(sync=sync, host=host,
+                           probe_all_mode=probe_all_mode)
     if as_json:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2,
                               default=str))

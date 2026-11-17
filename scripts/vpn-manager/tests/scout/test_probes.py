@@ -1,9 +1,12 @@
-"""WP-S2 tests: socket-level probes with fake sockets (no root, no network).
+"""WP-S2 + Stealth Cascade tests: probes with fake sockets (no root, no net).
 
 Every case pins one observation: a refused connect, a connect timeout, a
-completed TLS 1.3 handshake, a hanging ClientHello (TSPU TLS filter), an
-ICMP unreachable and plain UDP silence.  The budget test proves that four
-hanging sockets still finish the whole run well under 2500 ms.
+completed TLS 1.3 handshake **plus** an HTTP answer, a handshake without an
+HTTP answer, a hanging ClientHello (TSPU TLS filter), and the UDP probes that
+must emit **zero bytes** (no QUIC Initial, no ``send``/``sendto``).
+
+The budget test proves that four hanging sockets still finish the whole
+parallel run well under 2500 ms.
 """
 
 from __future__ import annotations
@@ -21,17 +24,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from vpnm.scout import probes  # noqa: E402
 from vpnm.scout.models import (  # noqa: E402
+    STATUS_LOCAL_ROUTE,
     STATUS_NO_ROUTE,
     STATUS_OK,
+    STATUS_RECENT_INCIDENT,
     STATUS_RECENT_UDP_BLACKHOLE,
-    STATUS_REACHABLE,
     STATUS_SERVER_LOCKDOWN,
-    STATUS_SILENCE,
     STATUS_TIMEOUT,
+    STATUS_TLS_ONLY,
     STATUS_TSPU_TLS_FILTER,
-    STATUS_UDP_REFUSED,
     Candidate,
 )
+
+HTTP_ANSWER = b"HTTP/1.1 204 No Content\r\n\r\n"
 
 
 # --- fake socket layer ----------------------------------------------------------
@@ -42,26 +47,28 @@ class FakeIO:
 
     def __init__(self, *, connect_error: Optional[BaseException] = None,
                  handshake_error: Optional[BaseException] = None,
-                 recv_result: Optional[bytes] = None,
-                 recv_error: Optional[BaseException] = None,
+                 http_result: Optional[bytes] = None,
+                 http_error: Optional[BaseException] = None,
                  connect_delay: float = 0.0,
                  addrs: Optional[List[tuple]] = None,
                  connect_errors_by_addr: Optional[dict] = None,
-                 send_errors_by_addr: Optional[dict] = None,
-                 recv_errors_by_addr: Optional[dict] = None) -> None:
+                 send_error: Optional[BaseException] = None) -> None:
         self.connect_error = connect_error
         self.handshake_error = handshake_error
-        self.recv_result = recv_result
-        self.recv_error = recv_error
+        #: Bytes the TLS layer answers with; ``HTTP_ANSWER`` by default so a
+        #: completed handshake is a full ``ok`` unless a test says otherwise.
+        self.http_result = HTTP_ANSWER if http_result is None else http_result
+        self.http_error = http_error
         self.connect_delay = connect_delay
         #: ``[(family, sockaddr)]`` returned by the fake ``getaddrinfo``; the
         #: default is one IPv4 record built from the probe's host/port.
         self.addrs = addrs
         self.connect_errors_by_addr = connect_errors_by_addr or {}
-        self.send_errors_by_addr = send_errors_by_addr or {}
-        self.recv_errors_by_addr = recv_errors_by_addr or {}
+        self.send_error = send_error
         self.getaddrinfo_calls = 0
         self.connected = 0
+        #: Every ``send``/``sendall``/``sendto`` payload in call order.  A UDP
+        #: probe must leave this **empty** (Stealth Cascade: 0 bytes).
         self.sent: List[bytes] = []
         self.sni: List[Optional[str]] = []
         #: ``sockaddr`` of every ``connect()`` in call order (IPv4-first check).
@@ -91,21 +98,13 @@ class FakeSock:
         self.io.connected += 1
 
     def send(self, payload: bytes) -> int:
-        error = self.io.send_errors_by_addr.get(
-            self._addr[0] if self._addr else None)
-        if error is not None:
-            raise error
+        if self.io.send_error is not None:
+            raise self.io.send_error
         self.io.sent.append(payload)
         return len(payload)
 
-    def recv(self, _size: int) -> bytes:
-        error = self.io.recv_errors_by_addr.get(
-            self._addr[0] if self._addr else None)
-        if error is None:
-            error = self.io.recv_error
-        if error is not None:
-            raise error
-        return self.io.recv_result if self.io.recv_result is not None else b""
+    def sendto(self, payload: bytes, _addr) -> int:
+        return self.send(payload)
 
     def close(self) -> None:
         self.io.closed += 1
@@ -114,6 +113,19 @@ class FakeSock:
 class FakeTLS:
     def __init__(self, io: FakeIO) -> None:
         self.io = io
+
+    def settimeout(self, _value: float) -> None:
+        pass
+
+    def sendall(self, payload: bytes) -> None:
+        if self.io.send_error is not None:
+            raise self.io.send_error
+        self.io.sent.append(payload)
+
+    def recv(self, _size: int) -> bytes:
+        if self.io.http_error is not None:
+            raise self.io.http_error
+        return self.io.http_result
 
     def close(self) -> None:
         self.io.closed += 1
@@ -193,9 +205,50 @@ def test_tls_ok_measures_rtt_and_uses_the_profile_sni(
     install_fake(monkeypatch, io)
     result = probes.probe_tcp_tls("203.0.113.10", 443, "www.microsoft.com")
     assert result.status == STATUS_OK
+    assert result.detail == "TLS+HTTP"
     assert result.rtt_ms is not None and result.rtt_ms >= 0
     assert io.sni == ["www.microsoft.com"]
     assert io.connected == 1
+    assert io.closed >= 1
+
+
+def test_tls_sends_the_exact_head_request_byte_for_byte(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO()
+    install_fake(monkeypatch, io)
+    probes.probe_tcp_tls("203.0.113.10", 443, "www.microsoft.com")
+    assert io.sent == [
+        b"HEAD / HTTP/1.1\r\nHost: www.microsoft.com\r\n"
+        b"User-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+    ]
+    # the module exposes the same bytes for the tests and any future caller
+    assert probes.build_http_request("www.microsoft.com") == io.sent[0]
+
+
+@pytest.mark.parametrize("answer", [b"HTTP/1.0 400 Bad Request\r\n\r\n",
+                                    b"HTTP/1.1 200 OK\r\n\r\n",
+                                    b"HTTP/2 200\r\n\r\n"])
+def test_http_answer_classifies_as_ok(monkeypatch: pytest.MonkeyPatch,
+                                      answer: bytes) -> None:
+    install_fake(monkeypatch, FakeIO(http_result=answer))
+    result = probes.probe_tcp_tls("203.0.113.10", 443, "example.com")
+    assert result.status == STATUS_OK
+    assert result.detail == "TLS+HTTP"
+
+
+@pytest.mark.parametrize("io_kwargs", [
+    {"http_error": socket.timeout("timed out")},
+    {"http_error": ConnectionResetError(104, "reset")},
+    {"http_result": b""},
+    {"http_result": b"\x00\x01garbage"},
+])
+def test_tls_without_http_answer_is_tls_only_not_a_hard_fail(
+        monkeypatch: pytest.MonkeyPatch, io_kwargs: dict) -> None:
+    install_fake(monkeypatch, FakeIO(**io_kwargs))
+    result = probes.probe_tcp_tls("203.0.113.10", 443, "example.com")
+    assert result.status == STATUS_TLS_ONLY
+    assert result.hard_fail is False
+    assert "HTTP-ответа нет" in (result.detail or "")
 
 
 def test_hanging_client_hello_is_tspu_filter_not_a_plain_timeout(
@@ -228,44 +281,28 @@ def test_lockdown_reports_without_opening_a_socket(
     assert io.connected == 0
 
 
-# --- QUIC / AWG -------------------------------------------------------------------
+# --- UDP: 0 bytes on the wire (Stealth Cascade) ------------------------------------
 
 
-def test_quic_initial_is_1200_bytes_with_a_random_dcid() -> None:
-    dcid = b"\x01\x02\x03\x04\x05\x06\x07\x08"
-    packet = probes.build_quic_initial(dcid)
-    assert len(packet) == probes.QUIC_MIN_INITIAL_BYTES
-    assert packet[0] == 0xC0
-    assert packet[1:5] == b"\x00\x00\x00\x01"
-    assert packet[5] == len(dcid)
-    assert packet[6:14] == dcid
-    assert probes.build_quic_initial() != probes.build_quic_initial()
-
-
-def test_quic_icmp_unreachable_is_a_hard_negative(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    install_fake(monkeypatch, FakeIO(
-        recv_error=ConnectionRefusedError(111, "Connection refused")))
-    result = probes.probe_quic_udp("203.0.113.10", 443)
-    assert result.status == STATUS_UDP_REFUSED
-    assert result.hard_fail is True
-
-
-def test_quic_silence_is_unknown_not_blocked(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    install_fake(monkeypatch, FakeIO(recv_error=socket.timeout("timed out")))
-    result = probes.probe_quic_udp("203.0.113.10", 443)
-    assert result.status == STATUS_SILENCE
-    assert result.hard_fail is False
-
-
-def test_quic_answer_is_ok_and_the_datagram_is_padded(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    io = FakeIO(recv_result=b"\x00" * 64)
+def test_hy2_local_route_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO()
     install_fake(monkeypatch, io)
     result = probes.probe_quic_udp("203.0.113.10", 443)
-    assert result.status == STATUS_OK
-    assert len(io.sent) == 1 and len(io.sent[0]) >= 1200
+    assert result.status == STATUS_LOCAL_ROUTE
+    assert result.hard_fail is False
+    assert "0 байт в эфир" in (result.detail or "")
+    assert io.sent == []  # no send/sendto at all
+    assert io.connect_addrs == [("203.0.113.10", 443)]
+
+
+def test_awg_local_route_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO()
+    install_fake(monkeypatch, io)
+    result = probes.probe_awg_reachability("203.0.113.10", 51820)
+    assert result.status == STATUS_LOCAL_ROUTE
+    assert result.hard_fail is False
+    assert io.sent == []
+    assert io.connect_addrs == [("203.0.113.10", 51820)]
 
 
 def test_awg_recent_g04_is_a_blackhole_without_network(
@@ -276,26 +313,67 @@ def test_awg_recent_g04_is_a_blackhole_without_network(
                                            recent_g04=True)
     assert result.status == STATUS_RECENT_UDP_BLACKHOLE
     assert io.getaddrinfo_calls == 0
+    assert io.sent == []
 
 
-def test_awg_silence_is_normal_reachability(
+def test_hy2_recent_g04_is_a_blackhole_without_network(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    install_fake(monkeypatch, FakeIO(recv_error=socket.timeout("timed out")))
-    result = probes.probe_awg_reachability("203.0.113.10", 51820)
-    assert result.status == STATUS_REACHABLE
-    assert result.hard_fail is False
-    assert "не отвечает" in (result.detail or "")
+    io = FakeIO()
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("203.0.113.10", 443, recent_g04=True)
+    assert result.status == STATUS_RECENT_UDP_BLACKHOLE
+    assert io.getaddrinfo_calls == 0
 
 
-def test_awg_icmp_unreachable_is_refused(
+def test_hy2_recent_incident_demotes_without_network(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    install_fake(monkeypatch, FakeIO(
-        recv_error=ConnectionRefusedError(111, "Connection refused")))
-    result = probes.probe_awg_reachability("203.0.113.10", 51820)
-    assert result.status == STATUS_UDP_REFUSED
+    io = FakeIO()
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("203.0.113.10", 443, recent_incident=True,
+                                   incident_label="hy2-main")
+    assert result.status == STATUS_RECENT_INCIDENT
+    assert "hy2-main" in (result.detail or "")
+    assert io.getaddrinfo_calls == 0
+    assert io.sent == []
 
 
-# --- dual stack: IPv4-first, IPv6 ENETUNREACH is not a verdict --------------------
+def test_udp_no_route_on_one_address_falls_through_to_the_next(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(),
+                connect_errors_by_addr={V6_HOST: _enetunreach()})
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_LOCAL_ROUTE
+    # IPv4 is tried first; the dead IPv6 route never masks it
+    assert io.connect_addrs == [(V4_HOST, 443)]
+    assert io.sent == []
+
+
+def test_udp_walks_both_addresses_when_ipv4_has_no_route(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(),
+                connect_errors_by_addr={V4_HOST: _enetunreach()})
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_LOCAL_ROUTE
+    assert io.connect_addrs == [(V4_HOST, 443), (V6_HOST, 443, 0, 0)]
+    assert io.sent == []
+
+
+def test_udp_all_addresses_unreachable_is_no_route(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    io = FakeIO(addrs=_dual_stack(), connect_errors_by_addr={
+        V4_HOST: _enetunreach(),
+        V6_HOST: _enetunreach(),
+    })
+    install_fake(monkeypatch, io)
+    result = probes.probe_quic_udp("asv2.example.ru", 443)
+    assert result.status == STATUS_NO_ROUTE
+    assert "нет маршрута" in (result.detail or "")
+    assert io.sent == []
+
+
+# --- dual stack: IPv4-first ---------------------------------------------------------
 
 #: Field case (2026-11-17, IPv4-only laptop): A+AAAA name, AAAA first from the
 #: resolver, no IPv6 route — the datacenter IPv4 is where the relay lives.
@@ -321,7 +399,6 @@ def test_tcp_ipv6_enetunreach_falls_through_to_ipv4(
     result = probes.probe_tcp_tls("asv2.example.ru", 443, "www.microsoft.com")
     assert result.status == STATUS_OK
     assert result.rtt_ms is not None
-    # IPv4 was actually connected after the IPv6 route failure
     assert io.connected == 1
     assert io.connect_addrs[-1] == (V4_HOST, 443)
     assert io.sni == ["www.microsoft.com"]
@@ -346,57 +423,8 @@ def test_tcp_all_addresses_unreachable_is_no_route_with_the_last_error(
     result = probes.probe_tcp_tls("asv2.example.ru", 443, "example.com")
     assert result.status == STATUS_NO_ROUTE
     assert "нет маршрута" in (result.detail or "")
-    # every address was tried, IPv4 first, IPv6 last
     assert io.connect_addrs == [(V4_HOST, 443), (V6_HOST, 443, 0, 0)]
     assert io.connected == 0
-
-
-def test_udp_ipv6_enetunreach_falls_through_to_ipv4_silence(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    io = FakeIO(addrs=_dual_stack(),
-                connect_errors_by_addr={V6_HOST: _enetunreach()},
-                recv_error=socket.timeout("timed out"))
-    install_fake(monkeypatch, io)
-    result = probes.probe_quic_udp("asv2.example.ru", 443)
-    assert result.status == STATUS_SILENCE
-    assert result.hard_fail is False
-    assert io.connect_addrs[-1] == (V4_HOST, 443)
-    assert len(io.sent) == 1  # the datagram really went to IPv4
-
-
-def test_udp_ipv6_enetunreach_falls_through_to_an_ipv4_answer(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    io = FakeIO(addrs=_dual_stack(),
-                connect_errors_by_addr={V6_HOST: _enetunreach()},
-                recv_result=b"\x00" * 64)
-    install_fake(monkeypatch, io)
-    result = probes.probe_quic_udp("asv2.example.ru", 443)
-    assert result.status == STATUS_OK
-
-
-def test_udp_enetunreach_on_send_moves_to_the_next_address(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    """UDP ``connect`` sends nothing; the dead route may surface on ``send``."""
-    io = FakeIO(addrs=_dual_stack(),
-                send_errors_by_addr={V6_HOST: _enetunreach()},
-                recv_error=socket.timeout("timed out"))
-    install_fake(monkeypatch, io)
-    result = probes.probe_quic_udp("asv2.example.ru", 443)
-    assert result.status == STATUS_SILENCE
-    assert io.connect_addrs[-1] == (V4_HOST, 443)
-    assert len(io.sent) == 1
-
-
-def test_udp_all_addresses_unreachable_is_no_route(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    io = FakeIO(addrs=_dual_stack(), connect_errors_by_addr={
-        V4_HOST: _enetunreach(),
-        V6_HOST: _enetunreach(),
-    })
-    install_fake(monkeypatch, io)
-    result = probes.probe_quic_udp("asv2.example.ru", 443)
-    assert result.status == STATUS_NO_ROUTE
-    assert "нет маршрута" in (result.detail or "")
 
 
 def test_single_ipv4_host_behaves_exactly_as_before(

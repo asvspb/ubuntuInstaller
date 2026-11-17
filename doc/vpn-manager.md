@@ -80,7 +80,7 @@ vpn install --linger
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план) |
-| `vpn scout [--json] [--sync]` | Активная разведка маршрутов: TCP/TLS, QUIC, AWG + свежий server-verdict → RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
+| `vpn scout [--json] [--sync] [--probe-all]` | Активная разведка маршрутов: по умолчанию Stealth Cascade (локальная сортировка → одна проба до первого хорошего); `--probe-all` — полный параллельный опрос. RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
 | `vpn start [awg\|relay\|reality\|xhttp] [--proto awg\|reality]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `relay` — RU-релей (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`), `reality`/`xhttp` — xray-split / полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие |
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
@@ -703,16 +703,51 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
 sha256 + `st_mtime_ns`).
 
 ```bash
-vpn scout                  # таблица: RECOMMENDED / FALLBACK / «отсеяны» с причинами
+vpn scout                  # каскад (по умолчанию): RECOMMENDED / FALLBACK / «отсеяны»
 vpn scout --json           # scout.report/1 (см. ниже) — для скриптов
+vpn scout --probe-all      # полный параллельный опрос всех узлов (осознанно)
 vpn scout --sync           # сначала vpn guard sync (единственный ssh), затем разведка
 vpn scout --sync --host root@asv1
-vpn up --scout             # разведка + поднять рекомендованный маршрут
+vpn up --scout             # разведка (каскад) + поднять рекомендованный маршрут
 vpn up --scout --dry-run   # только напечатать, что было бы запущено
 ```
 
 Exit-коды: `0` — рекомендация есть; `1` — нет ни одного маршрута с score ≥50
 (отчёт всё равно печатается), `2` — ошибка аргументов.
+
+### Stealth Cascade (2026-11-18) — не светиться перед ТСПУ и не взводить probe-watch
+
+Полный параллельный залп — это ровно тот трафик, который **демаскирует**
+клиента (много SYN/TLS с разных SNI к разным узлам за доли секунды) и может
+**самовзвести** probe-watch на сервере (пачка проб в locked-порт = повод для
+lockdown). Поэтому по умолчанию `vpn scout` работает так:
+
+1. **Сортировка до любых проб** — локальный `pre_score` (в сеть не ходит):
+   базовая оценка матрицы + lock-443 (свежий `server-verdict.json`, ≤10 мин:
+   direct xray-443 → 0, relay/AWG/Hy2 +10) + недавний G-04 на endpoint
+   (−60, UDP-протоколы) + недавний G-01/G-03 для профиля (−12). Порядок
+   детерминирован (score ↓, затем стабильный ключ кандидата).
+2. **Только топ-1.** Проверяется один узел. Если статус хороший (`ok` /
+   `reachable` / `local_route`) — **немедленная остановка**: к остальным
+   узлам не уходит ни одного пакета (ни DNS к их адресам, ни сокета).
+3. **Провал → джиттер 150–400 мс** (случайный, `time.sleep(random.uniform(
+   0.15, 0.4))`) и следующий по порядку. Джиттер только *между* попытками:
+   перед первой и после последней паузы нет. Фиксированный ритм серии
+   неудачных коннектов — тоже машинная подпись.
+4. **Бюджет каскада** — `CASCADE_BUDGET_MS = 6000`, на пробу — существующие
+   1500 мс. Бюджет исчерпан → честный статус `budget` у той пробы, которая не
+   стартовала (не молчание).
+5. **FALLBACK не проверяется**: он выбирается из непроверенных узлов по тому же
+   `pre_score` и помечается в выводе `(не проверялся)` — это страховка «если
+   будете переключаться, начните отсюда», а не результат пробы.
+
+Параллельный залп остался только по явному `--probe-all` (2500 мс, 8 воркеров);
+это осознанный выбор владельца «хочу полную картину и принимаю трафик».
+
+Следствие для уведомлений: если активный профиль не попал в проверенные узлы,
+`guard-notify` о его блокировке в этом прогоне не сработает — это цена
+«0 пакетов к остальным» (в `--probe-all` проверяются все, и уведомление
+работает как раньше).
 
 ### Откуда берутся кандидаты (не выдуманы)
 
@@ -754,31 +789,33 @@ Exit-коды: `0` — рекомендация есть; `1` — нет ни о
 файл устарел, `context.notes` прямо говорит «lock не учитывается; `vpn guard
 sync`». Дополнительно читаются недавние (30 мин) findings G-01/G-03/G-04.
 
-### Пробы (WP-S2)
+### Пробы (WP-S2 + Stealth Cascade)
 
 | Проба | Что делает | Статусы |
 |-------|------------|----------|
-| TCP/TLS | TCP connect → TLS 1.3 handshake с настоящим SNI | `ok` (RTT), `timeout` (нет SYN-ACK), `refused` (RST на connect), `TSPU_TLS_FILTER` (RST **или** зависший ClientHello после connect), `tls_error`, `dns_error`, `no_route` |
-| QUIC (Hy2) | QUIC Initial ≥1200 байт со случайным DCID → ждём QUIC-ответ | `ok` (что-то ответило), `silence` (**неизвестно**, не «заблокировано»), `udp_refused` (ICMP unreachable — твёрдый минус) |
-| AWG | UDP-достижимость (AWG не отвечает на неаутентифицированные пакеты) + история G-04 за 30 мин | `reachable` (ICMP не пришёл — норма), `udp_refused` (ICMP), `RECENT_UDP_BLACKHOLE` (G-04 ≤30 мин) |
+| TCP/TLS | TCP connect → TLS 1.3 handshake с настоящим SNI → ровно `HEAD / HTTP/1.1\r\nHost: <SNI>\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n` → чтение первых ≤64 байт ответа | `ok` (TLS+HTTP: ответ начинается с `HTTP/1.`/`HTTP/2`), `tls_only` (handshake прошёл, HTTP-ответа нет: timeout/EOF/мусор — **не** hard fail), `timeout` (нет SYN-ACK), `refused` (RST на connect), `TSPU_TLS_FILTER` (RST **или** зависший ClientHello после connect), `tls_error`, `dns_error`, `no_route` |
+| Hy2 и AWG (UDP) | **0 байт в эфир**: никаких QUIC Initial и `os.urandom`-датаграмм. Только `socket.connect((host,port))` — UDP-`connect` делает route lookup ядра и не отправляет ни байта (IPv4-first перебор адресов сохранён) + история G-04 (endpoint ≤30 мин) и G-01/G-03 (профиль ≤30 мин), которая решает без сокета | `local_route` (локальная маршрутизируемость), `recent_incident` (G-01/G-03 по профилю — не hard fail), `RECENT_UDP_BLACKHOLE` (G-04 ≤30 мин), `no_route` (ENETUNREACH на всех адресах), `dns_error` |
 | lock-443 | `lockdown.active` в свежем вердикте | `SERVER_LOCKDOWN` для direct xray-443 **без сетевого коннекта** (не нагружаем только что закрытый порт) |
 
-Честное ограничение QUIC-пробы: без ключей сервера датаграмму можно только
-**сформировать** как Initial — расшифровать её сервер не сможет и не ответит.
-Проба измеряет UDP-достижимость (ICMP unreachable vs тишина), а не «Hysteria2
-работает»; поэтому `silence` — неопределённость, и она стоит −6, а не 0
-(см. «Скоринг» ниже).
+Почему UDP без пакетов: несжатый QUIC Initial или 32-байтная UDP-вспышка в
+сторону фильтрующего middlebox — это ровно тот нежелательный трафик, который
+может **самовзвести** probe-watch на другой стороне. Соединённый UDP-сокет без
+`send` честно отвечает на единственный вопрос, который эта проба может
+доказать — «есть ли в локальной таблице маршрутов путь к endpoint», — и
+остаётся невидимым в эфире. `silence` (старый статус Hy2) в скоринге сохранён
+для обратной совместимости, но в новом потоке не возникает.
 
-**Двойной стек, IPv4-first (2026-11-17):** TCP/TLS и UDP-обмен перебирают все
-адреса из `getaddrinfo` — IPv4 первыми, IPv6 последними (детерминированно), а
-`ENETUNREACH`/`EHOSTUNREACH` на конкретном адресе не отсеивает кандидата (та же
-грабля, что в guard, `904212f`); `no_route`/`error` — только когда исчерпаны все
-адреса, в `detail` остаётся последняя ошибка.
+**Двойной стек, IPv4-first (2026-11-17):** TCP/TLS и UDP-проверка перебирают
+все адреса из `getaddrinfo` — IPv4 первыми, IPv6 последними (детерминированно),
+а `ENETUNREACH`/`EHOSTUNREACH` на конкретном адресе не отсеивает кандидата (та
+же грабля, что в guard, `904212f`); `no_route`/`error` — только когда исчерпаны
+все адреса, в `detail` остаётся последняя ошибка.
 
-Бюджет: `ThreadPoolExecutor(max_workers=8)`, сокет-таймаут 1500 мс, общий
-бюджет прогона 2500 мс. Таймаут каждой пробы урезается до остатка бюджета;
-не успевшие получают `timeout`/`budget`, а не пропадают молча (тест: 4
-«зависших» сокета по 1.5 с → весь прогон < 2.5 с).
+Бюджеты: каскад — 6000 мс на весь прогон, 1500 мс на пробу,
+последовательный; `--probe-all` — `ThreadPoolExecutor(max_workers=8)`, 2500 мс.
+Таймаут каждой пробы урезается до остатка бюджета; не успевшие получают
+`timeout`/`budget`, а не пропадают молча (тест: 4 «зависших» сокета по 1.5 с →
+весь параллельный прогон < 2.5 с).
 
 ### Скоринг и вывод (WP-S3)
 
@@ -793,8 +830,12 @@ sync`». Дополнительно читаются недавние (30 мин
 | cdn (любой маршрут) | 65 |
 
 Поправки: **lock-443** — direct xray-443 → 0, relay/AWG/Hy2 +10; **TSPU TLS
-filter** — direct Reality → 0, relay +15; **недавний G-04 на direct AWG** −60;
-**silence** −6; **RTT** −1 за каждые полные 25 мс, но не больше −6.
+filter** — direct Reality → 0, relay +15; **недавний G-04 на UDP-эндпоинте**
+−60; **недавний G-01/G-03 по профилю** −12; **silence** −6; **`local_route`**
+−6 (локальная маршрутизируемость, 0 байт в эфир — путь есть, транспорт не
+доказан); **`tls_only`** −4 (handshake доказан, HTTP — нет); **RTT** −1 за
+каждые полные 25 мс, но не больше −6. Тот же `pre_score` (без проб) задаёт
+порядок каскада — см. «Stealth Cascade».
 
 **Доказанный `ok` выше недоказанного `silence` (2026-11-18).** Живой прогон
 показал перекос: `direct/xray-reality` со `status=ok` и RTT 218 мс набирал
@@ -831,23 +872,33 @@ JSON-контракт `scout.report/1`:
 {
   "schema": "scout.report/1",
   "created": "2026-11-17T12:00:00Z",
+  "mode": "cascade",
+  "probed": ["laptop"],
   "context": {"verdict": {}, "verdict_fresh": true, "verdict_age_s": 42,
               "threat_level": "quiet", "server_verdict": "quiet",
               "lockdown_443": false, "findings_recent": 1,
-              "g04_endpoints": [], "notes": [], "active_profile": "phone"},
+              "g04_endpoints": [], "incident_profiles": [],
+              "notes": [], "active_profile": "phone"},
   "threat_level": "quiet",
   "recommended": {"route": "direct", "proto": "awg", "profile": "laptop",
                   "host": "203.0.113.10", "port": 51820, "sni": null,
                   "port_hop_range": null,
-                  "probe": {"status": "reachable", "rtt_ms": null,
-                            "detail": "ICMP не пришёл; ..."},
-                  "score": 90, "status": "recommended", "reasons": []},
-  "fallback": null,
+                  "probe": {"status": "local_route", "rtt_ms": null,
+                            "detail": "локальная маршрутизируемость "
+                                      "(0 байт в эфир)"},
+                  "score": 84, "status": "recommended", "reasons": []},
+  "fallback": {"…": "непроверенный узел, probe.status = not_probed"},
   "rejected": [],
   "candidates": [],
   "notify": {"attempted": false}
 }
 ```
+
+`mode` (`cascade`/`all`) и `probed` (список опрошенных профилей) — аддитивные
+поля `scout.report/1`; старые ключи не менялись. В текстовом выводе первая
+строка прямо говорит режим: `[scout] режим: каскад (проверен 1 узел)` или
+`[scout] режим: полный опрос (N узлов)`; непроверенный FALLBACK помечен
+`(не проверялся)`.
 
 Если **текущий** активный канал сам заблокирован (`SERVER_LOCKDOWN`,
 `TSPU_TLS_FILTER`, `refused`, `timeout`), scout переиспользует существующий

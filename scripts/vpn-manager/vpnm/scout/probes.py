@@ -1,57 +1,72 @@
-"""WP-S2: bounded, read-only active probes.
+"""WP-S2 + Stealth Cascade: bounded, read-only active probes.
 
 Three primitives, all unprivileged and all on a **finite budget**:
 
-- :func:`probe_tcp_tls` — TCP connect, then a TLS 1.3 handshake with the real
-  SNI of the profile.  ``refused`` (RST on connect), ``timeout`` (no SYN-ACK)
-  and ``TSPU_TLS_FILTER`` (RST or a hanging ClientHello *after* the connection
-  was established) are different observations and stay different;
-- :func:`probe_quic_udp` — a QUIC Initial-shaped datagram of ≥ 1200 bytes
-  with a random DCID, then a wait for a QUIC answer.  ICMP port unreachable
-  is a hard negative, complete silence is an *unknown* (reported as
-  ``silence``), never "blocked";
-- :func:`probe_awg_reachability` — AmneziaWG never answers unauthenticated
-  packets, so the probe measures UDP reachability (is there an ICMP
-  unreachable?) and adds the G-04 history of the last 30 minutes
-  (``RECENT_UDP_BLACKHOLE``).
+- :func:`probe_tcp_tls` — TCP connect, a TLS 1.3 handshake with the real SNI
+  of the profile, then **one RFC-shaped HTTP request** (``HEAD /`` with the
+  candidate's SNI as ``Host``) and a read of the first 64 response bytes.  A
+  full HTTP answer (``HTTP/1.`` / ``HTTP/2``) is ``ok``; a completed handshake
+  without an HTTP answer is ``tls_only`` (proven handshake, unproven
+  transport), never a hard fail.  ``refused`` (RST on connect), ``timeout``
+  (no SYN-ACK) and ``TSPU_TLS_FILTER`` (RST or a hanging ClientHello *after*
+  the connection was established) stay different observations;
+- :func:`probe_quic_udp` — Hysteria2 **local routability only**: no datagram is
+  ever built or sent (no QUIC Initial, no ``os.urandom`` payload).  A UDP
+  ``connect()`` performs the kernel's route lookup and sends nothing, so the
+  probe is ``local_route`` with **0 bytes on the wire**; a fresh G-04 on the
+  endpoint keeps the old ``RECENT_UDP_BLACKHOLE`` and a recent G-01/G-03 for
+  the profile demotes the result to ``recent_incident``;
+- :func:`probe_awg_reachability` — the same local-route check: AmneziaWG never
+  answers unauthenticated packets, so silence proved nothing anyway.  G-04
+  history (``RECENT_UDP_BLACKHOLE``) and G-01/G-03 (``recent_incident``) are
+  applied without touching the network.
+
+Why no packets: an unsolicited QUIC Initial / 32-byte UDP blip towards a
+filtering middlebox is exactly the kind of traffic that can *trigger* the
+probe-watch on the other side.  A connected UDP socket with no ``send``
+answers the only question this probe can honestly answer — "does the local
+routing table have a path to this endpoint?" — and stays invisible on the
+wire.
 
 If the server verdict is fresh and ``lockdown.active`` is set, a **direct
 xray on TCP 443** is reported as ``SERVER_LOCKDOWN`` **without opening a
 socket**: probing the very port the server just locked would manufacture
 load and confuse the observation.
 
-Honest limitation of the QUIC probe: without the server's AEAD keys a
-datagram can be *shaped* like an Initial but cannot be decrypted, so a real
-server will not answer it.  The probe therefore measures UDP reachability
-(ICMP unreachable vs silence), which is exactly what the WP asks for; it
-does not claim "Hysteria2 works".
+Address family order: every probe walks **every** address ``getaddrinfo``
+returned, IPv4 first and IPv6 last, instead of taking ``infos[0]``.  On an
+IPv4-only host a dual-stack name (A+AAAA) resolves with the AAAA record
+first, and the old code only ever tried it — so a working IPv4 path was
+reported as ``no_route``/``error``.  ENETUNREACH/EHOSTUNREACH on one address
+is *this address has no route*, not a verdict about the peer (guard fix
+904212f): the next address is tried and the last error is kept only when
+every address has been exhausted.
 
-Address family order: both TCP/TLS and the UDP exchange walk **every** address
-``getaddrinfo`` returned, IPv4 first and IPv6 last, instead of taking
-``infos[0]``.  On an IPv4-only host a dual-stack name (A+AAAA) resolves with
-the AAAA record first, and the old code only ever tried it — so a working
-IPv4 path was reported as ``no_route``/``error``.  ENETUNREACH/EHOSTUNREACH on
-one address is *this address has no route*, not a verdict about the peer
-(guard fix 904212f): the next address is tried and the last error is kept
-only when every address has been exhausted.
+Two run modes:
 
-Concurrency: :func:`probe_all` uses ``ThreadPoolExecutor(max_workers=8)``,
-a per-socket timeout of 1.5 s and one shared budget of 2500 ms; the timeout
-handed to each socket is clamped to what is left of the budget, so four
-hanging sockets still finish the whole run in ~1.5 s.
+- :func:`probe_cascade` — **the default**.  Candidates arrive already sorted by
+  the local, network-free :func:`vpnm.scout.rank.pre_score`; they are probed
+  **strictly one at a time**, stopping at the first good status.  A random
+  150–400 ms jitter separates a failed attempt from the next one.  The whole
+  cascade shares :data:`CASCADE_BUDGET_MS`; a node that cannot be started is
+  reported as ``budget``, never silently skipped.  Nodes after the winner are
+  never contacted at all;
+- :func:`probe_all` — the explicit ``vpn scout --probe-all`` path: the old
+  parallel ``ThreadPoolExecutor(max_workers=8)`` with a shared 2500 ms budget.
 """
 
 from __future__ import annotations
 
 import errno
-import os
+import random
 import socket
 import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .models import (
+    GOOD_STATUSES,
     PROTO_AWG,
     PROTO_HY2,
     ROUTE_DIRECT,
@@ -61,31 +76,34 @@ from .models import (
     STATUS_BUDGET,
     STATUS_DNS_ERROR,
     STATUS_ERROR,
+    STATUS_LOCAL_ROUTE,
     STATUS_NO_ROUTE,
     STATUS_OK,
-    STATUS_REACHABLE,
+    STATUS_RECENT_INCIDENT,
     STATUS_RECENT_UDP_BLACKHOLE,
     STATUS_REFUSED,
     STATUS_SERVER_LOCKDOWN,
-    STATUS_SILENCE,
     STATUS_TIMEOUT,
     STATUS_TLS_ERROR,
+    STATUS_TLS_ONLY,
     STATUS_TSPU_TLS_FILTER,
-    STATUS_UDP_REFUSED,
 )
 
 #: Per-socket timeout (WP-S2).
 DEFAULT_TIMEOUT_S = 1.5
-#: Whole-run budget (WP-S2); 2500 ms including every probe.
+#: Whole-run budget of the parallel ``--probe-all`` path (WP-S2).
 DEFAULT_BUDGET_MS = 2500
-#: Worker count (WP-S2).
+#: Whole-run budget of the default cascade (Stealth Cascade).
+CASCADE_BUDGET_MS = 6000
+#: Random pause between two cascade attempts (seconds, inclusive bounds).
+CASCADE_JITTER_MIN_S = 0.15
+CASCADE_JITTER_MAX_S = 0.4
+#: Worker count of the ``--probe-all`` path (WP-S2).
 MAX_WORKERS = 8
-#: A QUIC Initial must be at least 1200 bytes (RFC 9000 §14.1).
-QUIC_MIN_INITIAL_BYTES = 1200
-#: QUIC version 1.
-_QUIC_VERSION = b"\x00\x00\x00\x01"
-#: UDP datagram size for the AWG reachability probe (padding, not a packet).
-_AWG_DATAGRAM_BYTES = 32
+#: Bytes read back from the HTTP answer (enough for ``HTTP/1.`` / ``HTTP/2``).
+HTTP_READ_BYTES = 64
+#: HTTP prefixes that count as a real answer to the HEAD request.
+_HTTP_PREFIXES = (b"HTTP/1.", b"HTTP/2")
 
 #: Address families in the order the probes try them: IPv4 first, IPv6 last,
 #: anything else after.  ``sorted`` is stable, so the resolver's own order is
@@ -141,12 +159,67 @@ def _tls_context() -> ssl.SSLContext:
     return context
 
 
+def build_http_request(sni: str) -> bytes:
+    """The **exact** bytes sent after a successful handshake (Stealth Cascade).
+
+    One RFC-shaped ``HEAD /`` with the candidate's real SNI as ``Host`` is the
+    smallest request that looks like a browser cache validation instead of a
+    scanner fingerprint.  Pinned byte-for-byte by the tests.
+    """
+    return (f"HEAD / HTTP/1.1\r\nHost: {sni}\r\n"
+            "User-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n").encode()
+
+
+def classify_http_answer(data: bytes) -> Optional[str]:
+    """``'http'`` for a real answer, ``None`` when it is EOF/garbage."""
+    if data.startswith(_HTTP_PREFIXES):
+        return "http"
+    return None
+
+
+def _http_exchange(tls: Any, sni: str, deadline: float) -> ProbeResult:
+    """Send one HEAD request, read ≤64 bytes, classify the answer.
+
+    A completed handshake with no HTTP answer is ``tls_only``: the TLS leg is
+    proven, the transport behind it is not.  Never a hard fail.
+    """
+    request = build_http_request(sni)
+    try:
+        tls.settimeout(_remaining(deadline))
+    except (AttributeError, OSError):
+        pass  # a fake socket in tests may not implement it
+    try:
+        tls.sendall(request)
+        data = tls.recv(HTTP_READ_BYTES)
+    except (socket.timeout, TimeoutError):
+        return ProbeResult(STATUS_TLS_ONLY,
+                           detail="TLS ok, HTTP-ответа нет (timeout)")
+    except (ConnectionResetError, BrokenPipeError):
+        return ProbeResult(STATUS_TLS_ONLY,
+                           detail="TLS ok, HTTP-ответа нет (RST/сброс)")
+    except ssl.SSLError as exc:
+        return ProbeResult(STATUS_TLS_ONLY,
+                           detail=f"TLS ok, HTTP-ответа нет (TLS: "
+                                  f"{getattr(exc, 'reason', None) or exc})")
+    except OSError as exc:
+        return ProbeResult(STATUS_TLS_ONLY,
+                           detail=f"TLS ok, HTTP-ответа нет "
+                                  f"({type(exc).__name__})")
+    if not data:
+        return ProbeResult(STATUS_TLS_ONLY,
+                           detail="TLS ok, HTTP-ответа нет (EOF)")
+    if classify_http_answer(data) == "http":
+        return ProbeResult(STATUS_OK, detail="TLS+HTTP")
+    return ProbeResult(STATUS_TLS_ONLY,
+                       detail="TLS ok, HTTP-ответа нет (мусор в ответе)")
+
+
 # --- TCP / TLS ------------------------------------------------------------------
 
 
 def probe_tcp_tls(host: str, port: int, sni: Optional[str] = None, *,
                   timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
-    """TCP connect → TLS 1.3 handshake with ``sni`` (read-only, bounded).
+    """TCP connect → TLS 1.3 handshake → HEAD request (read-only, bounded).
 
     Every resolved address is tried, IPv4 first.  A route failure
     (ENETUNREACH/EHOSTUNREACH) or a connect timeout on one address moves on
@@ -179,7 +252,7 @@ def _tcp_tls_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
                      *, host: str, sni: Optional[str], started: float,
                      deadline: float, timeout: float
                      ) -> Tuple[ProbeResult, bool]:
-    """One TCP+TLS attempt against one resolved address.
+    """One TCP+TLS+HTTP attempt against one resolved address.
 
     Returns ``(result, retry)``; ``retry`` is true only when the failure is
     about *this address* (no route, or a connect that timed out before the
@@ -200,8 +273,10 @@ def _tcp_tls_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
         phase = "handshake"
         sock.settimeout(_remaining(deadline))
         tls = _tls_context().wrap_socket(sock, server_hostname=sni or host)
-        return ProbeResult(STATUS_OK, rtt_ms=rtt_ms,
-                           detail="TCP+TLS handshake ok"), False
+        phase = "http"
+        exchange = _http_exchange(tls, sni or host, deadline)
+        return ProbeResult(exchange.status, rtt_ms=rtt_ms,
+                           detail=exchange.detail), False
     except (socket.timeout, TimeoutError):
         if phase == "handshake":
             # connected, but the ClientHello never got an answer: the
@@ -209,6 +284,9 @@ def _tcp_tls_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
             return ProbeResult(STATUS_TSPU_TLS_FILTER,
                                detail="ClientHello без ответа (handshake "
                                       "timeout)"), False
+        if phase == "http":  # pragma: no cover - _http_exchange catches it
+            return ProbeResult(STATUS_TLS_ONLY,
+                               detail="TLS ok, HTTP-ответа нет (timeout)"), False
         return ProbeResult(STATUS_TIMEOUT,
                            detail=f"TCP connect timeout {timeout:g}s"), True
     except ConnectionResetError:
@@ -234,84 +312,71 @@ def _tcp_tls_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
                 pass
 
 
-# --- UDP helpers ----------------------------------------------------------------
+# --- UDP local routability (Stealth Cascade: 0 bytes on the wire) -----------------
 
 
-def _udp_roundtrip(host: str, port: int, payload: bytes, *,
-                   timeout: float) -> Tuple[str, Optional[float], str]:
-    """Send one datagram and wait for an answer (connected UDP socket).
+def _udp_local_route(host: str, port: int, *,
+                     timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
+    """Prove the kernel has a path to ``host:port`` **without sending anything**.
 
-    Every resolved address is tried, IPv4 first.  Returns
-    ``(kind, rtt_ms, detail)`` with ``kind`` in ``answered`` (any UDP
-    response), ``silence`` (nothing at all) or ``icmp`` (the kernel surfaced
-    an ICMP port/host unreachable).  Those three are observations about the
-    peer and are final for the address that produced them.  ``dns_error`` is
-    final too.  ``no_route``/``error`` from a *single* address (no route to
-    it) only move on to the next address; they are returned once every address
-    is exhausted, keeping the last error in ``detail``.
+    ``socket.connect()`` on a UDP socket performs the route lookup and
+    installs the peer, but a UDP ``connect`` emits no datagram.  Nothing is
+    ever handed to ``send``/``sendto`` — this is the whole point of the
+    Stealth Cascade: a filtering middlebox sees no traffic to react to.
+    Every resolved address is tried, IPv4 first; ENETUNREACH/EHOSTUNREACH on
+    one address moves on to the next, and ``no_route`` is returned only when
+    every address is exhausted.
     """
     started = time.monotonic()
     deadline = started + max(0.05, float(timeout))
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_DGRAM)
     except socket.gaierror as exc:
-        return "dns_error", None, f"DNS: {exc}"
+        return ProbeResult(STATUS_DNS_ERROR, detail=f"DNS: {exc}")
     if not infos:
-        return "dns_error", None, "DNS: пустой ответ"
-    last: Tuple[str, Optional[float], str] = (
-        "error", None, "проба не выполнялась")
+        return ProbeResult(STATUS_DNS_ERROR, detail="DNS: пустой ответ")
+    last = ProbeResult(STATUS_ERROR, detail="проба не выполнялась")
     for index, (family, socktype, proto, _canon, sockaddr) in enumerate(
             _ordered_infos(infos)):
         if index and _remaining(deadline) <= 0.05:
             break  # бюджет исчерпан первым адресом — дальше не пробуем
-        kind, rtt, detail, retry = _udp_address(
-            family, socktype, proto, sockaddr, payload,
-            started=started, deadline=deadline, timeout=float(timeout))
-        last = (kind, rtt, detail)
+        last, retry = _udp_local_address(family, socktype, proto, sockaddr,
+                                         deadline=deadline)
         if not retry:
             return last
     return last
 
 
-def _udp_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
-                 payload: bytes, *, started: float, deadline: float,
-                 timeout: float) -> Tuple[str, Optional[float], str, bool]:
-    """One UDP exchange against one resolved address.
+def _udp_local_address(family: int, socktype: int, proto: int,
+                       sockaddr: Tuple, *, deadline: float
+                       ) -> Tuple[ProbeResult, bool]:
+    """One address: ``connect`` only (no ``send``), then classify.
 
-    Returns ``(kind, rtt_ms, detail, retry)``.  ``retry`` is true only when
-    the failure is "no route to this address" (ENETUNREACH/EHOSTUNREACH) —
-    reached on ``connect``, ``send`` or ``recv`` (UDP ``connect`` sends
-    nothing, so the kernel often reports the dead route later).
+    Returns ``(result, retry)``; ``retry`` is true only when this address has
+    no route, so the next one may still be usable.
     """
     try:
         sock = socket.socket(family, socktype, proto)
     except OSError as exc:
-        return "error", None, f"{type(exc).__name__}: {exc}", True
+        code = getattr(exc, "errno", None)
+        if code in _NO_ROUTE_ERRNOS:
+            return ProbeResult(STATUS_NO_ROUTE,
+                               detail=f"нет маршрута: {exc}"), True
+        return ProbeResult(STATUS_ERROR,
+                           detail=f"{type(exc).__name__}: {exc}"), False
     try:
         sock.settimeout(_remaining(deadline))
         sock.connect(sockaddr)
-        sock.send(payload)
-        try:
-            data = sock.recv(1500)
-        except (socket.timeout, TimeoutError):
-            return "silence", None, f"нет ответа за {timeout:g}s", False
-        except ConnectionRefusedError:
-            return "icmp", None, "ICMP port unreachable", False
-        except OSError as exc:
-            code = getattr(exc, "errno", None)
-            if code in (errno.ECONNREFUSED, errno.EHOSTUNREACH,
-                        errno.ECONNRESET):
-                return "icmp", None, "ICMP unreachable", False
-            if code == errno.ENETUNREACH:
-                return "no_route", None, f"нет маршрута: {exc}", True
-            return "error", None, f"{type(exc).__name__}: {exc}", False
-        return ("answered", round((time.monotonic() - started) * 1000.0, 1),
-                f"{len(data)} байт в ответ", False)
+        return ProbeResult(
+            STATUS_LOCAL_ROUTE,
+            detail="локальная маршрутизируемость (0 байт в эфир)"), False
     except OSError as exc:
         code = getattr(exc, "errno", None)
         if code in _NO_ROUTE_ERRNOS:
-            return "no_route", None, f"нет маршрута: {exc}", True
-        return "error", None, f"{type(exc).__name__}: {exc}", False
+            return ProbeResult(STATUS_NO_ROUTE,
+                               detail=f"нет маршрута: {exc}"), True
+        return ProbeResult(STATUS_ERROR,
+                           detail=f"{type(exc).__name__}: {exc}"), False
     finally:
         try:
             sock.close()
@@ -319,98 +384,56 @@ def _udp_address(family: int, socktype: int, proto: int, sockaddr: Tuple,
             pass
 
 
-def _varint2(value: int) -> bytes:
-    """QUIC two-byte varint (RFC 9000 §16); values below 16384 only."""
-    if not 0 <= value < 16384:
-        raise ValueError("value out of the 2-byte varint range")
-    return (0x4000 | value).to_bytes(2, "big")
-
-
-def build_quic_initial(dcid: Optional[bytes] = None, *,
-                       scid: Optional[bytes] = None,
-                       min_bytes: int = QUIC_MIN_INITIAL_BYTES) -> bytes:
-    """A QUIC v1 Initial-*shaped* datagram of exactly ``min_bytes`` bytes.
-
-    Header: long-header byte ``0xC0``, version 1, DCID (random by default),
-    SCID, empty token, a 2-byte length varint that covers packet number +
-    payload, then random bytes.  The payload is **not** AEAD-protected (the
-    stdlib has no AEAD and the client does not have the server's keys), so a
-    real server will not answer this datagram — see the module docstring.
-    The shape and the ≥ 1200-byte padding are what the probe needs to send
-    something a QUIC endpoint will at least parse before dropping it.
-    """
-    if min_bytes < 64:
-        raise ValueError("a QUIC Initial needs at least 64 bytes")
-    dcid_bytes = dcid if dcid is not None else os.urandom(8)
-    scid_bytes = scid if scid is not None else os.urandom(8)
-    if not 1 <= len(dcid_bytes) <= 20 or not 1 <= len(scid_bytes) <= 20:
-        raise ValueError("QUIC connection ids are 1..20 bytes")
-    header = (b"\xc0" + _QUIC_VERSION
-              + bytes([len(dcid_bytes)]) + dcid_bytes
-              + bytes([len(scid_bytes)]) + scid_bytes
-              + b"\x00")  # token length 0
-    room = min_bytes - len(header) - 2  # 2-byte length varint
-    if room < 2:  # pragma: no cover - guarded by the min_bytes check
-        raise ValueError("min_bytes too small for the header")
-    # length covers packet number (1 byte) + payload
-    packet = header + _varint2(room) + os.urandom(room)
-    return packet
-
-
 def probe_quic_udp(host: str, port: int, *,
+                   recent_g04: bool = False,
+                   recent_incident: bool = False,
+                   incident_label: Optional[str] = None,
                    timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
-    """Hysteria2 reachability: QUIC Initial → wait for a QUIC answer.
+    """Hysteria2: local routability, and **no datagram whatsoever**.
 
-    ``udp_refused`` (ICMP unreachable) is a hard negative; ``silence`` is an
-    unknown (a server may drop a datagram it cannot decrypt); ``ok`` means
-    *something* on that UDP port answered.
-    """
-    packet = build_quic_initial()
-    kind, rtt, detail = _udp_roundtrip(host, port, packet, timeout=timeout)
-    if kind == "answered":
-        return ProbeResult(STATUS_OK, rtt_ms=rtt, detail=f"QUIC-ответ: {detail}")
-    if kind == "silence":
-        return ProbeResult(STATUS_SILENCE, detail=detail)
-    if kind == "icmp":
-        return ProbeResult(STATUS_UDP_REFUSED, detail=detail)
-    if kind == "dns_error":
-        return ProbeResult(STATUS_DNS_ERROR, detail=detail)
-    if kind == "no_route":
-        return ProbeResult(STATUS_NO_ROUTE, detail=detail)
-    return ProbeResult(STATUS_ERROR, detail=detail)
-
-
-def probe_awg_reachability(host: str, port: int, *,
-                           recent_g04: bool = False,
-                           timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
-    """AWG probe: G-04 history first, then UDP reachability.
-
-    AmneziaWG stays silent for unauthenticated packets by design, so "no
-    answer" is the *normal* result and must never be read as a block.  What
-    is actionable: the kernel saw an ICMP unreachable (nothing listening) or
-    G-04 already fired for this endpoint in the last 30 minutes.
+    History is applied before any socket work: a fresh G-04 for this endpoint
+    keeps the old ``RECENT_UDP_BLACKHOLE``; a recent G-01/G-03 for the profile
+    demotes the verdict to ``recent_incident`` (still no packet).  Otherwise
+    the answer is ``local_route`` — the routing table has a path, and that is
+    all this probe can honestly say without sending a QUIC Initial.
     """
     if recent_g04:
         return ProbeResult(
             STATUS_RECENT_UDP_BLACKHOLE,
             detail="G-04 за последние 30 мин: UDP-чёрная дыра на этом эндпоинте")
-    payload = os.urandom(_AWG_DATAGRAM_BYTES)
-    kind, rtt, detail = _udp_roundtrip(host, port, payload, timeout=timeout)
-    if kind == "icmp":
-        return ProbeResult(STATUS_UDP_REFUSED, detail=detail)
-    if kind == "answered":
-        return ProbeResult(STATUS_OK, rtt_ms=rtt,
-                           detail=f"неожиданный UDP-ответ: {detail}")
-    if kind == "silence":
+    if recent_incident:
         return ProbeResult(
-            STATUS_REACHABLE,
-            detail="ICMP не пришёл; AWG не отвечает на неаутентифицированные "
-                   "пакеты — это норма, а не доказательство блокировки")
-    if kind == "dns_error":
-        return ProbeResult(STATUS_DNS_ERROR, detail=detail)
-    if kind == "no_route":
-        return ProbeResult(STATUS_NO_ROUTE, detail=detail)
-    return ProbeResult(STATUS_ERROR, detail=detail)
+            STATUS_RECENT_INCIDENT,
+            detail=f"недавний G-01/G-03 по профилю "
+                   f"'{incident_label or '?'}' — UDP-проба понижена, "
+                   "пакетов не отправляли")
+    return _udp_local_route(host, port, timeout=timeout)
+
+
+def probe_awg_reachability(host: str, port: int, *,
+                           recent_g04: bool = False,
+                           recent_incident: bool = False,
+                           incident_label: Optional[str] = None,
+                           timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
+    """AWG probe: history first, then local routability (0 bytes sent).
+
+    AmneziaWG stays silent for unauthenticated packets by design, so the old
+    "silence" observation never proved anything about the tunnel — and the
+    datagram itself was exactly the kind of unsolicited traffic that can
+    trigger the other side's probe-watch.  The probe therefore only checks
+    that the kernel has a route and emits nothing.
+    """
+    if recent_g04:
+        return ProbeResult(
+            STATUS_RECENT_UDP_BLACKHOLE,
+            detail="G-04 за последние 30 мин: UDP-чёрная дыра на этом эндпоинте")
+    if recent_incident:
+        return ProbeResult(
+            STATUS_RECENT_INCIDENT,
+            detail=f"недавний G-01/G-03 по профилю "
+                   f"'{incident_label or '?'}' — UDP-проба понижена, "
+                   "пакетов не отправляли")
+    return _udp_local_route(host, port, timeout=timeout)
 
 
 # --- one candidate, then the pool -------------------------------------------------
@@ -419,13 +442,21 @@ def probe_awg_reachability(host: str, port: int, *,
 def probe_candidate(candidate: Candidate, *,
                     lockdown_443: bool = False,
                     recent_g04: bool = False,
+                    recent_incident: bool = False,
                     timeout: float = DEFAULT_TIMEOUT_S) -> ProbeResult:
-    """Dispatch by protocol; the lock-443 shortcut does not touch the network."""
+    """Dispatch by protocol; the history/lock shortcuts never open a socket."""
     if candidate.proto == PROTO_AWG:
         return probe_awg_reachability(candidate.host, candidate.port,
-                                      recent_g04=recent_g04, timeout=timeout)
+                                      recent_g04=recent_g04,
+                                      recent_incident=recent_incident,
+                                      incident_label=candidate.profile,
+                                      timeout=timeout)
     if candidate.proto == PROTO_HY2:
-        return probe_quic_udp(candidate.host, candidate.port, timeout=timeout)
+        return probe_quic_udp(candidate.host, candidate.port,
+                              recent_g04=recent_g04,
+                              recent_incident=recent_incident,
+                              incident_label=candidate.profile,
+                              timeout=timeout)
     if (lockdown_443 and candidate.route == ROUTE_DIRECT
             and candidate.proto in TLS_PROTOS and candidate.port == 443):
         return ProbeResult(
@@ -442,8 +473,13 @@ def probe_all(candidates: Sequence[Candidate], *,
               max_workers: int = MAX_WORKERS,
               lockdown_443: bool = False,
               recent_g04_endpoints: Sequence[str] = (),
+              recent_incident_profiles: Sequence[str] = (),
               ) -> Dict[str, ProbeResult]:
     """Probe every candidate in parallel within one shared budget.
+
+    The explicit ``vpn scout --probe-all`` path — the old concurrency model
+    (``ThreadPoolExecutor(max_workers=8)``), kept verbatim for the case when
+    the owner really wants the full picture and accepts the traffic.
 
     Returns ``{candidate.key: ProbeResult}`` in candidate order.  A probe that
     never returned (budget exhausted) is reported as ``timeout``/``budget`` —
@@ -454,6 +490,7 @@ def probe_all(candidates: Sequence[Candidate], *,
         return results
     deadline = time.monotonic() + max(0.05, budget_ms / 1000.0)
     g04 = set(recent_g04_endpoints)
+    incidents = set(recent_incident_profiles)
     workers = max(1, min(int(max_workers), len(candidates)))
     executor = ThreadPoolExecutor(max_workers=workers,
                                   thread_name_prefix="vpn-scout")
@@ -470,6 +507,7 @@ def probe_all(candidates: Sequence[Candidate], *,
                 probe_candidate, candidate,
                 lockdown_443=lockdown_443,
                 recent_g04=f"{candidate.host}:{candidate.port}" in g04,
+                recent_incident=(candidate.profile in incidents),
                 timeout=max(0.05, min(float(timeout_s), remaining)),
             )] = candidate
         if futures:
@@ -496,15 +534,106 @@ def probe_all(candidates: Sequence[Candidate], *,
         for candidate in candidates}
 
 
+# --- Stealth Cascade ---------------------------------------------------------------
+
+
+def jitter_between_attempts(sleep: Callable[[float], None] = time.sleep) -> float:
+    """Pause a random 150–400 ms before the next cascade attempt.
+
+    The pause is not cosmetic: a fixed cadence of failing connects to
+    different nodes is a machine signature.  Tests monkeypatch ``sleep`` (or
+    pass their own) and assert both the call count and the range.
+    """
+    delay = random.uniform(CASCADE_JITTER_MIN_S, CASCADE_JITTER_MAX_S)
+    sleep(delay)
+    return delay
+
+
+def probe_cascade(candidates: Sequence[Candidate], *,
+                  budget_ms: int = CASCADE_BUDGET_MS,
+                  timeout_s: float = DEFAULT_TIMEOUT_S,
+                  lockdown_443: bool = False,
+                  recent_g04_endpoints: Sequence[str] = (),
+                  recent_incident_profiles: Sequence[str] = (),
+                  sleep: Callable[[float], None] = time.sleep,
+                  ) -> Tuple[Dict[str, ProbeResult], List[str]]:
+    """Probe candidates **one at a time**, stopping at the first good one.
+
+    ``candidates`` must already be ordered by the network-free
+    :func:`vpnm.scout.rank.pre_score` (the caller does that).  The contract:
+
+    - strictly sequential — never two probes at once;
+    - the first ``ok`` / ``reachable`` / ``local_route`` ends the run: the
+      remaining candidates are **not contacted at all** (no socket, no DNS);
+    - between two attempts a random 150–400 ms jitter is applied (and only
+      between attempts: nothing is slept before the first probe, nothing
+      after the last);
+    - the cascade shares :data:`CASCADE_BUDGET_MS`.  A candidate that cannot
+      be started is reported as ``budget`` — honest, never silent;
+    - a probe crash is ``error`` and does not kill the run.
+
+    Returns ``(results, probed_keys)`` — ``probed_keys`` holds only the
+    candidates whose probe actually started (attempt order); ``results`` also
+    carries a ``budget`` marker for the candidate that could not be started,
+    so the report can say so instead of dropping it.
+    """
+    results: Dict[str, ProbeResult] = {}
+    probed: List[str] = []
+    if not candidates:
+        return results, probed
+    deadline = time.monotonic() + max(0.05, budget_ms / 1000.0)
+    g04 = set(recent_g04_endpoints)
+    incidents = set(recent_incident_profiles)
+    for index, candidate in enumerate(candidates):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.05:
+            results[candidate.key] = ProbeResult(
+                STATUS_BUDGET,
+                detail=f"бюджет каскада {budget_ms} мс исчерпан до старта "
+                       "пробы")
+            break
+        if index:  # only between attempts, never before the first one
+            jitter_between_attempts(sleep)
+            if deadline - time.monotonic() <= 0.05:
+                results[candidate.key] = ProbeResult(
+                    STATUS_BUDGET,
+                    detail=f"бюджет каскада {budget_ms} мс исчерпан "
+                           "джиттером до старта пробы")
+                break
+        try:
+            result = probe_candidate(
+                candidate,
+                lockdown_443=lockdown_443,
+                recent_g04=f"{candidate.host}:{candidate.port}" in g04,
+                recent_incident=(candidate.profile in incidents),
+                timeout=max(0.05, min(float(timeout_s),
+                                      deadline - time.monotonic())),
+            )
+        except Exception as exc:  # a probe bug must not kill the run
+            result = ProbeResult(STATUS_ERROR,
+                                 detail=f"probe crashed: {type(exc).__name__}")
+        results[candidate.key] = result
+        probed.append(candidate.key)
+        if result.status in GOOD_STATUSES:
+            break  # 0 packets to every node after this one
+    return results, probed
+
+
 __all__ = [
+    "CASCADE_BUDGET_MS",
+    "CASCADE_JITTER_MAX_S",
+    "CASCADE_JITTER_MIN_S",
     "DEFAULT_BUDGET_MS",
     "DEFAULT_TIMEOUT_S",
+    "HTTP_READ_BYTES",
     "MAX_WORKERS",
-    "QUIC_MIN_INITIAL_BYTES",
-    "build_quic_initial",
+    "build_http_request",
+    "classify_http_answer",
+    "jitter_between_attempts",
     "probe_all",
     "probe_awg_reachability",
     "probe_candidate",
+    "probe_cascade",
     "probe_quic_udp",
     "probe_tcp_tls",
 ]

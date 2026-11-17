@@ -94,6 +94,20 @@ STATUS_BUDGET = "budget"            # whole-run deadline hit before start
 STATUS_TSPU_TLS_FILTER = "TSPU_TLS_FILTER"
 STATUS_SERVER_LOCKDOWN = "SERVER_LOCKDOWN"
 STATUS_RECENT_UDP_BLACKHOLE = "RECENT_UDP_BLACKHOLE"
+#: TLS 1.3 handshake completed, but the HTTP request got no answer: the
+#: handshake is proven, the transport behind it is not.  Not a hard fail.
+STATUS_TLS_ONLY = "tls_only"
+#: UDP endpoint is locally routable; **zero bytes were sent** (Stealth
+#: Cascade).  Weaker evidence than an answer, stronger than nothing: it is
+#: not a hard fail.
+STATUS_LOCAL_ROUTE = "local_route"
+#: A recent G-01/G-03 history entry for this profile demotes the UDP verdict
+#: without touching the network.  Not a hard fail; scored below a clean
+#: ``local_route``.
+STATUS_RECENT_INCIDENT = "recent_incident"
+#: Cascade never reached this candidate: the first good node already won, so
+#: no packet was ever sent to it (Stealth Cascade).
+STATUS_NOT_PROBED = "not_probed"
 
 #: Statuses that prove the route is not usable right now (score → 0).
 #: ``RECENT_UDP_BLACKHOLE`` is deliberately **not** here: it is a strong
@@ -111,6 +125,12 @@ HARD_FAIL_STATUSES = (
     STATUS_TSPU_TLS_FILTER,
     STATUS_SERVER_LOCKDOWN,
 )
+
+#: Statuses that stop the Stealth Cascade: the route is proven good enough to
+#: recommend, so no further node is touched.  ``tls_only``/``recent_incident``
+#: are *not* here — they are positive-ish but unproven, and the cascade keeps
+#: looking while the budget lasts.
+GOOD_STATUSES = (STATUS_OK, STATUS_REACHABLE, STATUS_LOCAL_ROUTE)
 
 
 @dataclass(frozen=True)

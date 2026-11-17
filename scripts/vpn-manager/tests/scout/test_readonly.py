@@ -135,7 +135,8 @@ def artefacts(paths: Dict[str, Path]) -> Dict[str, Dict[str, object]]:
 
 def fake_probe_all(candidates, *, budget_ms: int = 2500,
                    timeout_s: float = 1.5, lockdown_443: bool = False,
-                   recent_g04_endpoints=(), **kwargs):
+                   recent_g04_endpoints=(), recent_incident_profiles=(),
+                   **kwargs):
     results = {}
     for candidate in candidates:
         if (lockdown_443 and candidate.route == "direct"
@@ -144,6 +145,27 @@ def fake_probe_all(candidates, *, budget_ms: int = 2500,
         else:
             results[candidate.key] = ProbeResult(STATUS_OK, rtt_ms=20.0)
     return results
+
+
+def fake_probe_cascade(candidates, *, budget_ms: int = 6000,
+                       timeout_s: float = 1.5, lockdown_443: bool = False,
+                       recent_g04_endpoints=(), recent_incident_profiles=(),
+                       sleep=None, **kwargs):
+    """Cascade stub: the first candidate wins, so nobody else is contacted."""
+    if not candidates:
+        return {}, []
+    first = candidates[0]
+    if (lockdown_443 and first.route == "direct"
+            and first.proto in TLS_PROTOS and first.port == 443):
+        result = ProbeResult(STATUS_SERVER_LOCKDOWN)
+    else:
+        result = ProbeResult(STATUS_OK, rtt_ms=20.0)
+    return {first.key: result}, [first.key]
+
+
+def patch_probes(monkeypatch) -> None:
+    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    monkeypatch.setattr(scout_cli, "probe_cascade", fake_probe_cascade)
 
 
 def paths_of(env: Dict[str, Path]) -> Dict[str, Path]:
@@ -168,7 +190,7 @@ class RecordingNotifier:
 
 
 def test_build_report_writes_nothing(env, monkeypatch) -> None:
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     before = artefacts(env)
     notifier = RecordingNotifier()
     payload = scout_cli.build_report(**paths_of(env), notifier=notifier)
@@ -183,18 +205,21 @@ def test_build_report_writes_nothing(env, monkeypatch) -> None:
 def test_report_json_keys_are_backward_compatible(env, monkeypatch) -> None:
     # scout.report/1 gains exactly one additive top-level key (threat_level);
     # everything the old consumers read stays in place.
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     payload = scout_cli.build_report(**paths_of(env),
                                      notifier=RecordingNotifier())
     assert set(payload) == {
-        "schema", "created", "context", "threat_level", "recommended",
-        "fallback", "rejected", "candidates", "notify",
+        "schema", "created", "mode", "probed", "context", "threat_level",
+        "recommended", "fallback", "rejected", "candidates", "notify",
     }
+    assert payload["mode"] == "cascade"
+    assert payload["probed"] and all(isinstance(name, str)
+                                    for name in payload["probed"])
     assert payload["threat_level"] == payload["context"]["threat_level"]
     assert set(payload["context"]) >= {
         "verdict", "verdict_fresh", "verdict_age_s", "threat_level",
         "server_verdict", "lockdown_443", "findings_recent",
-        "g04_endpoints", "notes",
+        "g04_endpoints", "incident_profiles", "notes",
     }
     row = payload["recommended"]
     assert set(row) >= {"route", "proto", "profile", "host", "port", "sni",
@@ -203,7 +228,7 @@ def test_report_json_keys_are_backward_compatible(env, monkeypatch) -> None:
 
 
 def test_scout_cli_writes_nothing(env, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     monkeypatch.setattr(scout_cli, "_notify_blocked",
                         lambda report, active, notifier=None: None)
     before = artefacts(env)
@@ -216,7 +241,7 @@ def test_scout_cli_writes_nothing(env, monkeypatch, capsys) -> None:
 
 
 def test_sync_is_the_only_writer_and_only_by_delegation(env, monkeypatch) -> None:
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     calls: Dict[str, object] = {}
 
     def fake_sync(*, host=None, timeout=10.0, path=None, **kwargs):
@@ -236,7 +261,7 @@ def test_sync_is_the_only_writer_and_only_by_delegation(env, monkeypatch) -> Non
 
 def test_active_blocked_channel_triggers_the_guard_notifier(env,
                                                             monkeypatch) -> None:
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     notifier = RecordingNotifier()
     payload = scout_cli.build_report(**paths_of(env), notifier=notifier)
     # the active profile 'phone' is a direct reality on 443 and the verdict is
@@ -246,13 +271,14 @@ def test_active_blocked_channel_triggers_the_guard_notifier(env,
 
 
 def test_lockdown_blocks_the_active_channel_and_notifies(env, monkeypatch) -> None:
-    monkeypatch.setattr(scout_cli, "probe_all", fake_probe_all)
+    patch_probes(monkeypatch)
     verdict_file = env["data"] / "server-verdict.json"
     payload = json.loads(verdict_file.read_text(encoding="utf-8"))
     payload["lockdown"] = {"active": True}
     verdict_file.write_text(json.dumps(payload), encoding="utf-8")
     notifier = RecordingNotifier()
-    report = scout_cli.build_report(**paths_of(env), notifier=notifier)
+    report = scout_cli.build_report(**paths_of(env), notifier=notifier,
+                                    probe_all_mode=True)
     assert report["context"]["lockdown_443"] is True
     assert report["notify"]["attempted"] is True
     assert report["notify"]["sent"] is True
