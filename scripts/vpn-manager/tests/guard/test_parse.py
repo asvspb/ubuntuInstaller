@@ -637,6 +637,45 @@ def test_fuzz_lines_never_crash(junk: str) -> None:
         assert junk not in json.dumps(event, ensure_ascii=False)
 
 
+# --- IPv6 ENETUNREACH ≠ падение локальной сети (2026-11-17) --------------------------
+
+CF_UNIT = "cloudflared-proxy-dns.service"
+
+
+def test_ipv6_unreachable_is_infra_not_a_signal() -> None:
+    """Dual-stack процесс на IPv4-only хосте: «нет v6», а не «сеть легла».
+
+    cloudflared ходит в [2606:4700:4700::1111] и получает ENETUNREACH; такой
+    event не должен доходить до G-07 (иначе high каждые ~5 с) и не должен
+    попадать в AC-5 unparsed (это служебная строка, а не app-лог).
+    """
+    parser = JournalParser()
+    line = ('failed to connect to an HTTPS backend "https://[2606:4700:4700::1111]'
+            '/dns-query" error="failed to perform an HTTPS request: Post '
+            '"https://[2606:4700:4700::1111]/dns-query": dial tcp '
+            '[2606:4700:4700::1111]:443: connect: network is unreachable"')
+    event = parser.parse(entry(line, unit=CF_UNIT))
+    assert event is None
+    assert parser.stats.ignored_infra == 1
+    assert parser.stats.unparsed == 0
+
+
+def test_bare_ipv6_unreachable_is_also_infra() -> None:
+    parser = JournalParser()
+    line = "dial tcp 2606:4700:4700::1001:443: connect: network is unreachable"
+    assert parser.parse(entry(line, unit=CF_UNIT)) is None
+    assert parser.stats.unparsed == 0
+
+
+def test_ipv4_unreachable_still_reaches_g07() -> None:
+    """Настоящая потеря IPv4-маршрута по-прежнему даёт сигнал G-07."""
+    parser = JournalParser()
+    line = "dial tcp 203.0.113.10:443: connect: network is unreachable"
+    event = parser.parse(entry(line))
+    assert event is not None
+    assert event["signal"] == "network_unreachable"
+
+
 def test_stats_account_for_every_line() -> None:
     parser = JournalParser()
     for message in ("Xray 1.8.24 started", "flurb zzz", ""):

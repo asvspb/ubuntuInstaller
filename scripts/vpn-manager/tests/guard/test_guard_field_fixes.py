@@ -394,3 +394,48 @@ def test_runner_reads_expected_awg_from_mode_json(isolated_env: None) -> None:
 
     assert mode.write_mode("none")
     assert runner._awg_expected() is False
+
+
+# --- IPv6 ENETUNREACH: не G-07 и не маскировка настоящего G-06 (2026-11-17) ---------
+
+
+def test_ipv6_unreachable_burst_neither_fires_g07_nor_hides_g06() -> None:
+    """IPv6-«network is unreachable» — «нет v6», а не падение локальной сети.
+
+    Полевой случай: cloudflared на IPv4-only ноутбуке долбится в
+    [2606:4700:4700::1111] каждые ~5 с. Раньше это давало G-07 high, а через
+    batch-приоритет ещё и глушило настоящий G-06 (IPv4 DNS).
+    """
+    from vpnm.guard.parse import JournalParser
+
+    parser = JournalParser()
+    cf = "cloudflared-proxy-dns.service"
+    v6_line = ('failed to connect to an HTTPS backend "https://[2606:4700:4700'
+               '::1111]/dns-query": Post "https://[2606:4700:4700::1111]'
+               '/dns-query": dial tcp [2606:4700:4700::1111]:443: connect: '
+               'network is unreachable')
+
+    def journal(message: str) -> dict:
+        return {
+            "MESSAGE": message,
+            "PRIORITY": "3",
+            "__REALTIME_TIMESTAMP": "1794830403412345",
+            "__MONOTONIC_TIMESTAMP": "812345678",
+            "_SYSTEMD_UNIT": cf,
+            "_SYSTEMD_INVOCATION_ID": "fixture-invocation",
+        }
+
+    parsed = [parser.parse(journal(v6_line)) for _ in range(8)]
+    assert parsed == [None] * 8          # парсер отбросил их до правил
+    assert parser.stats.unparsed == 0
+
+    target = engine()
+    startup(target)
+    outcomes = run(
+        target,
+        ev("dns_timeout", 10.0, unit=cf, proto="dns"),
+        ev("dns_timeout", 11.0, unit=cf, proto="dns"),
+        ev("dns_timeout", 12.0, unit=cf, proto="dns"),
+    )
+    assert findings(outcomes, "G-07") == []
+    assert findings(outcomes, "G-06"), "настоящий IPv4-DNS сбой должен выжить"

@@ -449,6 +449,36 @@ class TestScriptSyntax:
         assert "server=127.0.0.1#${DOH_PORT}" in emitted
         assert "server=77.88.8.8" in emitted
 
+    @pytest.mark.parametrize("script_name", ["15_domain-split.sh",
+                                             "13_dns-doh.sh"])
+    def test_cloudflared_upstream_is_ipv4_only(self, script_name):
+        """cloudflared не должен ходить в IPv6 на IPv4-only хосте (2026-11-17).
+
+        Имя cloudflare-dns.com и штатный bootstrap-список резолвятся в AAAA;
+        попытка [2606:4700:4700::…] даёт ENETUNREACH каждые ~5 с — шум journald
+        и ложные G-07 в vpn guard. Держим только IPv4-литералы.
+        """
+        script = xsplit._scripts_dir() / script_name
+        if not script.exists():
+            pytest.skip(f"{script_name} не найден")
+        text = script.read_text(encoding="utf-8")
+        exec_lines = [line for line in text.splitlines()
+                      if line.startswith("ExecStart=")]
+        assert exec_lines, "в скрипте нет ExecStart юнита cloudflared"
+        for line in exec_lines:
+            assert "2606:" not in line          # никаких v6-литералов
+            assert "cloudflare-dns.com" not in line
+            assert "${DOH_UPSTREAM_ARGS}" in line
+        # Сами апстримы — IPv4-литералы в переменной, которую подставляет юнит.
+        args = [line for line in text.splitlines()
+                if line.startswith("DOH_UPSTREAM_ARGS=")]
+        assert args, "нет DOH_UPSTREAM_ARGS"
+        joined = " ".join(args)
+        assert "--upstream https://1.1.1.1/dns-query" in joined
+        assert "--upstream https://1.0.0.1/dns-query" in joined
+        assert "--bootstrap https://162.159.36.1/dns-query" in joined
+        assert "2606:" not in joined and "cloudflare-dns.com" not in joined
+
 
 class TestRealitySupport:
     REALITY_LINK = (

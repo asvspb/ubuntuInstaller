@@ -56,6 +56,11 @@ AWG_IFACE="${AWG_IFACE:-awg0-split}"
 AWG_CONF="${AWG_CONF:-$HOME/awg0-split.conf}"   # конфиг awg-quick (Table=off)
 EXCLUDE_FILE="/opt/awg-split/exclude.txt"
 DOH_PORT="5053"
+# cloudflared: только IPv4-литералы. На IPv4-only хостах (домашние сети РФ,
+# AWG/Xray-сплит без v6) dual-stack upstream и штатный bootstrap-список с
+# https://[2606:4700:4700::…] дают «network is unreachable» каждые ~5 с:
+# шум в journald и ложные G-07 в vpn guard (2026-11-17).
+DOH_UPSTREAM_ARGS="--upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
 RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же файл, что у 13_dns-doh.sh
 PUBLIC_DNS_CONF="/etc/systemd/resolved.conf.d/public-dns.conf"  # глобальный DNS=1.1.1.1 8.8.8.8 — обходит dnsmasq, нейтрализуем
 # Юнит AWG: templated (14_awg-split.sh) или точечный — автодетект ниже.
@@ -412,6 +417,21 @@ if systemctl is-active --quiet cloudflared-proxy-dns.service 2>/dev/null \
    || [ -x /usr/local/bin/cloudflared-proxy-dns-bin ]; then
     # clean-boot: только старт, не enable
     systemctl start cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+    # Идемпотентная сходимость: если юнит остался от старой версии скрипта
+    # (имя cloudflare-dns.com / v6-bootstrap), переписываем ExecStart и
+    # перезапускаем — иначе IPv6-шум продолжается на уже установленном хосте.
+    UNIT_DST="/etc/systemd/system/cloudflared-proxy-dns.service"
+    if [ -f "$UNIT_DST" ]; then
+        BIN_IN_UNIT="$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' "$UNIT_DST" | head -1)"
+        BIN_IN_UNIT="${BIN_IN_UNIT:-/usr/local/bin/cloudflared-proxy-dns-bin}"
+        NEW_EXEC="ExecStart=${BIN_IN_UNIT} proxy-dns --port ${DOH_PORT} ${DOH_UPSTREAM_ARGS}"
+        if ! grep -qF "$NEW_EXEC" "$UNIT_DST"; then
+            sed -i "s|^ExecStart=.*|${NEW_EXEC}|" "$UNIT_DST"
+            systemctl daemon-reload
+            systemctl restart cloudflared-proxy-dns.service >/dev/null 2>&1 || true
+            success "юнит cloudflared обновлён: IPv4-апстримы, без v6-литералов"
+        fi
+    fi
     success "cloudflared-proxy-dns уже установлен — переиспользую"
 else
     info "  cloudflared не найден — минимальная установка (см. scripts/13_dns-doh.sh для деталей)"
@@ -440,7 +460,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=${BIN_DST} proxy-dns --port ${DOH_PORT} --upstream https://cloudflare-dns.com/dns-query
+ExecStart=${BIN_DST} proxy-dns --port ${DOH_PORT} ${DOH_UPSTREAM_ARGS}
 Restart=on-failure
 RestartSec=5
 

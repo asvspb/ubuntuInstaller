@@ -11,7 +11,7 @@
 #   - бинарь /usr/local/bin/cloudflared-proxy-dns-bin (cloudflared 2025.11.1 —
 #     последняя версия с proxy-dns; в 2026.10+ эту подкоманду убрали);
 #   - systemd-юнит cloudflared-proxy-dns.service (ExecStart ... proxy-dns
-#     --port 5053 --upstream https://cloudflare-dns.com/dns-query);
+#     --port 5053 --upstream https://1.1.1.1/dns-query …);
 #   - /etc/systemd/resolved.conf.d/doh-local.conf (DNS=127.0.0.1:5053);
 #   - daemon-reload + enable --now + restart systemd-resolved.
 #
@@ -50,7 +50,11 @@ UNIT_DST="/etc/systemd/system/cloudflared-proxy-dns.service"
 RESOLVED_CONF_DIR="/etc/systemd/resolved.conf.d"
 RESOLVED_CONF="$RESOLVED_CONF_DIR/doh-local.conf"
 DOH_PORT="5053"
-DOH_UPSTREAM="https://cloudflare-dns.com/dns-query"
+# Только IPv4-литералы: на IPv4-only хостах dual-stack имени/штатного
+# bootstrap-списка (https://[2606:4700:4700::…]) cloudflared получает
+# «network is unreachable» каждые ~5 с — шум journald и ложные G-07 в
+# vpn guard (2026-11-17).
+DOH_UPSTREAM_ARGS="--upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
 
 # --- 0. Root -------------------------------------------------------------------
 info "0. Проверка прав (скрипт пишет в /usr/local/bin и /etc/systemd)"
@@ -102,7 +106,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=${BIN_DST} proxy-dns --port ${DOH_PORT} --upstream ${DOH_UPSTREAM}
+ExecStart=${BIN_DST} proxy-dns --port ${DOH_PORT} ${DOH_UPSTREAM_ARGS}
 Restart=on-failure
 RestartSec=5
 

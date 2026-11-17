@@ -34,6 +34,7 @@ the frozen registry.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
@@ -57,6 +58,10 @@ APP_PROTOS: Tuple[str, ...] = ("xray", "hysteria2", "unknown")
 #: awg-quick shell output: two lifecycle lines matter, the rest is infra noise.
 AWG_QUICK_ADD_RE = re.compile(r"^\s*\[#\]\s+ip link add\b")
 AWG_QUICK_DEL_RE = re.compile(r"^\s*\[#\]\s+ip link delete\b")
+
+#: «Локальная сеть недоступна» (G-07).  Держим здесь, чтобы парсер мог
+#: отбросить IPv6-вариант (IPv4-only хост) до того, как он дойдёт до правил.
+LOCAL_NET_SIGNALS: frozenset = frozenset(("network_unreachable", "no_route"))
 
 #: journald truncates long messages itself (``LineMax``); the parser keeps its
 #: own bound so a single pathological line cannot stall the analyzer thread
@@ -363,6 +368,13 @@ class JournalParser:
             )
 
         signal, fields, endpoint = self._app_signal(message)
+        if signal in LOCAL_NET_SIGNALS and _targets_ipv6(message):
+            # IPv4-only хост: ENETUNREACH на IPv6-адресат — это отсутствие
+            # v6-маршрута, а не падение локальной сети. Иначе dual-stack
+            # процессы (cloudflared по [2606:4700::…], xray) дают G-07 high
+            # каждые ~5 с и своим батчем маскируют реальный G-06 (§8.4).
+            self.stats.ignored_infra += 1
+            return None
         if signal is None:
             if proto in APP_PROTOS:
                 # SPEC §7.2 step 3: unknown app text is counted, hashed and
@@ -611,6 +623,29 @@ def _endpoint_of(message: str) -> Optional[Dict[str, Any]]:
         # only extracts the well-formed pair into the allowlist shape.
         return {"host": host, "port": port}
     return None
+
+
+_V6_CANDIDATE_RE = re.compile(
+    r"\[[0-9A-Fa-f:.]+\]|(?<![0-9A-Za-z.])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:.]*")
+
+
+def _targets_ipv6(message: str) -> bool:
+    """В сообщении есть IPv6-адресат (2620:…, [2606:4700::1111]:443, …).
+
+    Нужно для «network is unreachable»: на IPv4-only хосте (домашние сети РФ,
+    AWG/Xray-сплит без v6-маршрута) ядро отвечает ENETUNREACH именно на
+    IPv6-попытку dual-stack-процесса, и это **не** падение локальной сети.
+    """
+    for token in _V6_CANDIDATE_RE.findall(message):
+        # Хвостовая пунктуация/двоеточие порта не должна мешать разбору:
+        # «2606:4700::1001:443:» → валидный v6 (порт просто станет группой).
+        candidate = token.strip("[]").split("%", 1)[0].rstrip(":.")
+        try:
+            if ipaddress.ip_address(candidate).version == 6:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _is_local_host(host: str) -> bool:
