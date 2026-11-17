@@ -1262,6 +1262,29 @@ def switch(name: str) -> None:
     _sync_sysproxy_after(name, "switch")
 
 
+def _direct_unit_active(unit: Optional[str]) -> Optional[bool]:
+    """Активен ли юнит прямого контура из mode.json (None = юнит неизвестен).
+
+    Нужен ``vpn status``, чтобы не рапортовать DIRECT/RELAY при мёртвом юните
+    (инцидент 2026-11-18: туннель снесён, а статус показывал живой режим).
+    """
+    from . import amneziawg as awg
+    from . import xsplit as xsplit_mod
+    if not unit:
+        return None
+    if unit.startswith(awg.AWG_UNIT_PREFIX) and unit.endswith(".service"):
+        name = unit[len(awg.AWG_UNIT_PREFIX):-len(".service")]
+        return awg.instance_active(name)
+    if (unit.startswith(xsplit_mod.XRAY_SPLIT_UNIT_PREFIX)
+            and unit.endswith(".service")):
+        name = unit[len(xsplit_mod.XRAY_SPLIT_UNIT_PREFIX):-len(".service")]
+        return xsplit_mod.active_profile(xsplit_mod.run_cmd) == name
+    if unit.startswith("vpnm-") and unit.endswith(".service"):
+        name = unit[len("vpnm-"):-len(".service")]
+        return runners.is_active(name)
+    return None
+
+
 @app.command()
 def status() -> None:
     """Режим (DIRECT/RELAY), awg-схема или активный профиль, unit, внешний IP."""
@@ -1269,19 +1292,34 @@ def status() -> None:
     from . import mode as mode_mod
     from . import runners
     stored = mode_mod.read_mode()
+    stored_mode = stored.get("mode")
     instances = awg.active_instances()
     relay_live = awg.instance_active(RELAY_INSTANCE)
+    hint: Optional[str] = None
     if relay_live:
-        target = stored.get("target") if stored.get("mode") == "relay" else None
+        target = stored.get("target") if stored_mode == "relay" else None
         line = f"RELAY (awg {RELAY_INSTANCE}"
         line += f" → {target})" if target else ")"
     elif instances:
         line = f"DIRECT (awg {instances[0]})"
-    elif stored.get("mode") in ("direct", "relay"):
-        line = mode_mod.describe(stored)
+    elif stored_mode == "relay":
+        # mode.json считает, что релей активен, но юнита нет — не врать.
+        unit = (stored.get("unit")
+                or f"{awg.AWG_UNIT_PREFIX}{RELAY_INSTANCE}.service")
+        line = f"RELAY (юнит {unit} неактивен — туннель не поднят)"
+        hint = "подсказка: поднять релей — vpn start relay"
+    elif stored_mode == "direct":
+        unit = stored.get("unit")
+        if _direct_unit_active(unit) is False:
+            line = f"direct (юнит {unit} неактивен — туннель не поднят)"
+            hint = "подсказка: поднять прямую схему — vpn start"
+        else:
+            line = mode_mod.describe(stored)
     else:
         line = "unknown (mode.json нет, туннелей не найдено)"
     typer.echo(f"mode:           {line}")
+    if hint:
+        typer.echo(hint)
     active = runners.get_active()
     if not active:
         # «no active profile» относится к socks-профилям (xray/sing-box), а не

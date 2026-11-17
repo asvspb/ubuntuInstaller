@@ -85,7 +85,7 @@ vpn install --linger
 | `vpn scheme awg\|xray-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
-| `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль / awg-схема, состояние unit, внешний IP через SOCKS. При AWG печатает `awg-схема активна: доменный split через vpn-awg-split@<iface>.service` — `no active profile` относится только к socks-профилям и в этом режиме не выводится |
+| `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль / awg-схема, состояние unit, внешний IP через SOCKS. При AWG печатает `awg-схема активна: доменный split через vpn-awg-split@<iface>.service` — `no active profile` относится только к socks-профилям и в этом режиме не выводится. Если `mode.json` говорит `relay`/`direct`, а юнит **неактивен**, статус не рапортует живой режим, а печатает `mode: RELAY (юнит … неактивен — туннель не поднят)` и подсказку `vpn start relay` (direct — `vpn start`) |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |

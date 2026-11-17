@@ -368,3 +368,81 @@ def test_status_without_any_scheme_still_says_no_profile(env, monkeypatch):
     result = CliRunner().invoke(cli.app, ["status"])
     assert result.exception is None
     assert "no active profile" in result.output
+
+
+# --- status не врёт про мёртвый юнит (инцидент 2026-11-18) ---------------------
+
+
+def test_status_relay_mode_but_unit_inactive_is_explicit(env, monkeypatch):
+    """mode=relay + юнит неактивен: явная пометка, а не «RELAY (… → ip)»."""
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: [])
+    monkeypatch.setattr(awg, "instance_active", lambda name: False)
+    monkeypatch.setattr(mode_mod, "read_mode", lambda: {
+        "mode": "relay", "proto": "amneziawg", "iface": "relay",
+        "unit": "vpn-awg-split@relay.service", "target": "203.0.113.10"})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exception is None
+    assert result.exit_code == 0
+    assert ("RELAY (юнит vpn-awg-split@relay.service неактивен — "
+            "туннель не поднят)" in result.output)
+    assert "vpn start relay" in result.output
+    # мёртвый target не выдаётся за живой маршрут
+    assert "→ 203.0.113.10" not in result.output
+
+
+def test_status_relay_mode_when_unit_active_is_unchanged(env, monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: [])
+    monkeypatch.setattr(awg, "instance_active", lambda name: True)
+    monkeypatch.setattr(mode_mod, "read_mode", lambda: {
+        "mode": "relay", "proto": "amneziawg", "iface": "relay",
+        "unit": "vpn-awg-split@relay.service", "target": "203.0.113.10"})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 0
+    assert "RELAY (awg relay → 203.0.113.10)" in result.output
+    assert "неактивен" not in result.output
+
+
+def test_status_direct_mode_but_unit_inactive_is_explicit(env, monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: [])
+    monkeypatch.setattr(awg, "instance_active", lambda name: False)
+    monkeypatch.setattr(mode_mod, "read_mode", lambda: {
+        "mode": "direct", "proto": "amneziawg", "iface": "laptop",
+        "unit": "vpn-awg-split@laptop.service"})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 0
+    assert ("direct (юнит vpn-awg-split@laptop.service неактивен — "
+            "туннель не поднят)" in result.output)
+    assert "vpn start" in result.output
+
+
+def test_status_direct_mode_when_unit_active_is_unchanged(env, monkeypatch):
+    from vpnm import amneziawg as awg
+    from vpnm import mode as mode_mod
+
+    monkeypatch.setattr(awg, "active_instances", lambda: [])
+    monkeypatch.setattr(awg, "instance_active",
+                        lambda name, run=None: name == "laptop")
+    monkeypatch.setattr(mode_mod, "read_mode", lambda: {
+        "mode": "direct", "proto": "amneziawg", "iface": "laptop",
+        "unit": "vpn-awg-split@laptop.service"})
+    monkeypatch.setattr(runners, "get_active", lambda: None)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 0
+    assert "DIRECT(amneziawg, laptop)" in result.output
+    assert "неактивен" not in result.output
