@@ -67,8 +67,28 @@ provider_on() {
 }
 
 tunnel_on() {
+  # The split routes via dnsmasq writing resolved IPs into the nft set.  With
+  # resolved pointed at the ISP (the provider-on state) queries never reach
+  # dnsmasq, the set stays empty and every split domain silently goes direct —
+  # which looks exactly like "the tunnel is dead".  So the DNS chain is part
+  # of bringing the tunnel up, not an optional extra.
+  say "-- DNS-цепочка для split (resolved → dnsmasq → DoH)"
+  vpn doh on >/dev/null 2>&1 || say "  [warn] vpn doh on не удался"
   say "-- поднимаю прямой tun (vpn scheme xray-split asv2-reality)"
   vpn scheme xray-split asv2-reality
+  say "-- проверяю, что split реально несёт трафик (до 3 попыток)"
+  local i code
+  for i in 1 2 3; do
+    sleep 3
+    code=$(curl -4 --noproxy '*' -s -o /dev/null --max-time 10 \
+      -w '%{http_code}' https://www.youtube.com/generate_204)
+    if [ "$code" = "204" ] || [ "$code" = "200" ]; then
+      say "TUNNEL: ok (http=$code)"
+      return 0
+    fi
+  done
+  say "TUNNEL: НЕ несёт трафик (last http=$code) — проверьте nft set и dnsmasq"
+  return 1
 }
 
 drop_on() {
