@@ -722,12 +722,20 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
 - **Лестница:** `relay → asv2-hy2 → asv2-awg → asv2-cdn`; на каждом кандидате
   `pre_flight` (≤2 с) → switch → `post_flight` (≤4 с). Провал `pre_flight` =
   `dead_entry` (switch не вызывается), провал `post_flight` = `dead_exit`.
+  Профильные ступени, чей профиль не импортирован (например `asv2-cdn`),
+  исключаются из **эффективной** лестницы (`skipped_profiles`) и не считаются
+  боевым отказом; `vpn guard failover status` печатает `Configured ladder` и
+  `Effective ladder (skipped: …)`.
   Схемные ступени (`relay`, `asv2-awg`) проходят `post_flight` **дважды** с
   паузой 1.5 с: холодный старт AWG-плеча (установка конфига, интерфейс,
   handshake) не укладывается в один 4-секундный проб — по живому прогону relay
   давал ложный `egress_empty`. `candidate_cooldown` 600 с ставится только
   **профильным** ступеням (`asv2-hy2`, `asv2-cdn`): неподтверждённый схемный
   резерв нельзя на 10 минут вычёркивать.
+- **Диагностика отказов:** `switch_error` несёт `rc=N: <хвост stderr>` (240
+  символов, переводы строк → ` | `, прогнано через redact) — и в `Attempt.detail`,
+  и в `failover_history.jsonl`. Без этого живая приёмка четыре прогона подряд
+  видела только «switch_error» и не могла назвать причину.
 - **Гашение `xray0` перед socks-ступенью:** мёртвый tun не должен остаться в
   таблице маршрутизации над живым резервом, поэтому перед `vpn switch <профиль>`
   схема снимается (`xsplit.stop`). Схемные ступени (`relay`, `asv2-awg`) делают
@@ -741,7 +749,11 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
   `G-01`/`G-09` в середине сессии не срабатывают. Два провала подряд при живом
   `local_net_check()` → триггер `active_probe_dead` → обычная лестница.
   Настройки: `failover.liveness_enabled` (true), `liveness_interval_sec` (60),
-  `liveness_failures` (2).
+  `liveness_failures` (2). Счётчик обнуляется в момент срабатывания и при
+  blackout, чтобы таймер не копил провалы поверх уже отработавшего триггера.
+  **Защита от ложного каскада:** если проба упала, но локальный резолвер хоста
+  мёртв (`local_dns_ok() == False`), переключение не запускается — статус
+  `suppressed_local_dns_dead`: смена ступени DNS не починит.
 - **Ручная остановка важнее:** `vpn down`/`vpn reset` ставят маркер
   (`activity_scope`) и глушат агент на 5 мин; отдельного `desired_state` нет.
 - **Total blackout:** ровно один проход, backoff `120 → 300 → 900` с,

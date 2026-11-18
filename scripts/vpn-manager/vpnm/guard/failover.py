@@ -36,6 +36,7 @@ from typing import (Any, Callable, Dict, List, Mapping, Optional, Sequence,
                     Tuple)
 
 from . import store
+from .redact import redact_raw
 
 # --- results / candidates -------------------------------------------------------
 
@@ -157,6 +158,9 @@ class FailoverOutcome:
     notified: Dict[str, Any] = field(default_factory=dict)
     #: Ids of the candidates whose ``switch`` was actually invoked.
     switch_calls: List[str] = field(default_factory=list)
+    #: Profile rungs dropped because the profile is not imported on this host.
+    #: ``[{"candidate": "asv2-cdn", "reason": "profile_missing"}]``
+    skipped_profiles: List[Dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -168,6 +172,7 @@ class FailoverOutcome:
             "lockdown_confirmed": self.lockdown_confirmed,
             "backoff_sec": self.backoff_sec,
             "notified": dict(self.notified),
+            "skipped_profiles": list(self.skipped_profiles),
         }
 
 
@@ -492,7 +497,9 @@ def pre_flight(candidate: Candidate, *,
             return False, "awg_endpoint_unknown"
         if not udp(endpoint[0], endpoint[1], timeout):
             return False, "udp_no_route"
-        show = awg_show or (lambda: _run_cmd(["sudo", "-n", "awg", "show"]))
+        # `awg show` needs no root (rc=0 as a plain user); asking for sudo
+        # only added a failure mode.
+        show = awg_show or (lambda: _run_cmd(["awg", "show"]))
         rc, _out, err = show()
         if "Address family not supported" in (err or ""):
             return False, "awg_privilege_error"
@@ -517,6 +524,22 @@ def _provider_egress(run: RunCmd, timeout: float = 3.0) -> bool:
     rc, out, _err = run(["curl", "-s", "--max-time", f"{max(0.5, timeout):.1f}",
                          "https://api.ipify.org"])
     return rc == 0 and bool(out.strip())
+
+
+def _failure_detail(rc: int, out: str = "", err: str = "",
+                    limit: int = 240) -> str:
+    """``rc=N: <last 240 chars of stderr|stdout>`` — redacted before it lands.
+
+    Without this a scheme rung only ever reported a bare ``switch_error`` and
+    the real reason (sudo/polkit/mount/TUN) stayed invisible in live
+    acceptance.
+    """
+    tail = (err or out or "").strip()
+    if not tail:
+        return f"rc={rc}"
+    flat = " | ".join(line.strip() for line in tail.splitlines() if line.strip())
+    clean, _hits = redact_raw(flat[-limit:])
+    return f"rc={rc}: {clean}"
 
 
 def _awg_rx() -> Optional[int]:
@@ -551,6 +574,20 @@ def liveness_probe(*, iface: str = "xray0", timeout: float = 4.0,
     except (OSError, ValueError):
         return False
     return rc == 0 and out.strip() in ("200", "204")
+
+
+def local_dns_ok(host: str = "example.com") -> bool:
+    """Is the host's own resolver alive at all (independent of the tunnel)?
+
+    Q3 (arch-lead 2026-11-18): a dead local resolver looks exactly like a dead
+    tunnel to an in-tunnel probe, but switching rungs cannot fix the host's
+    DNS — it would only cascade to a false blackout.
+    """
+    try:
+        socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False
+    return True
 
 
 def post_flight(candidate: Candidate, *,
@@ -752,6 +789,7 @@ def run_once(*, config_root: Optional[Path] = None,
              sync: Optional[Callable[[], bool]] = None,
              xsplit_active: Optional[Callable[[], Optional[str]]] = None,
              liveness_fn: Optional[Callable[[], bool]] = None,
+             dns_ok_fn: Optional[Callable[[], bool]] = None,
              reset_fn: Optional[Callable[[], Tuple[int, str]]] = None,
              teardown_xsplit_fn: Optional[Callable[[], Tuple[bool, str]]] = None,
              verdict_path: Optional[Path] = None,
@@ -886,6 +924,15 @@ def run_once(*, config_root: Optional[Path] = None,
                 local_ok = bool(local_net())
             except (OSError, ValueError, RuntimeError):
                 local_ok = False
+            if local_ok and not (dns_ok_fn or local_dns_ok)():
+                # The tunnel may be fine; the host's resolver is what broke.
+                _history(history_path, _history_record(
+                    "suppressed", now_text, from_=profile,
+                    trigger="active_probe_dead",
+                    note="local_dns_dead"))
+                state["updated"] = now_text
+                _save_state(state, state_path, config_root)
+                return FailoverOutcome("suppressed_local_dns_dead", decision)
             if local_ok:
                 fails = int(state.get("liveness_failures") or 0) + 1
                 state["liveness_failures"] = fails
@@ -899,6 +946,14 @@ def run_once(*, config_root: Optional[Path] = None,
 
     if not decision.trigger:
         return FailoverOutcome("no_trigger", decision)
+
+    # Q6 (2026-11-18): once the probe has fired, the counter must start from
+    # zero — otherwise every later tick keeps re-triggering and each cycle
+    # tears the channel down again (observed as "провалов 3/2").
+    if state.get("liveness_failures"):
+        state["liveness_failures"] = 0
+        state["updated"] = now_text
+        _save_state(state, state_path, config_root)
 
     # §4.3: the pin suppresses a repeat failover from the same profile.
     if isinstance(pin.get("profile"), str) and pin.get("profile") == profile:
@@ -914,6 +969,7 @@ def run_once(*, config_root: Optional[Path] = None,
         return FailoverOutcome("suppressed_local_net_down", decision)
 
     # --- ladder ------------------------------------------------------------
+    endpoints = profile_endpoints(profiles_path)
     cooldown_map = state.get("candidate_cooldown")
     cooldowns: Dict[str, float] = {}
     if isinstance(cooldown_map, Mapping):
@@ -923,16 +979,35 @@ def run_once(*, config_root: Optional[Path] = None,
                 cooldowns[str(key)] = parsed
     candidate_cooldown = float(cfg.get("candidate_cooldown_sec") or 600)
     ladder_ids = cfg.get("ladder") or [item.id for item in LADDER]
-    candidates = [LADDER_BY_ID[str(item)] for item in ladder_ids
+    configured = [LADDER_BY_ID[str(item)] for item in ladder_ids
                   if str(item) in LADDER_BY_ID]
+    # A profile that was never imported is not a failure — it is simply not
+    # part of the effective ladder on this machine (SPEC §4.1 / Q5).
+    candidates: List[Candidate] = []
+    skipped_profiles: List[Dict[str, str]] = []
+    for item in configured:
+        if item.kind == "profile" and item.id not in endpoints:
+            skipped_profiles.append({"candidate": item.id,
+                                     "reason": "profile_missing"})
+            continue
+        candidates.append(item)
     eligible = [item for item in candidates
                 if now_wall - cooldowns.get(item.id, 0.0) >= candidate_cooldown]
     if not eligible:
         eligible = candidates  # all cooling down must not mean "no attempt"
 
-    switch_runner = switch_fn or (
-        lambda cand: runner_fn(list(candidate_argv(cand)))[0])
-    endpoints = profile_endpoints(profiles_path)
+    def switch_runner(cand: Candidate) -> Tuple[int, str]:
+        """Execute one rung; ``(rc, detail)`` where detail carries stderr."""
+        if switch_fn is not None:
+            return int(switch_fn(cand)), ""
+        try:
+            rc, out, err = runner_fn(list(candidate_argv(cand)))
+        except (OSError, ValueError, RuntimeError) as exc:
+            return 1, f"switch_exc:{type(exc).__name__}"
+        if rc != 0:
+            return int(rc), _failure_detail(int(rc), out, err)
+        return 0, ""
+
 
     # SPEC §8.1 "старт": desktop only (the Telegram report is sent once the
     # new channel is proven — there is nothing useful to spam before that).
@@ -990,23 +1065,23 @@ def run_once(*, config_root: Optional[Path] = None,
                 state["updated"] = now_text
                 _save_state(state, state_path, config_root)
                 return FailoverOutcome("teardown_failed", decision,
-                                       attempts=attempts)
+                                       attempts=attempts,
+                                       skipped_profiles=skipped_profiles)
             _history(history_path, _history_record(
                 "teardown", now_text, from_=profile, to=candidate.id,
                 trigger=decision.rule, result="xsplit_stopped", note=td_detail))
 
         start = float(wall_ts())
-        detail = ""
         try:
-            rc = int(switch_runner(candidate))
+            rc, detail = switch_runner(candidate)
         except (OSError, ValueError, RuntimeError) as exc:
-            rc = 1
-            detail = f"switch_exc:{type(exc).__name__}"
+            rc, detail = 1, f"switch_exc:{type(exc).__name__}"
         if rc != 0:
             attempts.append(Attempt(candidate.id, RESULT_SWITCH_ERROR, detail))
             _history(history_path, _history_record(
                 "attempt", now_text, from_=profile, to=candidate.id,
-                trigger=decision.rule, result=RESULT_SWITCH_ERROR))
+                trigger=decision.rule, result=RESULT_SWITCH_ERROR,
+                note=detail or None))
             continue
 
         ok, detail = post_flight(
@@ -1085,6 +1160,7 @@ def run_once(*, config_root: Optional[Path] = None,
                                latency_ms=latency_ms,
                                lockdown_confirmed=confirmed,
                                notified=notified,
+                               skipped_profiles=skipped_profiles,
                                switch_calls=[a.candidate for a in attempts
                                              if a.result != RESULT_SKIPPED
                                              and a.result != RESULT_DEAD_ENTRY])
@@ -1096,6 +1172,7 @@ def run_once(*, config_root: Optional[Path] = None,
     state["backoff"] = {"count": count, "until": _iso(now_wall + delay)}
     state["candidate_cooldown"] = {
         key: _iso(stamp) for key, stamp in cooldowns.items()}
+    state["liveness_failures"] = 0  # Q6: no probe accumulation in blackout
     state["updated"] = now_text
     _save_state(state, state_path, config_root)
 
@@ -1137,6 +1214,7 @@ def run_once(*, config_root: Optional[Path] = None,
         result=RESULT_DEAD_EXIT, note=f"backoff={delay}s; {kill_note}",
         attempts=[item.as_dict() for item in attempts]))
     return FailoverOutcome("blackout", decision, attempts,
+                           skipped_profiles=skipped_profiles,
                            backoff_sec=delay, notified=notified,
                            switch_calls=[a.candidate for a in attempts
                                          if a.result not in (RESULT_SKIPPED,
@@ -1198,6 +1276,16 @@ def status(*, config_root: Optional[Path] = None,
     """Read-only view for ``vpn guard failover status``."""
     cfg = store.failover_settings(config_root)
     state = store.read_failover_state(state_path)
+    # Effective ladder: profile rungs whose profile is not imported are not
+    # part of it (SPEC §4.1 / Q5).
+    endpoints = profile_endpoints()
+    configured = [str(item) for item in (cfg.get("ladder") or [])]
+    skipped = [{"candidate": item, "reason": "profile_missing"}
+               for item in configured
+               if item in LADDER_BY_ID
+               and LADDER_BY_ID[item].kind == "profile"
+               and item not in endpoints]
+    skipped_ids = {entry["candidate"] for entry in skipped}
     now_wall = float(wall_ts())
     backoff = state.get("backoff") if isinstance(state.get("backoff"), Mapping) else {}
     until = _parse_iso(backoff.get("until"))
@@ -1205,6 +1293,9 @@ def status(*, config_root: Optional[Path] = None,
         "enabled": bool(cfg.get("enabled")),
         "trigger_profiles": list(cfg.get("trigger_profiles") or []),
         "ladder": list(cfg.get("ladder") or []),
+        "effective_ladder": [item for item in configured
+                             if item not in skipped_ids],
+        "skipped_profiles": skipped,
         "pin": dict(state.get("pin") or {}),
         "backoff": {"count": int(backoff.get("count") or 0),
                     "until": backoff.get("until"),

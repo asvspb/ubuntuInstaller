@@ -181,6 +181,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
          liveness: Any = None,
          reset: Any = None,
          runner: Any = None,
+         raw_switch: bool = False,
          teardown_xsplit: Any = None,
          order: Optional[List[str]] = None) -> failover.FailoverOutcome:
     def no_shell(cmd: List[str]) -> Tuple[int, str, str]:
@@ -223,7 +224,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         wall_ts=clock.wall_ts,
         sleep_fn=lambda seconds: None,  # never sleep in tests
         local_net=local_net or (lambda: True),
-        switch_fn=switch_fn,
+        switch_fn=None if raw_switch else switch_fn,
         tcp_probe=tcp_probe,
         udp_probe=udp_probe,
         awg_show=lambda: (0, "awg0", ""),
@@ -238,7 +239,8 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         reset_fn=reset,
         runner=runner if runner is not None else no_shell,
     )
-    assert outcome.switch_calls == calls  # bookkeeping agrees with the mock
+    if not raw_switch:
+        assert outcome.switch_calls == calls  # bookkeeping agrees with the mock
     return outcome
 
 
@@ -1068,3 +1070,115 @@ def test_blackout_restores_provider_with_absolute_cli(tmp_path: Path) -> None:
     assert down[0][0] != "vpn", "bare `vpn` is not on the unit's PATH"
     # provider egress was actually verified after the teardown attempt
     assert any("api.ipify.org" in c[-1] for c in commands if c and c[0] == "curl")
+
+
+def test_failover_service_lowers_no_new_privileges() -> None:
+    """sudo cannot escalate under NoNewPrivileges; scheme rungs need it."""
+    text = install.render_failover_service()
+    assert "NoNewPrivileges=no" in text
+
+
+# --- Q2/Q5/Q6 (arch-lead decisions 2026-11-18) -------------------------------
+
+def test_switch_error_carries_rc_and_stderr(tmp_path: Path) -> None:
+    """A bare `switch_error` hid the real reason for four live runs."""
+    clock = Clock()
+    stderr = "sudo: a password is required\nsecond line"
+
+    def runner(cmd: List[str]) -> Tuple[int, str, str]:
+        if cmd[:1] == ["curl"]:
+            return 0, "198.51.100.9", ""
+        return 2, "", stderr
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   runner=runner, raw_switch=True)
+
+    relay = next(a for a in outcome.attempts if a.candidate == "relay")
+    assert relay.result == "switch_error"
+    assert "rc=2" in relay.detail
+    assert "a password is required" in relay.detail
+    assert " | " in relay.detail            # newlines flattened
+    history = [json.loads(line) for line in
+               (tmp_path / "guard" / "failover_history.jsonl")
+               .read_text(encoding="utf-8").splitlines()]
+    assert any(item.get("note", "").startswith("rc=2") for item in history)
+
+
+def test_switch_error_stderr_is_redacted(tmp_path: Path) -> None:
+    clock = Clock()
+    secret = "123456789:AAH" + "x" * 35
+
+    def runner(cmd: List[str]) -> Tuple[int, str, str]:
+        if cmd[:1] == ["curl"]:
+            return 0, "198.51.100.9", ""
+        return 1, "", f"failed with token {secret}"
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   runner=runner, raw_switch=True)
+
+    blob = json.dumps([a.as_dict() for a in outcome.attempts])
+    assert secret not in blob
+    # the raw scanner replaces the blob (hex/base64) with a placeholder
+    assert "<blob>" in blob or "redacted" in blob
+
+
+def test_missing_profile_is_skipped_not_failed(tmp_path: Path) -> None:
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   profiles=write_profiles_with_reality(tmp_path),  # no cdn
+                   sync=lambda: True, notifier=FakeNotifier(),
+                   verdict=write_verdict(tmp_path, active=True))
+
+    assert outcome.skipped_profiles == [
+        {"candidate": "asv2-cdn", "reason": "profile_missing"}]
+    assert all(a.candidate != "asv2-cdn" for a in outcome.attempts)
+    assert outcome.switched_to == "relay"
+
+
+def test_liveness_counter_resets_after_trigger(tmp_path: Path) -> None:
+    clock = Clock()
+    state_path = tmp_path / "guard" / "failover_state.json"
+    seeded = store.empty_failover_state()
+    seeded["liveness_failures"] = 1
+    store.write_failover_state(seeded, state_path)
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile=None,
+                   xsplit_active=lambda: "asv2-reality",
+                   liveness=lambda: False, sync=lambda: True,
+                   notifier=FakeNotifier(), state_path=state_path,
+                   verdict=write_verdict(tmp_path, active=False))
+
+    assert outcome.trigger.rule == "active_probe_dead"
+    state = store.read_failover_state(state_path)
+    assert state["liveness_failures"] == 0
+
+
+# --- Q3: a dead local resolver must not look like a dead tunnel --------------
+
+def test_local_dns_gate_returns_suppressed(tmp_path: Path, monkeypatch) -> None:
+    clock = Clock()
+    state_path = tmp_path / "guard" / "failover_state.json"
+    seeded = store.empty_failover_state()
+    seeded["liveness_failures"] = 1
+    store.write_failover_state(seeded, state_path)
+    monkeypatch.setattr(failover, "local_dns_ok", lambda host="x": False)
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile=None, xsplit_active=lambda: "asv2-reality",
+                   liveness=lambda: False, state_path=state_path)
+
+    assert outcome.status == "suppressed_local_dns_dead"
+    assert outcome.switch_calls == []
+
+
+def test_failover_unit_has_no_hardening_that_blocks_root() -> None:
+    """The oneshot must not inherit guard's sandbox: no ProtectSystem,
+    PrivateDevices, CapabilityBoundingSet or RestrictSUIDSGID (Q1)."""
+    text = install.render_failover_service()
+    for directive in ("ProtectSystem=", "PrivateDevices=",
+                      "CapabilityBoundingSet=", "RestrictSUIDSGID="):
+        assert directive not in text, directive

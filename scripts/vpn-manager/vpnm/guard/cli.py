@@ -984,7 +984,16 @@ def failover_status(as_json: bool = typer.Option(
     typer.secho(f"[info] failover: {state}; профили триггера: "
                 f"{', '.join(payload['trigger_profiles']) or '-'}",
                 fg=typer.colors.CYAN)
-    typer.secho(f"[info] лестница: {', '.join(payload['ladder'])}",
+    configured = payload.get("ladder") or []
+    effective = payload.get("effective_ladder") or configured
+    typer.secho("[info] Configured ladder: " + " -> ".join(configured),
+                fg=typer.colors.CYAN)
+    skipped = payload.get("skipped_profiles") or []
+    tail = ""
+    if skipped:
+        tail = " (skipped: " + ", ".join(
+            f"{entry['candidate']} [{entry['reason']}]" for entry in skipped) + ")"
+    typer.secho("[info] Effective ladder:  " + " -> ".join(effective) + tail,
                 fg=typer.colors.CYAN)
     pin = payload.get("pin") or {}
     if pin.get("profile"):

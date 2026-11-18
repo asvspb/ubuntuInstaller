@@ -181,6 +181,11 @@ def render_failover_service(python_exe: Optional[str] = None) -> str:
         "Nice=10",
         "UMask=0077",
         "PrivateTmp=yes",
+        # The user manager sets NoNewPrivileges=yes, which makes any setuid
+        # binary fail: "sudo: The no new privileges flag is set".  Scheme rungs
+        # (relay / AWG) *must* escalate — that is the whole ADR-015 design — so
+        # the flag is lowered deliberately and only for this unit.
+        "NoNewPrivileges=no",
         # AF_NETLINK is required: `awg show` reads its state via netlink, and
         # without it the whole ladder degrades — pre_flight(asv2-awg) returned
         # `awg_show_rc=1` and `vpn start relay` failed with "Address family not
