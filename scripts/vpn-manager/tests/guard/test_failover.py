@@ -165,6 +165,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
          state_path: Optional[Path] = None,
          active_profile: Optional[str] = "asv2-reality",
          xsplit_active: Any = None,
+         liveness: Any = None,
          teardown_xsplit: Any = None,
          order: Optional[List[str]] = None) -> failover.FailoverOutcome:
     def no_shell(cmd: List[str]) -> Tuple[int, str, str]:
@@ -218,6 +219,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         notifier=notifier,
         xsplit_active=xsplit_active,
         teardown_xsplit_fn=teardown_fn,
+        liveness_fn=liveness,
         runner=no_shell,
     )
     assert outcome.switch_calls == calls  # bookkeeping agrees with the mock
@@ -845,3 +847,111 @@ def test_profile_dead_exit_still_sets_cooldown(tmp_path: Path) -> None:
     cooldowns = state.get("candidate_cooldown") or {}
     # hy2 is a socks profile: a proven-empty egress means a real dead exit
     assert "asv2-hy2" in cooldowns
+
+
+# --- Detect-1: in-tunnel liveness (SPEC §4.4) --------------------------------
+#
+# xray is silent at its default loglevel, so G-01/G-09 cannot fire mid-session
+# and the agent used to sit on a dead xray0.  The timer-driven in-tunnel probe
+# is the detector that does not depend on log parsing.
+
+def _xsplit_source(**kwargs: Any) -> failover.FailoverOutcome:
+    kwargs.setdefault("active_profile", None)
+    kwargs.setdefault("xsplit_active", lambda: "asv2-reality")
+    return kwargs
+
+
+def test_liveness_two_failures_trigger_active_probe_dead(tmp_path: Path) -> None:
+    """One tick = one probe: the counter must survive between timer runs."""
+    clock = Clock()
+    notifier = FakeNotifier()
+    state_path = tmp_path / "guard" / "failover_state.json"
+
+    first = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                 **_xsplit_source(), liveness=lambda: False,
+                 state_path=state_path)
+    assert first.status == "no_trigger"
+    assert first.switch_calls == []
+
+    clock.advance(60)  # next timer tick
+    second = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                  **_xsplit_source(), liveness=lambda: False,
+                  sync=lambda: True, notifier=notifier, state_path=state_path,
+                  verdict=write_verdict(tmp_path, active=False))
+
+    assert second.status == "switched"
+    assert second.switched_to == "relay"
+    assert second.trigger.rule == "active_probe_dead"
+
+
+def test_liveness_single_failure_does_not_trigger(tmp_path: Path) -> None:
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   **_xsplit_source(), liveness=lambda: False)
+
+    assert outcome.status == "no_trigger"
+    state = store.read_failover_state(tmp_path / "guard" / "failover_state.json")
+    assert state["liveness_failures"] == 1  # counted, below threshold
+
+
+def test_liveness_counter_resets_on_success(tmp_path: Path) -> None:
+    clock = Clock()
+    state_path = tmp_path / "guard" / "failover_state.json"
+    seeded = store.empty_failover_state()
+    seeded["liveness_failures"] = 1
+    store.write_failover_state(seeded, state_path)
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   **_xsplit_source(), liveness=lambda: True,
+                   state_path=state_path)
+
+    assert outcome.status == "no_trigger"
+    state = store.read_failover_state(state_path)
+    assert state["liveness_failures"] == 0
+
+
+def test_liveness_ignored_when_local_net_down(tmp_path: Path) -> None:
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   **_xsplit_source(), liveness=lambda: False,
+                   local_net=lambda: False)
+
+    assert outcome.status == "no_trigger"
+    assert outcome.switch_calls == []
+
+
+def test_liveness_ignored_for_socks_profile(tmp_path: Path) -> None:
+    # A socks profile has no xray0: probing the tun would be a false alarm.
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile="asv2-reality",
+                   liveness=lambda: False)
+
+    assert outcome.status == "no_trigger"
+    assert outcome.switch_calls == []
+
+
+def test_liveness_disabled_by_config(tmp_path: Path) -> None:
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(liveness_enabled=False),
+                   findings=[], **_xsplit_source(), liveness=lambda: False)
+
+    assert outcome.status == "no_trigger"
+    assert outcome.switch_calls == []
+
+
+# --- timer unit --------------------------------------------------------------
+
+def test_failover_timer_unit() -> None:
+    text = install.render_failover_timer(60)
+    assert "OnUnitInactiveSec=60s" in text
+    assert "Unit=vpn-failover.service" in text
+    assert "WantedBy=timers.target" in text
+    # invariant I-5: the name must never look like a profile unit
+    assert "vpnm-" not in install.FAILOVER_TIMER
+
+
+def test_install_failover_plan_includes_timer(tmp_path: Path) -> None:
+    plan = install.install_failover(apply=False, unit_root=tmp_path)
+    assert plan["timer_path"].endswith("vpn-failover.timer")
+    assert any("vpn-failover.timer" in cmd for cmd in plan["commands"])

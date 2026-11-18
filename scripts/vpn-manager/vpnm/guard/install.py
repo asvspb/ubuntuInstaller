@@ -38,6 +38,7 @@ SYNC_TIMER = "vpn-guard-sync.timer"
 #: emergency agent (invariant I-5, AC-F11).
 FAILOVER_SERVICE = "vpn-failover.service"
 FAILOVER_PATH = "vpn-failover.path"
+FAILOVER_TIMER = "vpn-failover.timer"
 INSTALL_STATE = "install-state.json"
 
 #: HMAC key for ``redact.hash_ip`` — 32 random bytes, hex-encoded text,
@@ -209,29 +210,61 @@ def render_failover_path(findings: Optional[Path] = None) -> str:
     ]) + "\n"
 
 
+def render_failover_timer(interval_sec: int = 60) -> str:
+    """Timer for Detect-1 (SPEC-20261118 §4.4): the in-tunnel liveness tick.
+
+    ``OnUnitInactiveSec`` keeps ticks one interval apart *after* the previous
+    oneshot finishes, so a slow ladder run can never pile up.  The unit name
+    stays ``vpn-*`` (never ``vpnm-*``) so ``runners.enabled_vpnm_units()``
+    does not treat it as a profile (invariant I-5).
+    """
+    period = max(30, int(interval_sec))
+    return "\n".join([
+        "[Unit]",
+        "Description=VPN failover — periodic in-tunnel liveness tick",
+        "",
+        "[Timer]",
+        "OnBootSec=90s",
+        f"OnUnitInactiveSec={period}s",
+        "AccuracySec=5s",
+        "RandomizedDelaySec=10s",
+        f"Unit={FAILOVER_SERVICE}",
+        "",
+        "[Install]",
+        "WantedBy=timers.target",
+        "",
+    ]) + "\n"
+
+
 def install_failover(*, apply: bool = False,
                      python_exe: Optional[str] = None,
                      unit_root: Optional[Path] = None,
                      data_dir: Optional[Path] = None,
+                     liveness_interval_sec: int = 60,
                      run: Optional[RunCmd] = None) -> Dict[str, Any]:
-    """Write + enable ``vpn-failover.service`` and ``vpn-failover.path``.
+    """Write + enable ``vpn-failover.service``, ``.path`` and ``.timer``.
 
-    Dry-run by default (AGENTS §5.8).  Enabling the **path** unit is enough:
-    it pulls in the service on every findings change.
+    Dry-run by default (AGENTS §5.8).  The **path** unit wakes the agent on a
+    new finding; the **timer** is Detect-1 — it ticks every
+    ``liveness_interval_sec`` so a mid-session dead tunnel is noticed even
+    when the logs are silent.
     """
     runner = run if run is not None else _run_cmd
     root = unit_root if unit_root is not None else unit_dir()
     target_data = data_dir if data_dir is not None else guard_data_dir()
     service_file = root / FAILOVER_SERVICE
     path_file = root / FAILOVER_PATH
+    timer_file = root / FAILOVER_TIMER
     commands: List[List[str]] = [
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", FAILOVER_PATH],
+        ["systemctl", "--user", "enable", "--now", FAILOVER_TIMER],
     ]
     plan: Dict[str, Any] = {
         "apply": apply,
         "service_path": str(service_file),
         "path_path": str(path_file),
+        "timer_path": str(timer_file),
         "commands": [" ".join(cmd) for cmd in commands],
     }
     if not apply:
@@ -245,6 +278,9 @@ def install_failover(*, apply: bool = False,
     path_file.write_text(
         render_failover_path(target_data / "findings.jsonl"), encoding="utf-8")
     os.chmod(path_file, 0o644)
+    timer_file.write_text(render_failover_timer(liveness_interval_sec),
+                          encoding="utf-8")
+    os.chmod(timer_file, 0o644)
     errors: List[str] = []
     for cmd in commands:
         rc, _out, err = runner(cmd)
@@ -262,6 +298,7 @@ def remove_failover(*, apply: bool = False,
     runner = run if run is not None else _run_cmd
     root = unit_root if unit_root is not None else unit_dir()
     commands: List[List[str]] = [
+        ["systemctl", "--user", "disable", "--now", FAILOVER_TIMER],
         ["systemctl", "--user", "disable", "--now", FAILOVER_PATH],
         ["systemctl", "--user", "disable", "--now", FAILOVER_SERVICE],
         ["systemctl", "--user", "daemon-reload"],
@@ -276,7 +313,7 @@ def remove_failover(*, apply: bool = False,
         if rc != 0:
             warnings.append(f"{' '.join(cmd)}: rc={rc}")
     plan["warnings"] = warnings
-    for name in (FAILOVER_PATH, FAILOVER_SERVICE):
+    for name in (FAILOVER_PATH, FAILOVER_TIMER, FAILOVER_SERVICE):
         candidate = root / name
         if candidate.exists():
             candidate.unlink()

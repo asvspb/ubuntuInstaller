@@ -89,6 +89,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "post_flight_timeout_sec": 4.0,
         "confirm_lockdown_via_sync": True,
         "kill_switch": False,
+        # Detect-1 (SPEC-20261118 §4.4): in-tunnel liveness probe driven by
+        # vpn-failover.timer.  No dependency on xray log parsing.
+        "liveness_enabled": True,
+        "liveness_interval_sec": 60,
+        "liveness_failures": 2,
     },
 }
 
@@ -155,9 +160,16 @@ def _failover_block(raw: Any) -> Dict[str, Any]:
     block = copy.deepcopy(DEFAULT_CONFIG["failover"])
     if not isinstance(raw, Mapping):
         return block
-    for flag in ("enabled", "confirm_lockdown_via_sync", "kill_switch"):
+    for flag in ("enabled", "confirm_lockdown_via_sync", "kill_switch",
+                 "liveness_enabled"):
         if isinstance(raw.get(flag), bool):
             block[flag] = bool(raw[flag])
+    interval = _clamp_int(raw.get("liveness_interval_sec"), 30, 600)
+    if interval is not None:
+        block["liveness_interval_sec"] = interval
+    failures = _clamp_int(raw.get("liveness_failures"), 2, 10)
+    if failures is not None:
+        block["liveness_failures"] = failures
     cooldown = _clamp_int(raw.get("cooldown_sec"), 60, 7200)
     if cooldown is not None:
         block["cooldown_sec"] = cooldown

@@ -734,6 +734,14 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
   это сами: `vpn start relay` / `vpn start` вызывают teardown прямого контура.
   Сбой гашения → статус `teardown_failed`, переключение **не** выполняется.
   Права: `sudo -n` (passwordless), в user-юните без TTY пароль не спрашивается.
+- **Детект mid-session обрыва (Detect-1, 2026-11-18):** `vpn-failover.timer`
+  будит агент раз в 60 с, и он проверяет канал **сквозь туннель**
+  (`curl --interface xray0` на split-домен). Никаких внешних коннектов к своему
+  443 и никакого разбора логов — xray при дефолтном loglevel молчит, поэтому
+  `G-01`/`G-09` в середине сессии не срабатывают. Два провала подряд при живом
+  `local_net_check()` → триггер `active_probe_dead` → обычная лестница.
+  Настройки: `failover.liveness_enabled` (true), `liveness_interval_sec` (60),
+  `liveness_failures` (2).
 - **Ручная остановка важнее:** `vpn down`/`vpn reset` ставят маркер
   (`activity_scope`) и глушат агент на 5 мин; отдельного `desired_state` нет.
 - **Total blackout:** ровно один проход, backoff `120 → 300 → 900` с,

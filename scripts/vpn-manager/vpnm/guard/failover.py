@@ -237,7 +237,8 @@ def should_trigger(incident: Mapping[str, Any], state: Mapping[str, Any],
                    activity: Mapping[str, Any], *,
                    config: Optional[Mapping[str, Any]] = None,
                    now_wall: float = 0.0,
-                   now_mono_ns: Optional[int] = None) -> TriggerDecision:
+                   now_mono_ns: Optional[int] = None,
+                   probe_dead: bool = False) -> TriggerDecision:
     """All SPEC §3 conditions must hold; returns the first failing reason.
 
     ``incident``: ``{profile, findings|rule+severity, expected_lockdown}``.
@@ -269,6 +270,8 @@ def should_trigger(incident: Mapping[str, Any], state: Mapping[str, Any],
             break
     if rule is None and incident.get("expected_lockdown"):
         rule = "expected_lockdown"
+    if rule is None and probe_dead:
+        rule = "active_probe_dead"
     if rule is None:
         return TriggerDecision(False, "no_rule")
 
@@ -489,6 +492,28 @@ def _awg_rx() -> Optional[int]:
         return None
 
 
+def liveness_probe(*, iface: str = "xray0", timeout: float = 4.0,
+                   run: Optional[RunCmd] = None,
+                   canary: str = "https://www.youtube.com/generate_204") -> bool:
+    """Detect-1: is the tun path actually carrying traffic right now?
+
+    Deliberately **in-tunnel**: ``--interface xray0`` keeps the probe off the
+    provider route and makes it look like ordinary browsing (a split domain),
+    so it neither reaches the server's 443 as an unsolicited connection nor
+    reveals a probing pattern.  Log parsing is not involved — xray is silent
+    at its default loglevel, which is why G-01/G-09 cannot fire mid-session.
+    """
+    runner = run or _run_cmd
+    cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+           "--interface", iface,
+           "--max-time", f"{max(0.5, timeout):.1f}", canary]
+    try:
+        rc, out, _err = runner(cmd)
+    except (OSError, ValueError):
+        return False
+    return rc == 0 and out.strip() in ("200", "204")
+
+
 def post_flight(candidate: Candidate, *,
                 egress: Optional[Callable[[Optional[int], float], Optional[str]]] = None,
                 awg_rx: Optional[Callable[[], Optional[int]]] = None,
@@ -687,6 +712,7 @@ def run_once(*, config_root: Optional[Path] = None,
              awg_rx: Optional[Callable[[], Optional[int]]] = None,
              sync: Optional[Callable[[], bool]] = None,
              xsplit_active: Optional[Callable[[], Optional[str]]] = None,
+             liveness_fn: Optional[Callable[[], bool]] = None,
              teardown_xsplit_fn: Optional[Callable[[], Tuple[bool, str]]] = None,
              verdict_path: Optional[Path] = None,
              notifier: Any = None,
@@ -765,6 +791,40 @@ def run_once(*, config_root: Optional[Path] = None,
     }
     decision = should_trigger(incident, state, activity, config=cfg,
                               now_wall=now_wall, now_mono_ns=now_mono)
+
+    # §4.4 Detect-1: no finding fired, but the tun path itself may be dead.
+    # This is the only detector that works mid-session, because xray is
+    # silent at its default loglevel (guard records it as ``xray=blind``).
+    if not decision.trigger and cfg.get("liveness_enabled") and source_via_xsplit \
+            and isinstance(profile, str) \
+            and profile in (cfg.get("trigger_profiles") or []):
+        probe = liveness_fn or liveness_probe
+        try:
+            alive = bool(probe())
+        except (OSError, ValueError, RuntimeError):
+            alive = False
+        if alive:
+            if state.get("liveness_failures"):
+                state["liveness_failures"] = 0
+                state["updated"] = now_text
+                _save_state(state, state_path, config_root)
+        else:
+            # A dead local uplink is not a dead tunnel.
+            try:
+                local_ok = bool(local_net())
+            except (OSError, ValueError, RuntimeError):
+                local_ok = False
+            if local_ok:
+                fails = int(state.get("liveness_failures") or 0) + 1
+                state["liveness_failures"] = fails
+                state["updated"] = now_text
+                _save_state(state, state_path, config_root)
+                if fails >= int(cfg.get("liveness_failures") or 2):
+                    decision = should_trigger(incident, state, activity,
+                                              config=cfg, now_wall=now_wall,
+                                              now_mono_ns=now_mono,
+                                              probe_dead=True)
+
     if not decision.trigger:
         return FailoverOutcome("no_trigger", decision)
 
@@ -923,6 +983,7 @@ def run_once(*, config_root: Optional[Path] = None,
         state["candidate_cooldown"] = {
             key: _iso(stamp) for key, stamp in cooldowns.items()}
         state["backoff"] = {"count": 0, "until": None}
+        state["liveness_failures"] = 0
         state["updated"] = now_text
         _save_state(state, state_path, config_root)
 
@@ -1064,6 +1125,12 @@ def status(*, config_root: Optional[Path] = None,
         "cooldown_sec": cfg.get("cooldown_sec"),
         "lockdown_now": fresh_lockdown(verdict_path, now_wall=now_wall),
         "candidate_cooldown": dict(state.get("candidate_cooldown") or {}),
+        "liveness": {
+            "enabled": bool(cfg.get("liveness_enabled")),
+            "failures": int(state.get("liveness_failures") or 0),
+            "threshold": int(cfg.get("liveness_failures") or 2),
+            "interval_sec": int(cfg.get("liveness_interval_sec") or 60),
+        },
     }
 
 

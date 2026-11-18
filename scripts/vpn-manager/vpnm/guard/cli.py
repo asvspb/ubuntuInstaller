@@ -1001,6 +1001,14 @@ def failover_status(as_json: bool = typer.Option(
                 f"{payload['switches_last_hour']} "
                 f"(лимит по конфигу); отложенных уведомлений: {pending}",
                 fg=typer.colors.CYAN)
+    live = payload.get("liveness") or {}
+    if live:
+        typer.secho(f"[info] liveness (Detect-1): "
+                    f"{'on' if live.get('enabled') else 'off'}, "
+                    f"провалов {live.get('failures', 0)}/"
+                    f"{live.get('threshold', 2)}, "
+                    f"тик {live.get('interval_sec', 60)} с",
+                    fg=typer.colors.CYAN)
     lock = payload.get("lockdown_now")
     lock_text = "нет данных/устарел" if lock is None else (
         "активен" if lock else "не активен")
@@ -1077,15 +1085,18 @@ def _set_failover(enabled: bool, apply: bool) -> None:
         raise typer.Exit(code=0)
     store.set_config_value("failover", "enabled", enabled)
     if enabled:
-        plan = install_mod.install_failover(apply=True)
+        interval = int(store.failover_settings().get("liveness_interval_sec") or 60)
+        plan = install_mod.install_failover(apply=True,
+                                            liveness_interval_sec=interval)
     else:
         plan = install_mod.remove_failover(apply=True)
     if plan.get("error"):
         typer.secho(f"[error] юниты: {plan['error']}", fg=typer.colors.RED)
         raise typer.Exit(code=2)
     typer.secho(f"[ok] failover {action}; юниты "
-                f"{install_mod.FAILOVER_SERVICE}/{install_mod.FAILOVER_PATH} "
-                f"обновлены", fg=typer.colors.GREEN)
+                f"{install_mod.FAILOVER_SERVICE}/{install_mod.FAILOVER_PATH}/"
+                f"{install_mod.FAILOVER_TIMER} обновлены",
+                fg=typer.colors.GREEN)
     if enabled:
         typer.secho("[info] desktop-баннеры — отдельный opt-in "
                     "notify.failover_desktop=true; Telegram — "

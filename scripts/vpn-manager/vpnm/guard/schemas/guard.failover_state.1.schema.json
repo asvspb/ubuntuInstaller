@@ -4,40 +4,113 @@
   "title": "guard.failover_state/1",
   "description": "Failover pin/cooldown state (SPEC-20261118-vpn-failover §9). Bounded, 0600, no secrets: only profile names, ISO timestamps and counters.",
   "type": "object",
-  "required": ["schema", "pin", "switches", "backoff", "updated"],
+  "required": [
+    "schema",
+    "pin",
+    "switches",
+    "backoff",
+    "updated"
+  ],
   "properties": {
-    "schema": {"const": "guard.failover_state/1"},
-    "updated": {"type": "string", "maxLength": 40},
+    "schema": {
+      "const": "guard.failover_state/1"
+    },
+    "updated": {
+      "type": "string",
+      "maxLength": 40
+    },
     "pin": {
       "type": "object",
-      "required": ["profile", "since", "reason", "lockdown_active"],
+      "required": [
+        "profile",
+        "since",
+        "reason",
+        "lockdown_active"
+      ],
       "properties": {
-        "profile": {"type": ["string", "null"], "maxLength": 64},
-        "since": {"type": ["string", "null"], "maxLength": 40},
-        "reason": {"type": ["string", "null"], "maxLength": 120},
-        "lockdown_active": {"type": "boolean"}
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "lockdown_active": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
-    "last_switch_ts": {"type": ["string", "null"], "maxLength": 40},
-    "last_switch_mono_ns": {"type": ["integer", "null"], "minimum": 0},
+    "last_switch_ts": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40
+    },
+    "last_switch_mono_ns": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
     "switches": {
       "type": "array",
       "maxItems": 20,
-      "items": {"type": "string", "maxLength": 40}
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      }
     },
     "candidate_cooldown": {
       "type": "object",
-      "additionalProperties": {"type": "string", "maxLength": 40}
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 40
+      }
     },
     "backoff": {
       "type": "object",
-      "required": ["count", "until"],
+      "required": [
+        "count",
+        "until"
+      ],
       "properties": {
-        "count": {"type": "integer", "minimum": 0, "maximum": 20},
-        "until": {"type": ["string", "null"], "maxLength": 40}
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        }
       },
       "additionalProperties": false
+    },
+    "liveness_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "consecutive failed in-tunnel liveness probes (Detect-1)"
     }
   },
   "additionalProperties": false
