@@ -89,7 +89,7 @@ vpn install --linger
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
-| `vpn doh on\|off\|status` | DoH-резолвер cloudflared (127.0.0.1:5053) |
+| `vpn doh on\\|off\\|status` | DoH-резолвер cloudflared (127.0.0.1:5053). `on` — **verify-before-switch**: сначала поднимаются сервисы и доказываются слои `:5053` → `:53` → системный резолвер, затем E2E-проверка нейтральными канарейками (`ya.ru`, `example.com`, `connectivitycheck.gstatic`); при любом сбое — автооткат на ISP-DNS и код слоя в ошибке (`doh_layer_5053_dead` / `_53_dead` / `_resolved_dead` / `_egress_dead`). Апстримы: Google DoH (`8.8.8.8`, `dns.google`) первыми, затем Cloudflare `1.1.1.1`/`1.0.0.1` |
 | `vpn amneziawg status\|add-client\|remove-client\|tunnel\|qr` | AWG: локальный туннель, клиенты на сервере, QR-конфиг для телефона |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |

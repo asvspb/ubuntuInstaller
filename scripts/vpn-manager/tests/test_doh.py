@@ -33,11 +33,17 @@ def doh_paths(tmp_path, monkeypatch):
     disabled.write_text("[Resolve]\nDNS=127.0.0.1\nDomains=~.\n")
 
     def stub_run_cmd(cmd):
+        if cmd and cmd[0] == "curl":
+            return 0, "200", ""
+        if cmd and cmd[0] == "dig":
+            return 0, "192.0.2.10", ""   # every DNS layer proves alive
         if cmd[:3] == ["sudo", "-n", "mv"] and len(cmd) == 5:
-            src, dst = Path(cmd[3]), Path(cmd[4])
-            dst.write_bytes(src.read_bytes())
-            src.unlink()
+            src_p, dst_p = Path(cmd[3]), Path(cmd[4])
+            dst_p.write_bytes(src_p.read_bytes())
+            src_p.unlink()
         return 0, "", ""
+
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
 
     monkeypatch.setattr(doh, "run_cmd", stub_run_cmd)
     return {"dir": conf_dir, "active": active, "disabled": disabled}
@@ -55,6 +61,10 @@ def make_run(record, fail_on=()):
         for pattern in fail_on:
             if pattern in joined:
                 return 1, "", f"mock failure: {pattern}"
+        if cmd and cmd[0] == "curl":
+            return 0, "200", ""
+        if cmd and cmd[0] == "dig":
+            return 0, "192.0.2.10", ""   # every DNS layer proves alive
         if cmd[:3] == ["sudo", "-n", "mv"] and len(cmd) == 5:
             src, dst = Path(cmd[3]), Path(cmd[4])
             dst.write_bytes(src.read_bytes())
@@ -279,3 +289,107 @@ def test_guard_unit_content_paths_follow_constants(guard_paths, monkeypatch):
     content = doh._guard_unit_content()
     assert "/tmp/x/doh-local.conf" in content
     assert "ConditionPathExists" in content
+
+
+# --- verify-before-switch (2026-11-18) ---------------------------------------
+#
+# A failed `vpn doh on` used to leave systemd-resolved pointing at a dead
+# 127.0.0.1 — the host lost DNS entirely.  The invariant now: services are
+# proven layer by layer BEFORE resolved is switched, and any failure rolls
+# back to the provider.
+
+def _stub(dead_port=None, dead_system=False, dead_egress=False):
+    seen = []
+
+    def run(cmd):
+        seen.append(list(cmd))
+        if cmd and cmd[0] == "curl":
+            return (0, "000", "") if dead_egress else (0, "200", "")
+        if cmd[:3] == ["sudo", "-n", "mv"] and len(cmd) == 5:
+            src, dst = Path(cmd[3]), Path(cmd[4])
+            dst.write_bytes(src.read_bytes())
+            src.unlink()
+            return 0, "", ""
+        if cmd and cmd[0] == "dig":
+            port = cmd[cmd.index("-p") + 1] if "-p" in cmd else None
+            if dead_port is not None and port == dead_port:
+                return 0, "", ""          # only that layer answers nothing
+            if dead_port is None and dead_system and port is None:
+                return 0, "", ""
+            return 0, "192.0.2.10", ""
+        return 0, "", ""
+
+    return run, seen
+
+
+def test_enable_rolls_back_when_5053_dead(doh_paths, monkeypatch):
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
+    run, seen = _stub(dead_port="5053")
+    ok, message = doh.enable(run=run, attempts=1)
+
+    assert ok is False
+    assert "doh_layer_5053_dead" in message
+    assert doh.dropin_state() != "on", "drop-in must stay disabled"
+    assert "DNS оставлен у провайдера" in message
+    assert any(cmd[:3] == ["sudo", "-n", "systemctl"] and "stop" in cmd
+               for cmd in seen)
+
+
+def test_enable_rolls_back_when_53_dead(doh_paths, monkeypatch):
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
+    run, seen = _stub(dead_port="53")
+    ok, message = doh.enable(run=run, attempts=1)
+
+    assert ok is False
+    assert "doh_layer_53_dead" in message
+    assert doh.dropin_state() != "on"
+
+
+def test_enable_succeeds_when_all_layers_alive(doh_paths, monkeypatch):
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
+    run, _seen = _stub()
+    ok, message = doh.enable(run=run, attempts=1)
+
+    assert ok is True, message
+    assert doh.dropin_state() == "on"
+
+
+def test_probe_uses_valid_dig_option_syntax(doh_paths, monkeypatch):
+    """`dig +time 2` is rejected by dig as "Invalid option" — the probe would
+    read that empty output as a dead layer."""
+    seen = []
+
+    def run(cmd):
+        seen.append(list(cmd))
+        if cmd and cmd[0] == "dig":
+            return 0, "192.0.2.10", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
+    doh.enable(run=run, attempts=1)
+    digs = [c for c in seen if c and c[0] == "dig"]
+    assert digs, "probe must call dig"
+    for cmd in digs:
+        assert "+time=2" in cmd, cmd
+        assert "+tries=1" in cmd, cmd
+        assert "+time" not in cmd and "+tries" not in cmd, cmd
+
+
+def test_enable_rolls_back_when_egress_dead(doh_paths, monkeypatch):
+    """DNS resolves but traffic does not flow (seen live: DoH handed out
+    addresses the raw provider drops).  Must roll back, not claim success."""
+    monkeypatch.setattr(doh.time, "sleep", lambda seconds: None)
+    run, seen = _stub(dead_egress=True)
+    ok, message = doh.enable(run=run, attempts=1)
+
+    assert ok is False
+    assert "doh_layer_egress_dead" in message
+    assert doh.dropin_state() != "on"
+    assert any(cmd[:3] == ["sudo", "-n", "systemctl"] and "stop" in cmd
+               for cmd in seen)
+
+
+def test_egress_canaries_are_neutral() -> None:
+    """api.ipify.org must NOT gate `vpn doh on`: it runs before any tunnel."""
+    assert not any("ipify" in url for url in doh.EGRESS_CANARIES)
+    assert len(doh.EGRESS_CANARIES) >= 3

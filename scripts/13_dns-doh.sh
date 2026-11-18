@@ -54,7 +54,7 @@ DOH_PORT="5053"
 # bootstrap-списка (https://[2606:4700:4700::…]) cloudflared получает
 # «network is unreachable» каждые ~5 с — шум journald и ложные G-07 в
 # vpn guard (2026-11-17).
-DOH_UPSTREAM_ARGS="--upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
+DOH_UPSTREAM_ARGS="--upstream https://8.8.8.8/dns-query --upstream https://dns.google/dns-query --upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://8.8.8.8/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
 
 # --- 0. Root -------------------------------------------------------------------
 info "0. Проверка прав (скрипт пишет в /usr/local/bin и /etc/systemd)"
