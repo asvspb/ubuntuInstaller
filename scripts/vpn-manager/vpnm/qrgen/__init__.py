@@ -10,6 +10,11 @@ WP-QR1 (этот пакет): модели, санитизация секрет�
 
 from __future__ import annotations
 
+from .builders import (
+    ECC_SMALL_MAX_BYTES,
+    BuiltPayload,
+    build_payload,
+)
 from .models import (
     EXIT_CONFIG_ERROR,
     EXIT_OK,
@@ -34,6 +39,9 @@ from .models import (
 from .resolver import resolve
 
 __all__ = [
+    "ECC_SMALL_MAX_BYTES",
+    "BuiltPayload",
+    "build_payload",
     "EXIT_CONFIG_ERROR",
     "EXIT_OK",
     "EXIT_RENDER_ERROR",

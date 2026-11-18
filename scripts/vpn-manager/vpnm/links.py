@@ -87,8 +87,13 @@ def _parse_vless(link: str) -> ProfileLink:
 
     security = params.get("security", "")
     if security == "reality":
-        for req in ("sni", "pbk", "sid"):
+        for req in ("sni", "pbk"):
             _require(params, req, "vless reality link")
+        # shortId может быть пустой строкой: Xray разрешает "" в `shortIds`,
+        # и `vpn qr` эмитит его как `sid=` (SPEC-20261118-vpn-qr §4.2).
+        # Требуем наличие ключа, а не непустое значение.
+        if "sid" not in params:
+            raise LinkError("vless reality link: missing required parameter 'sid'")
         flow = params.get("flow", "")
         if flow and flow != "xtls-rprx-vision":
             raise LinkError(
@@ -116,6 +121,13 @@ def _parse_vless(link: str) -> ProfileLink:
             f"vless link: unsupported security '{security}' "
             "(supported: reality, tls+network=xhttp|ws)"
         )
+
+    # SPEC-20261118-vpn-qr §4.2: в share-ссылке Xray spiderX называется `spx`
+    # (так его эмитят v2rayNG/v2rayN/Hiddify), а клиентский конфиг читает
+    # `spath`. Держим в store единое имя `spath`, чтобы `vpn qr` →
+    # `vpn profile add` ходил round-trip без потери параметра.
+    if params.get("spx") and not params.get("spath"):
+        params["spath"] = params["spx"]
 
     return ProfileLink(protocol=proto, host=host, port=int(port_s),
                        credential=uuid, name=name, params=params)
