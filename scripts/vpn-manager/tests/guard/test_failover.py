@@ -772,3 +772,36 @@ def test_xsplit_teardown_failure_aborts_switch(tmp_path: Path) -> None:
     assert outcome.status == "teardown_failed"
     assert outcome.switch_calls == []
     assert order == ["teardown:xsplit"]
+
+
+# --- ladder argv: absolute CLI path + preserved HOME -------------------------
+#
+# Live acceptance: `sudo -n vpn start relay` failed with "vpn: command not
+# found" (root's PATH has no pipx bin), and with an absolute path it then
+# looked for /root/.awg/relay.conf (sudo resets HOME).  Both must be encoded
+# in the argv, not left to the environment.
+
+def test_scheme_rung_uses_absolute_path_and_keeps_home() -> None:
+    argv = failover.candidate_argv(failover.LADDER_BY_ID["relay"])
+
+    assert argv[:2] == ("sudo", "-n"), argv
+    assert argv[2] == "env", argv
+    assert argv[3].startswith("HOME=") and argv[3] != "HOME=/root", argv
+    assert argv[4] not in ("vpn",)  # never a bare name under sudo
+    assert argv[-2:] == ("start", "relay"), argv
+
+
+def test_profile_rung_never_uses_sudo() -> None:
+    argv = failover.candidate_argv(failover.LADDER_BY_ID["asv2-hy2"])
+
+    assert "sudo" not in argv
+    assert argv[-2:] == ("switch", "asv2-hy2")
+
+
+def test_fallback_prefix_is_the_running_interpreter() -> None:
+    # When `vpn` is not on PATH the agent must still be able to call itself.
+    import sys
+    exe = failover.vpn_executable()
+    assert exe[0] == sys.executable or exe[0].endswith("vpn")
+    if exe[0] == sys.executable:
+        assert exe[1:] == ("-m", "vpnm")

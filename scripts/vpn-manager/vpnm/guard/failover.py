@@ -47,16 +47,51 @@ RESULT_SKIPPED = "skipped"
 
 #: One rung of the ladder (SPEC §4.1).  ``kind`` decides the guard clause:
 #: a ``scheme`` needs root (``sudo -n``), a ``profile`` is a socks client.
-Candidate = namedtuple("Candidate", "id kind argv")
-Candidate.__doc__ = "One ladder rung: id, kind ('scheme'|'profile'), argv."
+Candidate = namedtuple("Candidate", "id kind args")
+Candidate.__doc__ = "One ladder rung: id, kind ('scheme'|'profile'), CLI args."
 
 LADDER: Tuple[Candidate, ...] = (
-    Candidate("relay", "scheme", ("sudo", "-n", "vpn", "start", "relay")),
-    Candidate("asv2-hy2", "profile", ("vpn", "switch", "asv2-hy2")),
-    Candidate("asv2-awg", "scheme", ("sudo", "-n", "vpn", "start")),
-    Candidate("asv2-cdn", "profile", ("vpn", "switch", "asv2-cdn")),
+    Candidate("relay", "scheme", ("start", "relay")),
+    Candidate("asv2-hy2", "profile", ("switch", "asv2-hy2")),
+    Candidate("asv2-awg", "scheme", ("start",)),
+    Candidate("asv2-cdn", "profile", ("switch", "asv2-cdn")),
 )
 LADDER_BY_ID: Mapping[str, Candidate] = {item.id: item for item in LADDER}
+
+#: Where the AWG/relay configs live: the invoking user's ``~/.awg``.  ``sudo``
+#: resets HOME to ``/root``, so a scheme rung would otherwise look for
+#: ``/root/.awg/relay.conf`` and fail.
+_HOME_ENV = f"HOME={Path.home()}"
+
+
+def vpn_executable() -> Tuple[str, ...]:
+    """Absolute argv prefix of the vpn CLI (never a bare name).
+
+    Root's PATH has no ``vpn`` (pipx installs into ``~/.local/bin``), so the
+    bare name fails under ``sudo`` with "command not found" — found in live
+    acceptance.  Fall back to the interpreter that runs the agent, which is
+    the same venv that has ``vpnm`` importable.
+    """
+    import shutil
+    import sys
+
+    exe = shutil.which("vpn")
+    if exe:
+        return (exe,)
+    return (sys.executable, "-m", "vpnm")
+
+
+def candidate_argv(candidate: Candidate) -> Tuple[str, ...]:
+    """Full argv for one rung.
+
+    ``scheme`` rungs need root (awg/nft/UFW) and must keep the user's HOME so
+    ``~/.awg/relay.conf`` resolves; ``profile`` rungs are plain user-scope
+    socks switches and must NOT use sudo.
+    """
+    if candidate.kind == "scheme":
+        return ("sudo", "-n", "env", _HOME_ENV, *vpn_executable(),
+                *candidate.args)
+    return (*vpn_executable(), *candidate.args)
 
 #: Verdict freshness for ``expected_lockdown`` (SPEC §3).
 VERDICT_FRESH_S = 600
@@ -736,7 +771,7 @@ def run_once(*, config_root: Optional[Path] = None,
         eligible = candidates  # all cooling down must not mean "no attempt"
 
     switch_runner = switch_fn or (
-        lambda cand: runner_fn(list(cand.argv))[0])
+        lambda cand: runner_fn(list(candidate_argv(cand)))[0])
     endpoints = profile_endpoints(profiles_path)
 
     # SPEC §8.1 "старт": desktop only (the Telegram report is sent once the
