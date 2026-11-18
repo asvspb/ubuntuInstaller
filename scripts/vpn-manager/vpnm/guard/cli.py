@@ -146,15 +146,24 @@ def _system_journal_enabled(config_root: Optional[Path] = None) -> bool:
 
 
 def _active_profile() -> Optional[str]:
-    """``state.json.active`` — the channel the user last brought up."""
+    """The channel the user last brought up: socks profile, else the tun scheme.
+
+    ``state.json.active`` tracks socks profiles only — ``vpn start reality``
+    (xray-split) never writes it.  Without the fallback both ``status`` and the
+    agent would report "no active profile" while the direct tun channel is
+    exactly what carries the traffic.
+    """
     from . import reader
     path = reader.config_dir() / "state.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
-        return None
+        payload = {}
     active = payload.get("active") if isinstance(payload, dict) else None
-    return active if isinstance(active, str) and active else None
+    if isinstance(active, str) and active:
+        return active
+    from . import failover as failover_mod
+    return failover_mod.xsplit_active_profile()
 
 
 # --- commands -----------------------------------------------------------------

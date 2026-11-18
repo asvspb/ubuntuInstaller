@@ -288,6 +288,33 @@ def local_net_check(*, connect: Optional[Callable[[str, int, float], bool]] = No
 
 # --- endpoints / pre-flight / post-flight ----------------------------------------
 
+def xsplit_active_profile() -> Optional[str]:
+    """Profile of the running ``vpn-xray-split@<p>`` unit, or ``None``.
+
+    The tun scheme (``vpn start reality`` / ``vpn scheme xray-split <p>``)
+    never touches ``state.json["active"]`` — that file only tracks socks
+    profiles.  Without this fallback the agent would sit in
+    ``profile_not_trigger`` while the real direct channel dies, which is
+    exactly the case ``trigger_profiles`` exists for.
+    """
+    from .. import xsplit
+
+    try:
+        return xsplit.active_profile(xsplit.run_cmd)
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def teardown_xsplit() -> Tuple[bool, str]:
+    """Tear the tun scheme down (unit + rules); never raises."""
+    from .. import xsplit
+
+    try:
+        return xsplit.stop()
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, f"xsplit_stop_exc:{type(exc).__name__}"
+
+
 def profile_endpoints(profiles_path: Optional[Path] = None
                       ) -> Dict[str, Tuple[str, int, Optional[int]]]:
     """``name -> (host, port, socks_port)`` from the profile store.
@@ -596,6 +623,8 @@ def run_once(*, config_root: Optional[Path] = None,
              egress: Optional[Callable[[Optional[int], float], Optional[str]]] = None,
              awg_rx: Optional[Callable[[], Optional[int]]] = None,
              sync: Optional[Callable[[], bool]] = None,
+             xsplit_active: Optional[Callable[[], Optional[str]]] = None,
+             teardown_xsplit_fn: Optional[Callable[[], Tuple[bool, str]]] = None,
              verdict_path: Optional[Path] = None,
              notifier: Any = None,
              runner: Optional[RunCmd] = None) -> FailoverOutcome:
@@ -639,12 +668,26 @@ def run_once(*, config_root: Optional[Path] = None,
                                backoff_sec=int(until - now_wall))
 
     profile = active_profile
+    source_via_xsplit = False
     if profile is None:
         from .. import runners
         try:
             profile = runners.get_active()
         except (OSError, ValueError):
             profile = None
+    if profile is None:
+        # The tun scheme (``vpn start reality``) does not register in
+        # ``state.json`` — read the running unit instead, otherwise the agent
+        # sleeps through exactly the outage it was built for.
+        resolver = xsplit_active if xsplit_active is not None \
+            else xsplit_active_profile
+        try:
+            tun_profile = resolver()
+        except (OSError, ValueError, RuntimeError):
+            tun_profile = None
+        if isinstance(tun_profile, str) and tun_profile:
+            profile = tun_profile
+            source_via_xsplit = True
 
     if findings is None:
         findings = store.FindingsStore(path=store.findings_path()).read(
@@ -709,6 +752,7 @@ def run_once(*, config_root: Optional[Path] = None,
             pass
 
     attempts: List[Attempt] = []
+    torn_xsplit = False
     skipped_ids = {item.id for item in candidates if item not in eligible}
     for candidate in candidates:
         if candidate.id in skipped_ids:
@@ -727,6 +771,34 @@ def run_once(*, config_root: Optional[Path] = None,
                 "attempt", now_text, from_=profile, to=candidate.id,
                 trigger=decision.rule, result=RESULT_DEAD_ENTRY, note=detail))
             continue
+
+        # The tun scheme must be gone before a socks profile is stacked on
+        # top: a dead xray0 would otherwise stay in the routing table over a
+        # live reserve.  Scheme rungs handle this themselves (`vpn start
+        # relay` / `vpn start` call the direct-contour teardown), so only
+        # profile rungs need it here.
+        if source_via_xsplit and not torn_xsplit and candidate.kind == "profile":
+            torn_xsplit = True
+            teardown = teardown_xsplit_fn if teardown_xsplit_fn is not None \
+                else teardown_xsplit
+            try:
+                td_ok, td_detail = teardown()
+            except (OSError, ValueError, RuntimeError) as exc:
+                td_ok, td_detail = False, f"xsplit_stop_exc:{type(exc).__name__}"
+            if not td_ok:
+                attempts.append(Attempt(candidate.id, RESULT_SWITCH_ERROR,
+                                        f"xsplit_teardown_failed:{td_detail}"))
+                _history(history_path, _history_record(
+                    "attempt", now_text, from_=profile, to=candidate.id,
+                    trigger=decision.rule, result=RESULT_SWITCH_ERROR,
+                    note=f"xsplit_teardown_failed:{td_detail}"))
+                state["updated"] = now_text
+                _save_state(state, state_path, config_root)
+                return FailoverOutcome("teardown_failed", decision,
+                                       attempts=attempts)
+            _history(history_path, _history_record(
+                "teardown", now_text, from_=profile, to=candidate.id,
+                trigger=decision.rule, result="xsplit_stopped", note=td_detail))
 
         start = float(wall_ts())
         detail = ""

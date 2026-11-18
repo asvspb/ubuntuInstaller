@@ -714,10 +714,21 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
   триггерят.
 - **Шаг 0 — `local_net_check`:** нет default route / связи вне туннеля →
   `suppressed_local_net_down`, ни одного переключения.
+- **Прямой канал распознаётся в обоих видах:** socks-профиль — из
+  `state.json.active`; tun-схема (`vpn start reality` / `vpn scheme xray-split`)
+  — из активного юнита `vpn-xray-split@<профиль>`, потому что `state.json` её не
+  фиксирует. Без этого второго источника агент молчал бы в `profile_not_trigger`
+  ровно при отказе реального прямого пути.
 - **Лестница:** `relay → asv2-hy2 → asv2-awg → asv2-cdn`; на каждом кандидате
   `pre_flight` (≤2 с) → switch → `post_flight` (≤4 с). Провал `pre_flight` =
   `dead_entry` (switch не вызывается), провал `post_flight` = `dead_exit` +
   cooldown кандидату 600 с.
+- **Гашение `xray0` перед socks-ступенью:** мёртвый tun не должен остаться в
+  таблице маршрутизации над живым резервом, поэтому перед `vpn switch <профиль>`
+  схема снимается (`xsplit.stop`). Схемные ступени (`relay`, `asv2-awg`) делают
+  это сами: `vpn start relay` / `vpn start` вызывают teardown прямого контура.
+  Сбой гашения → статус `teardown_failed`, переключение **не** выполняется.
+  Права: `sudo -n` (passwordless), в user-юните без TTY пароль не спрашивается.
 - **Ручная остановка важнее:** `vpn down`/`vpn reset` ставят маркер
   (`activity_scope`) и глушат агент на 5 мин; отдельного `desired_state` нет.
 - **Total blackout:** ровно один проход, backoff `120 → 300 → 900` с,

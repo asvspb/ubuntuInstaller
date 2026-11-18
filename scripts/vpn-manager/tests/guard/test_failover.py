@@ -162,7 +162,11 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
          notifier: Any = None,
          verdict: Optional[Path] = None,
          profiles: Optional[Path] = None,
-         state_path: Optional[Path] = None) -> failover.FailoverOutcome:
+         state_path: Optional[Path] = None,
+         active_profile: Optional[str] = "asv2-reality",
+         xsplit_active: Any = None,
+         teardown_xsplit: Any = None,
+         order: Optional[List[str]] = None) -> failover.FailoverOutcome:
     def no_shell(cmd: List[str]) -> Tuple[int, str, str]:
         return 0, "", ""  # no real commands in tests
 
@@ -173,7 +177,16 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
 
     def switch_fn(candidate: failover.Candidate) -> int:
         calls.append(candidate.id)
+        if order is not None:
+            order.append(candidate.id)
         return switch_script.get(candidate.id, 0)
+
+    def teardown_fn() -> Tuple[bool, str]:
+        if order is not None:
+            order.append("teardown:xsplit")
+        if teardown_xsplit is None:
+            return True, "xray-split демонтирован (fixture)"
+        return teardown_xsplit()
 
     ok_map = pre or {}
 
@@ -188,7 +201,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         state_path=state_path or (tmp_path / "guard" / "failover_state.json"),
         history_path=tmp_path / "guard" / "failover_history.jsonl",
         findings=findings,
-        active_profile="asv2-reality",
+        active_profile=active_profile,
         profiles_path=profiles if profiles is not None else write_profiles(tmp_path),
         mono_ns=clock.mono,
         wall_ts=clock.wall_ts,
@@ -202,6 +215,8 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         sync=sync,
         verdict_path=verdict,
         notifier=notifier,
+        xsplit_active=xsplit_active,
+        teardown_xsplit_fn=teardown_fn,
         runner=no_shell,
     )
     assert outcome.switch_calls == calls  # bookkeeping agrees with the mock
@@ -680,3 +695,80 @@ def test_cli_down_keeps_activity_window(tmp_path: Path, monkeypatch) -> None:
     assert window >= 250, (
         f"a clean `vpn down` closed its own marker (window {window:.0f}s) — "
         "failover would re-raise the tunnel the owner just stopped")
+
+
+# --- xray-split (tun) as the guarded channel ---------------------------------
+#
+# `vpn start reality` never writes state.json["active"], so a source-only
+# check left the agent in profile_not_trigger exactly when the real direct
+# channel died.  These tests cover detection and the teardown that must
+# precede any socks rung (a dead xray0 must not stay over a live reserve).
+
+def test_xsplit_active_profile_triggers_and_switches(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   active_profile=None,
+                   xsplit_active=lambda: "asv2-reality",
+                   sync=lambda: True, notifier=notifier,
+                   verdict=write_verdict(tmp_path, active=True))
+
+    assert outcome.status == "switched"
+    assert outcome.switched_to == "relay"
+    # relay is a scheme rung: `vpn start relay` does its own direct teardown
+    assert outcome.switch_calls == ["relay"]
+
+
+def test_no_channel_at_all_is_profile_not_trigger(tmp_path: Path) -> None:
+    clock = Clock()
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   active_profile=None, xsplit_active=lambda: None)
+
+    assert outcome.status == "no_trigger"
+    assert outcome.trigger.reason == "profile_not_trigger"
+    assert outcome.switch_calls == []
+
+
+def test_xsplit_torn_down_before_socks_rung(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    order: List[str] = []
+    # relay UDP route dead -> the first live rung is the asv2-hy2 socks profile
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   pre={"udp": False},
+                   active_profile=None,
+                   xsplit_active=lambda: "asv2-reality",
+                   sync=lambda: True, notifier=notifier,
+                   verdict=write_verdict(tmp_path, active=True),
+                   order=order)
+
+    assert outcome.status == "switched"
+    assert outcome.switched_to == "asv2-hy2"
+    assert order == ["teardown:xsplit", "asv2-hy2"], (
+        "the tun scheme must be gone BEFORE the socks profile is stacked on it")
+    history = (tmp_path / "guard" / "failover_history.jsonl").read_text(
+        encoding="utf-8").splitlines()
+    assert any(json.loads(line)["result"] == "xsplit_stopped" for line in history)
+
+
+def test_xsplit_teardown_failure_aborts_switch(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    order: List[str] = []
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   pre={"udp": False},
+                   active_profile=None,
+                   xsplit_active=lambda: "asv2-reality",
+                   teardown_xsplit=lambda: (False, "sudo_denied"),
+                   sync=lambda: True, notifier=notifier,
+                   verdict=write_verdict(tmp_path, active=True),
+                   order=order)
+
+    # No second contour may be stacked on a live tun route.
+    assert outcome.status == "teardown_failed"
+    assert outcome.switch_calls == []
+    assert order == ["teardown:xsplit"]

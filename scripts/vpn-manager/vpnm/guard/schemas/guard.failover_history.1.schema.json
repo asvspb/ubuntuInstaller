@@ -4,10 +4,19 @@
   "title": "guard.failover_history/1",
   "description": "One failover attempt/outcome line (SPEC-20261118-vpn-failover §9). Append-only JSONL, 0600, rotated like findings.jsonl; no secrets, prose is redacted.",
   "type": "object",
-  "required": ["schema", "ts", "event"],
+  "required": [
+    "schema",
+    "ts",
+    "event"
+  ],
   "properties": {
-    "schema": {"const": "guard.failover_history/1"},
-    "ts": {"type": "string", "maxLength": 40},
+    "schema": {
+      "const": "guard.failover_history/1"
+    },
+    "ts": {
+      "type": "string",
+      "maxLength": 40
+    },
     "event": {
       "enum": [
         "attempt",
@@ -16,29 +25,79 @@
         "lockdown_off",
         "suppressed",
         "queued",
-        "queued_flushed"
+        "queued_flushed",
+        "teardown"
       ]
     },
-    "from": {"type": ["string", "null"], "maxLength": 64},
-    "to": {"type": ["string", "null"], "maxLength": 64},
-    "result": {
-      "enum": ["ok", "dead_entry", "dead_exit", "switch_error", null]
+    "from": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
     },
-    "trigger": {"type": ["string", "null"], "maxLength": 40},
-    "latency_ms": {"type": ["number", "null"], "minimum": 0},
-    "note": {"type": "string", "maxLength": 240},
+    "to": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
+    },
+    "result": {
+      "enum": [
+        "ok",
+        "dead_entry",
+        "dead_exit",
+        "switch_error",
+        null,
+        "xsplit_stopped"
+      ]
+    },
+    "trigger": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40
+    },
+    "latency_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 240
+    },
     "attempts": {
       "type": "array",
       "maxItems": 8,
       "items": {
         "type": "object",
-        "required": ["candidate", "result"],
+        "required": [
+          "candidate",
+          "result"
+        ],
         "properties": {
-          "candidate": {"type": "string", "maxLength": 64},
-          "result": {
-            "enum": ["ok", "dead_entry", "dead_exit", "switch_error", "skipped"]
+          "candidate": {
+            "type": "string",
+            "maxLength": 64
           },
-          "detail": {"type": "string", "maxLength": 120}
+          "result": {
+            "enum": [
+              "ok",
+              "dead_entry",
+              "dead_exit",
+              "switch_error",
+              "skipped"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 120
+          }
         },
         "additionalProperties": false
       }
