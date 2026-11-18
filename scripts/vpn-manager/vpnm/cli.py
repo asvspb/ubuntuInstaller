@@ -927,19 +927,21 @@ def _apply_awg_scheme() -> Tuple[bool, str]:
     (_ok if ok_t else _err)(f"AWG: {msg_t}")
     if not ok_t:
         return False, "туннель не поднялся (split без iface не применяется)"
-    # The domain split routes through dnsmasq (nftset=): without the DoH chain
-    # the set stays empty and every "split" domain silently goes direct — a
-    # live tunnel carrying nothing.  `vpn reset` stops that chain, so it must
-    # be brought back here, fail-closed, exactly like xray-split does.
+    # Try to bring DoH up, but never fail the scheme on it: `15_domain-split.sh`
+    # writes a plaintext fallback (`server=77.88.8.8`) right after the DoH
+    # upstream precisely for this case, and dnsmasq still fills the nft set
+    # from fallback answers.  DoH is a privacy upgrade, not a prerequisite —
+    # blocking the scheme here made `vpn start` unusable whenever the DoH
+    # egress probe failed (found live 2026-11-18).
     ok_doh, msg_doh = xsplit_mod._ensure_doh(runners.run_cmd)
     if not ok_doh:
-        return False, (f"DoH-цепочка не включена ({msg_doh}) — "
-                       f"split без неё не работает")
-    ok_ready, msg_ready = xsplit_mod._wait_doh(runners.run_cmd)
-    if not ok_ready:
-        return False, (f"{msg_ready} — повторите 'vpn scheme awg' "
-                       f"после 'vpn doh status'")
-    ok_s, msg_s = awg.domain_split_apply("on")
+        _warn(f"DoH недоступен ({msg_doh}) — DNS пойдёт через fallback "
+              f"77.88.8.8: split работает, резолв не приватный")
+    elif not xsplit_mod._wait_doh(runners.run_cmd)[0]:
+        _warn("DoH включён, но ещё не прогрет — dnsmasq уйдёт в fallback "
+              "77.88.8.8")
+    instance = awg.local_instance() or awg.DEFAULT_LOCAL_INSTANCE
+    ok_s, msg_s = awg.domain_split_apply("on", dev=instance)
     (_ok if ok_s else _warn)(f"split: {msg_s}")
     if not ok_s:
         return False, "доменный split не применён"
