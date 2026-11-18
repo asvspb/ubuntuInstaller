@@ -152,6 +152,19 @@ def enabled_cfg(**overrides: Any) -> Dict[str, Any]:
     return cfg
 
 
+
+def write_profiles_with_reality(tmp_path: Path) -> Path:
+    """Profiles including the trigger channel (recovery needs its endpoint)."""
+    path = tmp_path / "profiles.json"
+    path.write_text(json.dumps({"profiles": [
+        {"name": "asv2-reality", "socks_port": 1080,
+         "link": _reality_link(REALITY_HOST, 443, "r.test")},
+        {"name": "asv2-hy2", "socks_port": 1081,
+         "link": _reality_link(HY2_HOST, 8443, "h.test")},
+    ]}), encoding="utf-8")
+    return path
+
+
 def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
          findings: List[Dict[str, Any]],
          switch: Optional[Dict[str, int]] = None,
@@ -166,6 +179,8 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
          active_profile: Optional[str] = "asv2-reality",
          xsplit_active: Any = None,
          liveness: Any = None,
+         reset: Any = None,
+         runner: Any = None,
          teardown_xsplit: Any = None,
          order: Optional[List[str]] = None) -> failover.FailoverOutcome:
     def no_shell(cmd: List[str]) -> Tuple[int, str, str]:
@@ -220,7 +235,8 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         xsplit_active=xsplit_active,
         teardown_xsplit_fn=teardown_fn,
         liveness_fn=liveness,
-        runner=no_shell,
+        reset_fn=reset,
+        runner=runner if runner is not None else no_shell,
     )
     assert outcome.switch_calls == calls  # bookkeeping agrees with the mock
     return outcome
@@ -955,3 +971,100 @@ def test_install_failover_plan_includes_timer(tmp_path: Path) -> None:
     plan = install.install_failover(apply=False, unit_root=tmp_path)
     assert plan["timer_path"].endswith("vpn-failover.timer")
     assert any("vpn-failover.timer" in cmd for cmd in plan["commands"])
+
+
+def test_failover_service_allows_netlink() -> None:
+    """`awg show` needs netlink; without it a healthy relay looks dead."""
+    text = install.render_failover_service()
+    line = next((row for row in text.splitlines()
+                 if row.startswith("RestrictAddressFamilies=")), "")
+    assert "AF_NETLINK" in line, line
+
+
+# --- recovery: provider traffic is a hard guarantee --------------------------
+#
+# After a blackout the machine must be back on the provider route, and when the
+# server answers again the agent cleans up with `vpn reset` — without ever
+# reconnecting on its own (OQ-4).
+
+def _seed_blackout(tmp_path: Path, now: float) -> Path:
+    state_path = tmp_path / "guard" / "failover_state.json"
+    seeded = store.empty_failover_state()
+    seeded["backoff"] = {"count": 1, "until": _iso(now + 300)}
+    seeded["pin"] = {"profile": "relay", "since": _iso(now),
+                     "reason": "expected_lockdown", "lockdown_active": False}
+    store.write_failover_state(seeded, state_path)
+    return state_path
+
+
+def test_recovery_runs_vpn_reset_and_clears_backoff(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    state_path = _seed_blackout(tmp_path, clock.wall)
+    called: List[str] = []
+
+    def reset_fn() -> Tuple[int, str]:
+        called.append("reset")
+        return 0, "clean"
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile=None, xsplit_active=lambda: None,
+                   # default probe map is "reachable" — the server is back
+                   profiles=write_profiles_with_reality(tmp_path),
+                   reset=reset_fn, notifier=notifier, state_path=state_path)
+
+    assert outcome.status == "recovered"
+    assert called == ["reset"]
+    state = store.read_failover_state(state_path)
+    assert state["backoff"]["until"] is None
+    assert state["pin"]["profile"] is None
+    history = (tmp_path / "guard" / "failover_history.jsonl").read_text(
+        encoding="utf-8").splitlines()
+    assert any(json.loads(line)["event"] == "recovered" for line in history)
+    assert notifier.telegram and "vpn reset" in notifier.telegram[0]
+
+
+def test_recovery_waits_while_server_still_unreachable(tmp_path: Path) -> None:
+    clock = Clock()
+    state_path = _seed_blackout(tmp_path, clock.wall)
+    called: List[str] = []
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile=None, xsplit_active=lambda: None,
+                   pre={REALITY_HOST: False},
+                   profiles=write_profiles_with_reality(tmp_path),
+                   reset=lambda: (called.append("reset"), (0, ""))[1],
+                   state_path=state_path)
+
+    assert outcome.status == "backoff"
+    assert called == []
+
+
+def test_blackout_restores_provider_with_absolute_cli(tmp_path: Path) -> None:
+    clock = Clock()
+    commands: List[List[str]] = []
+
+    def runner(cmd: List[str]) -> Tuple[int, str, str]:
+        commands.append(list(cmd))
+        if cmd and cmd[0] == "curl" and "api.ipify.org" in cmd[-1]:
+            return 0, "198.51.100.9", ""   # provider route is alive
+        return 0, "", ""
+
+    state_path = tmp_path / "guard" / "failover_state.json"
+    seeded = store.empty_failover_state()
+    seeded["liveness_failures"] = 1  # one tick already failed
+    store.write_failover_state(seeded, state_path)
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(), findings=[],
+                   active_profile=None, xsplit_active=lambda: "asv2-reality",
+                   liveness=lambda: False,
+                   pre={"udp": False, REALITY_HOST: False},
+                   egress=lambda port, budget: None,
+                   runner=runner, state_path=state_path)
+
+    assert outcome.status == "blackout"
+    down = [c for c in commands if c[-1:] == ["down"]]
+    assert down, "blackout must call `vpn down`"
+    assert down[0][0] != "vpn", "bare `vpn` is not on the unit's PATH"
+    # provider egress was actually verified after the teardown attempt
+    assert any("api.ipify.org" in c[-1] for c in commands if c and c[0] == "curl")

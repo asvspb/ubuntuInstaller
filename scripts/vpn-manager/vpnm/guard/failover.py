@@ -390,6 +390,38 @@ def _tcp_handshake(host: str, port: int, timeout: float) -> bool:
         return False
 
 
+def reset_to_clean_state() -> Tuple[int, str]:
+    """Bring the machine back to a known-clean state (``vpn reset``).
+
+    Used by the recovery step: after a blackout the tunnels are gone and the
+    provider carries traffic, but stale mode/unit fragments may remain.  The
+    agent does **not** reconnect on its own (OQ-4) — it cleans up and says so.
+    """
+    argv = ("sudo", "-n", "env", _HOME_ENV, *vpn_executable(), "reset")
+    try:
+        rc, out, err = _run_cmd(list(argv))
+    except (OSError, ValueError) as exc:
+        return 1, f"reset_exc:{type(exc).__name__}"
+    return rc, (err or out or "").strip()
+
+
+def endpoint_reachable(profile: str, *,
+                       endpoints: Optional[Mapping[str, Tuple[str, int, Optional[int]]]] = None,
+                       tcp_probe: Optional[Callable[[str, int, float], bool]] = None,
+                       timeout: float = 2.0) -> bool:
+    """Is the trigger channel's server reachable again (recovery check)?"""
+    table = endpoints if endpoints is not None else profile_endpoints()
+    endpoint = table.get(profile)
+    if endpoint is None:
+        return False
+    host, port, _socks = endpoint
+    probe = tcp_probe or _tcp_handshake
+    try:
+        return bool(probe(host, port, timeout))
+    except (OSError, ValueError):
+        return False
+
+
 def _udp_route(host: str, port: int, timeout: float) -> bool:
     """Route lookup only — **zero bytes** are sent (scout probe contract)."""
     try:
@@ -478,6 +510,13 @@ def _egress_via_socks(socks_port: Optional[int], run: RunCmd,
     cmd.append("https://api.ipify.org")
     rc, out, _err = run(cmd)
     return out.strip() if rc == 0 and out.strip() else None
+
+
+def _provider_egress(run: RunCmd, timeout: float = 3.0) -> bool:
+    """Is the provider route carrying traffic right now (blackout guarantee)?"""
+    rc, out, _err = run(["curl", "-s", "--max-time", f"{max(0.5, timeout):.1f}",
+                         "https://api.ipify.org"])
+    return rc == 0 and bool(out.strip())
 
 
 def _awg_rx() -> Optional[int]:
@@ -713,6 +752,7 @@ def run_once(*, config_root: Optional[Path] = None,
              sync: Optional[Callable[[], bool]] = None,
              xsplit_active: Optional[Callable[[], Optional[str]]] = None,
              liveness_fn: Optional[Callable[[], bool]] = None,
+             reset_fn: Optional[Callable[[], Tuple[int, str]]] = None,
              teardown_xsplit_fn: Optional[Callable[[], Tuple[bool, str]]] = None,
              verdict_path: Optional[Path] = None,
              notifier: Any = None,
@@ -749,10 +789,42 @@ def run_once(*, config_root: Optional[Path] = None,
         return FailoverOutcome("lockdown_off", TriggerDecision(False, "lockdown_off"),
                                notified=notified)
 
-    # §5.2: backoff window is authoritative.
+    # §5.2: backoff window is authoritative — except for recovery: after a
+    # blackout the tunnels are gone and the provider carries traffic, but the
+    # machine may hold stale mode/unit fragments.  When the trigger server
+    # answers again we clean up with `vpn reset` and say so; we never
+    # reconnect on our own (OQ-4).
     backoff = state.get("backoff") if isinstance(state.get("backoff"), Mapping) else {}
     until = _parse_iso(backoff.get("until"))
     if until is not None and until > now_wall:
+        rec_profile = next(iter(cfg.get("trigger_profiles") or []), None)
+        if isinstance(rec_profile, str) and endpoint_reachable(
+                rec_profile,
+                endpoints=profile_endpoints(profiles_path),
+                tcp_probe=tcp_probe):
+            rc, detail = (reset_fn or reset_to_clean_state)()
+            if rc == 0:
+                state["backoff"] = {"count": 0, "until": None}
+                # neutral pin (schema requires the four keys; nulls = no pin)
+                state["pin"] = {"profile": None, "since": None,
+                                "reason": None, "lockdown_active": False}
+                state["liveness_failures"] = 0
+                state["updated"] = now_text
+                _save_state(state, state_path, config_root)
+                _history(history_path, _history_record(
+                    "recovered", now_text,
+                    note="сервер снова доступен; vpn reset выполнен, "
+                         "трафик у провайдера"))
+                text = (f"✅ [client] {rec_profile} снова доступен. Состояние "
+                        f"очищено (`vpn reset`); трафик идёт напрямую через "
+                        f"провайдера. Подключиться: vpn scheme xray-split "
+                        f"{rec_profile}")
+                notified = _notify(notifier, title="VPN: сервер снова доступен",
+                                   body=text, urgency="normal",
+                                   telegram_text=text, event="recovered")
+                return FailoverOutcome("recovered",
+                                       TriggerDecision(False, "recovered"),
+                                       notified=notified)
         return FailoverOutcome("backoff", TriggerDecision(False, "backoff"),
                                backoff_sec=int(until - now_wall))
 
@@ -1027,13 +1099,31 @@ def run_once(*, config_root: Optional[Path] = None,
     state["updated"] = now_text
     _save_state(state, state_path, config_root)
 
+    provider_ok = None
     if not cfg.get("kill_switch"):
+        # Guarantee provider traffic: user-scope `vpn down` stops profiles and
+        # the tun scheme, then, if the route is still not working, a root
+        # `vpn reset` clears the relay contour too.  Both calls use the
+        # absolute CLI path — a bare `vpn` is not on the unit's PATH.
         try:
-            runner_fn(["vpn", "down"])  # return to the standard route
+            runner_fn([*vpn_executable(), "down"])
         except (OSError, ValueError, RuntimeError):
             pass
-    kill_note = ("kill_switch включён — маршрут оставлен как есть (fail-closed)"
-                 if cfg.get("kill_switch") else "возврат на штатный маршрут (vpn down)")
+        provider_ok = _provider_egress(runner_fn)
+        if not provider_ok:
+            try:
+                runner_fn(["sudo", "-n", "env", _HOME_ENV,
+                           *vpn_executable(), "reset"])
+            except (OSError, ValueError, RuntimeError):
+                pass
+            provider_ok = _provider_egress(runner_fn)
+    if cfg.get("kill_switch"):
+        kill_note = "kill_switch включён — маршрут оставлен как есть (fail-closed)"
+    elif provider_ok:
+        kill_note = "трафик у провайдера подтверждён"
+    else:
+        kill_note = ("провайдерский маршрут НЕ подтверждён — проверьте "
+                     "соединение вручную")
     text = (f"🚨 VPN Guard: ВСЕ резервные каналы недоступны!\n"
             f"Проверены: {_attempts_summary(attempts)}. "
             f"Локальный интернет: ЕСТЬ. Повтор через {delay} с.\n{kill_note}")

@@ -26,7 +26,8 @@
         "suppressed",
         "queued",
         "queued_flushed",
-        "teardown"
+        "teardown",
+        "recovered"
       ]
     },
     "from": {

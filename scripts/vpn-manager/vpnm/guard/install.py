@@ -181,7 +181,11 @@ def render_failover_service(python_exe: Optional[str] = None) -> str:
         "Nice=10",
         "UMask=0077",
         "PrivateTmp=yes",
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+        # AF_NETLINK is required: `awg show` reads its state via netlink, and
+        # without it the whole ladder degrades — pre_flight(asv2-awg) returned
+        # `awg_show_rc=1` and `vpn start relay` failed with "Address family not
+        # supported", so a healthy relay looked dead (live acceptance).
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
         "StandardOutput=journal",
         "StandardError=journal",
         "SyslogIdentifier=vpn-failover",
