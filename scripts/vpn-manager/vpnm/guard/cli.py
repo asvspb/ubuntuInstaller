@@ -293,7 +293,11 @@ def run(once: bool = typer.Option(
     except (OSError, ValueError) as exc:
         typer.secho(f"[error] guard run: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=3)
-    if counters.high:
+    # `high → exit 2` имеет смысл только для одноразового прогона (CLI/CI:
+    # «были ли high-findings»). Долгоживущий демон — это сервис: при штатном
+    # SIGTERM/SIGINT он обязан выйти 0, иначе systemd пишет
+    # `Failed with result 'exit-code'` и портит AC-5 («0 падений») / G-11.
+    if counters.high and once:
         raise typer.Exit(code=2)
     if as_json or quiet:
         raise typer.Exit(code=0)

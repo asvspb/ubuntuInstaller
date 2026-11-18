@@ -54,6 +54,11 @@ DRAIN_BATCH = 512
 #: clock jumped): smaller drifts are ordinary NTP steering.
 SUSPEND_DRIFT_S = 5.0
 
+#: Minimum app-line sample before ``unparsed_ratio`` is reported as an AC-5
+#: metric.  One startup banner gives 1/1 = 1.0 — arithmetic, not a parser
+#: degradation (field G6 2026-11-18).  The raw counter stays in ``status``.
+MIN_APP_LINES_FOR_RATIO = 20
+
 
 @dataclass
 class RunCounters:
@@ -557,6 +562,12 @@ class GuardRunner:
         notes = list(self.notes)
         stats = self.parser.stats if self.parser is not None else None
         unparsed_ratio = stats.unparsed_ratio if stats is not None else 0.0
+        if stats is not None and 0 < stats.app_lines < MIN_APP_LINES_FOR_RATIO:
+            # AC-5 меряет долю unparsed на app-строках; на выборке из одной
+            # баннерной строки 1/1 = 1.0 — это арифметика, а не деградация.
+            # Не отдаём её как показатель AC-5, но и не прячем: note ниже.
+            unparsed_ratio = 0.0
+            notes.append(f"app_lines_low:{stats.app_lines}")
         blind: List[str] = []
         if not any(getattr(source, "status", "off") == "ok"
                    for source in self.readers):

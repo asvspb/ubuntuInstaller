@@ -144,6 +144,12 @@ _SIGNAL_FAMILIES: Tuple[Tuple[str, re.Pattern[str]], ...] = (
         r"(?:\bXray\b[^\n]*\bstarted\b|"
         r"\bHysteria2\b[^\n]*\bclient mode\b|"
         r"\bhy2 client mode\b|"
+        # Hysteria2 2.x печатает баннер как `INFO\tclient mode` — без имени
+        # протокола в строке. Поле G6 2026-11-18: `vpnm-asv2-hy2.service`
+        # выдавал ровно такую строку, она уходила в unparsed, а G-01 терял
+        # доказательство покрытия. Требуем `,`/`;`/конец строки после
+        # `client mode`, чтобы «client mode disabled» баннером не считался.
+        r"(?:^|[\t: ])client mode(?:[,;]|\s*$)|"
         r"\bserver listening\b)", re.I)),
     # QUIC (Hysteria2) — before generic timeouts/resets
     ("quic_handshake_ok", re.compile(
