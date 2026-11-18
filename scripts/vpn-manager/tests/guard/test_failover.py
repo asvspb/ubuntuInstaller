@@ -646,3 +646,37 @@ def test_artifacts_are_0600_and_bounded(tmp_path: Path) -> None:
     assert queue.records()[0]["text"] == "m2"  # FIFO: oldest dropped
     assert stat.S_IMODE((guard / "pending_alerts.jsonl").stat().st_mode) == 0o600
 
+
+# --- regression: a real `vpn down` must KEEP the suppression marker ----------
+#
+# AC-F8 only used `store.mark_activity` directly, so it could not catch the
+# bug where the CLI closed its own marker on a clean exit
+# (`mark_activity_end` writes `until = now`) — the 5-minute suppression of
+# SPEC §3.2 silently disappeared the moment `vpn down` finished.
+
+def test_cli_down_keeps_activity_window(tmp_path: Path, monkeypatch) -> None:
+    from vpnm import amneziawg, cli as cli_mod, mode, runners
+    from vpnm.guard import store as gstore
+
+    marker = tmp_path / "guard" / "activity.json"
+    marker.parent.mkdir(parents=True)
+    monkeypatch.setattr(gstore, "activity_path", lambda: marker)
+
+    # Neutralise the real work: no systemd, no awg, no mode file.
+    monkeypatch.setattr(runners, "stop_all_profiles", lambda: ([], []))
+    monkeypatch.setattr(cli_mod, "_stop_relay_contour", lambda: (True, "relay off"))
+    monkeypatch.setattr(amneziawg, "instance_active", lambda name: False)
+    monkeypatch.setattr(mode, "clear_mode", lambda: None)
+
+    cli_mod.down(None)
+
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    started = datetime.fromisoformat(payload["started"].replace("Z", "+00:00"))
+    until = datetime.fromisoformat(payload["until"].replace("Z", "+00:00"))
+    window = (until - started).total_seconds()
+    # `activity_active` uses `until >= now`, so a closed marker (until == now)
+    # still reads "active" for that instant — the window length is what proves
+    # the suppression survived the command.
+    assert window >= 250, (
+        f"a clean `vpn down` closed its own marker (window {window:.0f}s) — "
+        "failover would re-raise the tunnel the owner just stopped")

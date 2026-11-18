@@ -769,7 +769,11 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
         _ok("VPN выключен: профили и релей остановлены; vpn guard продолжает "
             "работать")
     finally:
-        guard_store.mark_activity_end("down")
+        # SPEC-20261118 §3.2: the manual stop must keep failover quiet for the
+        # whole grace window, so re-arm the marker instead of closing it —
+        # ``mark_activity_end`` writes ``until = now`` and would cancel the
+        # suppression the moment the command finishes.
+        guard_store.mark_activity("down")
 
 
 @app.command("scheme")
@@ -1259,7 +1263,8 @@ def reset() -> None:
         _ok("система в состоянии чистого старта: DNS у провайдера, "
             "туннелей и прокси нет")
     finally:
-        guard_store.mark_activity_end("reset")
+        # SPEC-20261118 §3.2: re-arm (not close) — see ``vpn down`` above.
+        guard_store.mark_activity("reset")
 
 
 @app.command()
