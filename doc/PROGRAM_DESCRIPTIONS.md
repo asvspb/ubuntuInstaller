@@ -186,6 +186,11 @@
 - `vpn profile pull` — импорт ссылок с VDS-сервера по ssh (`vds gateway links`)
 - `vpn profile config/qr <name>` — конфиг текстом (share-ссылка или
   `--native`) и QR в терминале для телефона (через `qrencode`)
+- `vpn qr --direct|--relay --awg|--reality|--xhttp|--hy --<os>` — QR/URI
+  клиентского профиля по маршруту × протоколу × целевой ОС: офлайн-резолв
+  источника (store или AWG-конфиг), `--format qr|uri|png|svg|json`,
+  вывод без секретов (`--show-uri` — сырой URI), коды 0/2/3/4/5
+  ([SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md))
 - `vpn profile export/restore` — бандл профилей (JSON, 0600) для бэкапа
   и переноса на другой ноутбук; `show --link` — одна share-ссылка
 - `vpn sysproxy on|off|status` — GNOME системный прокси → локальный SOCKS-порт

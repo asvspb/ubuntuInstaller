@@ -179,6 +179,7 @@ VPN для одной вкладки/браузера (остальное — н
   vpn profile show <profile> --link  # одна share-ссылка (секрет)
   vpn profile config <profile>    # конфиг текстом (--native — JSON/YAML)
   vpn profile qr <profile>        # QR в терминале для телефона
+  vpn qr --direct --awg --android # QR под маршрут×протокол×ОС (--relay, --reality, --hy, --xhttp)
   vpn profile export -o b.json    # бандл всех профилей (0600, секреты)
   vpn profile restore b.json      # перенос на другой ноутбук (--dry-run)
   vpn amneziawg status            # локальный туннель + сервер
@@ -208,6 +209,12 @@ app.add_typer(amneziawg_app, name="amneziawg")
 # guard sub-app: light (typer + frozen contract); heavy modules load
 # lazily inside the commands (vpnm/guard/cli.py).
 app.add_typer(guard_app, name="guard")
+# `vpn qr` (SPEC-20261118-vpn-qr): резолвер и рендер живут в vpnm/qrgen/,
+# модуль лёгкий (typer + stdlib), поэтому регистрируем на импорте.
+from .qrgen.cli import qr_command  # noqa: E402  (регистрация ниже)
+
+app.command("qr", help="QR/URI клиентского профиля: маршрут × протокол × ОС "
+                       "(офлайн, без секретов в выводе)")(qr_command)
 
 
 def _awg_resolve_host() -> str:

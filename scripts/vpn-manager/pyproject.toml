@@ -13,7 +13,7 @@ dependencies = ["typer>=0.9"]
 vpn = "vpnm.cli:app"
 
 [tool.setuptools]
-packages = ["vpnm", "vpnm.guard", "vpnm.guard.schemas", "vpnm.scout"]
+packages = ["vpnm", "vpnm.guard", "vpnm.guard.schemas", "vpnm.scout", "vpnm.qrgen"]
 
 [tool.setuptools.package-data]
 "vpnm.guard.schemas" = ["*.json"]

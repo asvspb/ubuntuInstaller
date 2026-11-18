@@ -77,6 +77,7 @@ vpn install --linger
 | `vpn profile list` / `remove <name>` / `show <name> [--link]` | Управление профилями; `--link` — исходная share-ссылка (секрет) |
 | `vpn profile config <name> [--native]` | Конфиг текстом: share-ссылка или сгенерированный JSON/YAML (секрет) |
 | `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`) |
+| `vpn qr --direct\|--relay --awg\|--reality\|--xhttp\|--hy --android\|--ios\|--windows\|--macos\|--linux [--format qr\|uri\|png\|svg\|json]` | QR/URI клиентского профиля по маршруту × протоколу × ОС (офлайн, офлайн-резолв; вывод без секретов, `--show-uri` — сырой URI/INI) |
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план). `<name>` и `--scout` взаимоисключающие (вместе → exit 2) |
@@ -448,10 +449,39 @@ QR строит системный `qrencode` (`sudo apt install qrencode`); sha
 передаётся ему через stdin, поэтому секрет не попадает в argv/логи.
 Сканируется v2rayNG, Hiddify, Streisand и другими Xray-клиентами.
 
-> **В разработке:** единая подкоманда `vpn qr` (QR/URI/PNG/SVG по трём
-> измерениям — маршрут `--direct`/`--relay`, протокол `--awg`/`--reality`/
-> `--xhttp`/`--hy`, целевая ОС) — ТЗ, матрица совместимости и критерии приёмки в
-> [SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md) (G2 PASS, FROZEN).
+### `vpn qr` — профиль под маршрут, протокол и ОС
+
+Одна команда вместо ручного выбора профиля: сама находит подходящий источник
+(профиль из store или AWG-конфиг), собирает клиентский payload и рендерит QR.
+Полностью офлайн, без root (системный AWG-каталог читается через
+read-only `sudo -n cat`), состояние не меняет.
+
+```bash
+vpn qr --direct --awg --android       # AWG-конфиг активного direct-пира (.conf)
+vpn qr --relay  --reality --windows   # Reality через RU-релей
+vpn qr --direct --hy --linux          # Hysteria2 напрямую
+vpn qr --direct --reality --ios --client streisand
+
+vpn qr --relay --awg --android --format uri          # ссылка/INI в stdout (| xclip)
+vpn qr --direct --awg --android --format png --out ~/awg-android.png
+vpn qr --direct --reality --android --format json    # контракт vpnm.qr/1
+vpn qr --direct --reality --android --show-uri       # URI под QR (секрет!)
+```
+
+- **Маршрут × протокол:** релей даёт только AWG (udp/443) и Reality (tcp/443);
+  `--relay --xhttp` и `--relay --hy` завершаются кодом 3.
+- **По умолчанию секретов в выводе нет:** печатаются шапка (профиль, endpoint,
+  размер и sha256 payload), warnings, подсказка импорта и QR. Сырой URI/INI —
+  только с `--show-uri` (или `--format uri`).
+- **`--out`** пишется атомарно с правами 0600; существующий файл — только с
+  `--force`.
+- **Неоднозначность** (два профиля одного маршрута/протокола) — код 4 со
+  списком кандидатов; выбрать явно: `--profile <NAME>`.
+- Коды возврата: `0` ok, `2` ошибка флагов, `3` неподдерживаемая комбинация,
+  `4` нет валидного источника, `5` ошибка рендера/записи.
+
+ТЗ и матрица совместимости — [SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md)
+(G2 PASS, FROZEN).
 
 ## Интеграция с VDS-сервером (profile pull)
 

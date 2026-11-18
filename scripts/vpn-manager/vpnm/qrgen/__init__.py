@@ -15,6 +15,13 @@ from .builders import (
     BuiltPayload,
     build_payload,
 )
+from .render import (
+    emit,
+    format_terminal,
+    json_payload,
+    render_qr_text,
+    visible_qr_width,
+)
 from .models import (
     EXIT_CONFIG_ERROR,
     EXIT_OK,
@@ -42,6 +49,11 @@ __all__ = [
     "ECC_SMALL_MAX_BYTES",
     "BuiltPayload",
     "build_payload",
+    "emit",
+    "format_terminal",
+    "json_payload",
+    "render_qr_text",
+    "visible_qr_width",
     "EXIT_CONFIG_ERROR",
     "EXIT_OK",
     "EXIT_RENDER_ERROR",
