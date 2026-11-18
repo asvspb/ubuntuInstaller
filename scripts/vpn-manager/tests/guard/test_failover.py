@@ -205,6 +205,7 @@ def _run(tmp_path: Path, clock: Clock, *, cfg: Dict[str, Any],
         profiles_path=profiles if profiles is not None else write_profiles(tmp_path),
         mono_ns=clock.mono,
         wall_ts=clock.wall_ts,
+        sleep_fn=lambda seconds: None,  # never sleep in tests
         local_net=local_net or (lambda: True),
         switch_fn=switch_fn,
         tcp_probe=tcp_probe,
@@ -348,7 +349,7 @@ def test_ac_f3_dead_entry_never_switches(tmp_path: Path) -> None:
 def test_ac_f4_dead_exit_moves_to_next(tmp_path: Path) -> None:
     clock = Clock()
     notifier = FakeNotifier()
-    answers = iter([None, EGRESS_IP])  # relay: no egress, hy2: ok
+    answers = iter([None, None, EGRESS_IP])  # relay: 2 probes empty, hy2: ok
 
     outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
                    findings=[finding("G-09", "medium", clock.wall)],
@@ -365,9 +366,10 @@ def test_ac_f4_dead_exit_moves_to_next(tmp_path: Path) -> None:
                .read_text(encoding="utf-8").splitlines()]
     assert any(item["event"] == "attempt" and item["result"] == "dead_exit"
                for item in history)
-    # candidate cooldown recorded for the relay
+    # A scheme rung is unproven, not proven dead: its cooldown must survive
+    # the cold-start retry (live acceptance: relay was healthy, probe was not).
     state = store.read_failover_state(tmp_path / "guard" / "failover_state.json")
-    assert "relay" in state["candidate_cooldown"]
+    assert "relay" not in (state.get("candidate_cooldown") or {})
 
 
 # --- AC-F5: total blackout ---------------------------------------------------
@@ -805,3 +807,41 @@ def test_fallback_prefix_is_the_running_interpreter() -> None:
     assert exe[0] == sys.executable or exe[0].endswith("vpn")
     if exe[0] == sys.executable:
         assert exe[1:] == ("-m", "vpnm")
+
+
+# --- post_flight retry policy (live acceptance 2026-11-18) -------------------
+
+def test_scheme_retry_proves_channel_on_second_probe(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    answers = iter([None, EGRESS_IP])  # cold start: first probe empty, then ok
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   egress=lambda port, budget: next(answers),
+                   sync=lambda: True, notifier=notifier,
+                   verdict=write_verdict(tmp_path, active=True))
+
+    assert outcome.status == "switched"
+    assert outcome.switched_to == "relay"
+    assert outcome.switch_calls == ["relay"]
+
+
+def test_profile_dead_exit_still_sets_cooldown(tmp_path: Path) -> None:
+    clock = Clock()
+    notifier = FakeNotifier()
+    # relay dead on both probes, hy2 switched but egress never proves
+    answers = iter([None, None, None])
+
+    outcome = _run(tmp_path, clock, cfg=enabled_cfg(),
+                   findings=[finding("G-01", "high", clock.wall)],
+                   pre={"udp": False},
+                   active_profile=None,
+                   xsplit_active=lambda: "asv2-reality",
+                   egress=lambda port, budget: next(answers),
+                   notifier=notifier)
+
+    state = store.read_failover_state(tmp_path / "guard" / "failover_state.json")
+    cooldowns = state.get("candidate_cooldown") or {}
+    # hy2 is a socks profile: a proven-empty egress means a real dead exit
+    assert "asv2-hy2" in cooldowns

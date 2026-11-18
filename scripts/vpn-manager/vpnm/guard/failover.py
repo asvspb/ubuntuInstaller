@@ -494,9 +494,36 @@ def post_flight(candidate: Candidate, *,
                 awg_rx: Optional[Callable[[], Optional[int]]] = None,
                 run: Optional[RunCmd] = None,
                 timeout: float = 4.0,
-                endpoints: Optional[Mapping[str, Tuple[str, int, Optional[int]]]] = None
+                endpoints: Optional[Mapping[str, Tuple[str, int, Optional[int]]]] = None,
+                attempts: int = 1,
+                pause_s: float = 1.5,
+                sleep: Callable[[float], None] = time.sleep
                 ) -> Tuple[bool, str]:
-    """Prove the channel end-to-end **after** the switch (≤4 s)."""
+    """Prove the channel end-to-end **after** the switch.
+
+    A scheme rung (``relay`` / ``awg``) pays a cold start: config install,
+    interface up, handshake.  A single 4 s probe reported ``egress_empty`` on
+    a relay that was healthy (live acceptance), which then cost the preferred
+    reserve a 10-minute cooldown.  Scheme rungs therefore get a few attempts.
+    """
+    for index in range(max(1, attempts)):
+        ok, detail = _post_flight_once(candidate, egress=egress, awg_rx=awg_rx,
+                                       run=run, timeout=timeout,
+                                       endpoints=endpoints)
+        if ok:
+            return ok, detail
+        if index + 1 < max(1, attempts):
+            sleep(pause_s)
+    return ok, detail
+
+
+def _post_flight_once(candidate: Candidate, *,
+                      egress: Optional[Callable[[Optional[int], float], Optional[str]]] = None,
+                      awg_rx: Optional[Callable[[], Optional[int]]] = None,
+                      run: Optional[RunCmd] = None,
+                      timeout: float = 4.0,
+                      endpoints: Optional[Mapping[str, Tuple[str, int, Optional[int]]]] = None
+                      ) -> Tuple[bool, str]:
     runner = run or _run_cmd
     probe = egress or (lambda port, budget: _egress_via_socks(port, runner, budget))
     socks: Optional[int] = None
@@ -650,6 +677,7 @@ def run_once(*, config_root: Optional[Path] = None,
              profiles_path: Optional[Path] = None,
              mono_ns: Callable[[], int] = time.monotonic_ns,
              wall_ts: Callable[[], float] = time.time,
+             sleep_fn: Callable[[float], None] = time.sleep,
              local_net: Callable[[], bool] = local_net_check,
              switch_fn: Optional[Callable[[Candidate], int]] = None,
              tcp_probe: Optional[Callable[[str, int, float], bool]] = None,
@@ -852,12 +880,18 @@ def run_once(*, config_root: Optional[Path] = None,
         ok, detail = post_flight(
             candidate, egress=egress, awg_rx=awg_rx, run=runner_fn,
             timeout=float(cfg.get("post_flight_timeout_sec") or 4.0),
-            endpoints=endpoints)
+            endpoints=endpoints,
+            # scheme rungs need a cold-start retry (relay handshake/routing)
+            attempts=2 if candidate.kind == "scheme" else 1,
+            sleep=sleep_fn)
         latency_ms = round((float(wall_ts()) - start) * 1000.0, 1)
         if not ok:
             attempts.append(Attempt(candidate.id, RESULT_DEAD_EXIT, detail,
                                     latency_ms))
-            cooldowns[candidate.id] = now_wall
+            # A scheme rung that failed both probes is unproven, not proven
+            # dead: do not burn the preferred reserve's cooldown on it.
+            if candidate.kind == "profile":
+                cooldowns[candidate.id] = now_wall
             _history(history_path, _history_record(
                 "attempt", now_text, from_=profile, to=candidate.id,
                 trigger=decision.rule, result=RESULT_DEAD_EXIT, note=detail,
