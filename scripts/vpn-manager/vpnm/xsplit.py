@@ -171,16 +171,13 @@ def _wait_doh(runner: RunCmd, attempts: int = 10,
     `17`/15 сами проверяют dig, но на живом ноутбуке апстрим иногда не готов
     с первого раза; без ретрая split поднимался с мёртвым DNS.
     """
-    from . import doh as doh_mod
-    ok, layer = doh_mod.probe_chain(runner, attempts=attempts)
-    if ok:
-        return True, "DoH-цепочка готова (:5053 → :53 → resolved)"
-    reason = {
-        "doh_layer_5053_dead": "cloudflared не отвечает на 127.0.0.1:5053",
-        "doh_layer_53_dead": "dnsmasq не отвечает на 127.0.0.1:53",
-        "doh_layer_resolved_dead": "systemd-resolved не резолвит",
-    }.get(layer, layer)
-    return False, f"{layer}: {reason} (ждали ~{attempts} с)"
+    for _ in range(attempts):
+        rc, out, _err = runner(
+            ["dig", "+short", "@127.0.0.1", "www.youtube.com"])
+        if rc == 0 and out.strip():
+            return True, "DoH-цепочка готова"
+        time.sleep(delay)
+    return False, f"dnsmasq/DoH не резолвит за {attempts} с"
 
 
 def _stop_awg_scheme(runner: RunCmd) -> Tuple[bool, str]:

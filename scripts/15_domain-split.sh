@@ -60,7 +60,7 @@ DOH_PORT="5053"
 # AWG/Xray-сплит без v6) dual-stack upstream и штатный bootstrap-список с
 # https://[2606:4700:4700::…] дают «network is unreachable» каждые ~5 с:
 # шум в journald и ложные G-07 в vpn guard (2026-11-17).
-DOH_UPSTREAM_ARGS="--upstream https://8.8.8.8/dns-query --upstream https://dns.google/dns-query --upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://8.8.8.8/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
+DOH_UPSTREAM_ARGS="--upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query --bootstrap https://162.159.36.1/dns-query --bootstrap https://162.159.46.1/dns-query"
 RESOLVED_CONF="/etc/systemd/resolved.conf.d/doh-local.conf"  # тот же файл, что у 13_dns-doh.sh
 PUBLIC_DNS_CONF="/etc/systemd/resolved.conf.d/public-dns.conf"  # глобальный DNS=1.1.1.1 8.8.8.8 — обходит dnsmasq, нейтрализуем
 # Юнит AWG: templated (14_awg-split.sh) или точечный — автодетект ниже.

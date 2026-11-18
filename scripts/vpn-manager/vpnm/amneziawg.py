@@ -397,8 +397,8 @@ def domain_split_script() -> Optional[Path]:
     return default if default.exists() else None
 
 
-def domain_split_apply(action: str, run: Optional[RunCmd] = None,
-                       dev: Optional[str] = None) -> Tuple[bool, str]:
+def domain_split_apply(action: str, run: Optional[RunCmd] = None
+                       ) -> Tuple[bool, str]:
     """Установить ('on') или демонтировать ('off') доменный split.
 
     Скрипт сам перекидывается в sudo и идемпотентен. Никогда не бросает:
@@ -414,12 +414,6 @@ def domain_split_apply(action: str, run: Optional[RunCmd] = None,
     args = ["sudo", "-n", "bash", str(script)]
     if action == "off":
         args.append("--off")
-    elif dev:
-        # 15_domain-split.sh defaults to `awg0-split`, while vpnm names the
-        # interface after the profile (`laptop`, `relay`).  Without this the
-        # split step failed with "интерфейс awg0-split не существует" and
-        # `vpn start` came up without routing — found live 2026-11-18.
-        args += ["--dev", dev]
     rc, out, err = runner(args)
     if rc == 0:
         word = "применён" if action == "on" else "демонтирован"

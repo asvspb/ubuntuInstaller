@@ -89,7 +89,7 @@ vpn install --linger
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
-| `vpn doh on\\|off\\|status` | DoH-резолвер cloudflared (127.0.0.1:5053). `on` — **verify-before-switch**: сначала поднимаются сервисы и доказываются слои `:5053` → `:53` → системный резолвер, затем E2E-проверка нейтральными канарейками (`ya.ru`, `example.com`, `connectivitycheck.gstatic`); при любом сбое — автооткат на ISP-DNS и код слоя в ошибке (`doh_layer_5053_dead` / `_53_dead` / `_resolved_dead` / `_egress_dead`). Апстримы: Google DoH (`8.8.8.8`, `dns.google`) первыми, затем Cloudflare `1.1.1.1`/`1.0.0.1` |
+| `vpn doh on\|off\|status` | DoH-резолвер cloudflared (127.0.0.1:5053) |
 | `vpn amneziawg status\|add-client\|remove-client\|tunnel\|qr` | AWG: локальный туннель, клиенты на сервере, QR-конфиг для телефона |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
@@ -104,11 +104,6 @@ vpn install --linger
 | `vpn guard sync [--host root@asv] [--timeout 10.0]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
 | `vpn guard install [--apply] [--linger] [--sync-timer] [--netlink]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию); `--netlink` — AF_NETLINK для sysfs-AWG |
 | `vpn guard remove [--apply] [--purge]` | Выключить/удалить юнит guard (dry-run по умолчанию); `--purge` — вместе с findings/state |
-| `vpn guard failover status [--json]` | Авто-переключение каналов: enabled/pin/cooldown/backoff/лок; досылает очередь уведомлений |
-| `vpn guard failover run --once [--json]` | Один проход: триггер → local_net → лестница relay→hy2→awg→cdn → pin/blackout |
-| `vpn guard failover reset` | Снять pin/cooldown/backoff (эксплуатационный сброс) |
-| `vpn guard failover enable\|disable [--apply]` | Конфиг + юниты `vpn-failover.service`/`.path` (dry-run без `--apply`) |
-| `vpn guard failover test-notify` | Проверить каналы failover: desktop (opt-in) и Telegram |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 | `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
@@ -700,126 +695,6 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
 `guard.status/1`, `guard.coverage/1`, `guard.server_verdict/1`, `guard.config/1`
 (`vpnm/guard/schemas/`, package-data); `vpn guard selftest` проверяет, что
 `pip install` довёз схемы, парсер, правила и пост-сканер.
-
-## `vpn guard failover` — авто-переключение каналов (2026-11-18, WP-FAILOVER)
-
-Отдельный **исполняющий** агент (SPEC-20261118-vpn-failover, ADR-015): когда
-прямой 443/tcp закрыт серверным локом, переключает на резерв без участия
-человека. `vpn-guard.service` остаётся read-only — это другой процесс и другой
-юнит (`vpn-failover.service` + `vpn-failover.path`, префикс `vpn-`, не `vpnm-`).
-
-- **Триггеры узкие:** `G-01` (high), `G-09` (≥ medium) и **производное**
-  `expected_lockdown` (свежий `server-verdict.json` ≤10 мин + `lockdown.active`
-  + активный профиль из `trigger_profiles`). `G-02` и ТСПУ-подписи **не**
-  триггерят.
-- **Шаг 0 — `local_net_check`:** нет default route / связи вне туннеля →
-  `suppressed_local_net_down`, ни одного переключения.
-- **Прямой канал распознаётся в обоих видах:** socks-профиль — из
-  `state.json.active`; tun-схема (`vpn start reality` / `vpn scheme xray-split`)
-  — из активного юнита `vpn-xray-split@<профиль>`, потому что `state.json` её не
-  фиксирует. Без этого второго источника агент молчал бы в `profile_not_trigger`
-  ровно при отказе реального прямого пути.
-- **Лестница:** `relay → asv2-hy2 → asv2-awg → asv2-cdn`; на каждом кандидате
-  `pre_flight` (≤2 с) → switch → `post_flight` (≤4 с). Провал `pre_flight` =
-  `dead_entry` (switch не вызывается), провал `post_flight` = `dead_exit`.
-  Профильные ступени, чей профиль не импортирован (например `asv2-cdn`),
-  исключаются из **эффективной** лестницы (`skipped_profiles`) и не считаются
-  боевым отказом; `vpn guard failover status` печатает `Configured ladder` и
-  `Effective ladder (skipped: …)`.
-  Схемные ступени (`relay`, `asv2-awg`) проходят `post_flight` **дважды** с
-  паузой 1.5 с: холодный старт AWG-плеча (установка конфига, интерфейс,
-  handshake) не укладывается в один 4-секундный проб — по живому прогону relay
-  давал ложный `egress_empty`. `candidate_cooldown` 600 с ставится только
-  **профильным** ступеням (`asv2-hy2`, `asv2-cdn`): неподтверждённый схемный
-  резерв нельзя на 10 минут вычёркивать.
-- **Диагностика отказов:** `switch_error` несёт `rc=N: <хвост stderr>` (240
-  символов, переводы строк → ` | `, прогнано через redact) — и в `Attempt.detail`,
-  и в `failover_history.jsonl`. Без этого живая приёмка четыре прогона подряд
-  видела только «switch_error» и не могла назвать причину.
-- **Гашение `xray0` перед socks-ступенью:** мёртвый tun не должен остаться в
-  таблице маршрутизации над живым резервом, поэтому перед `vpn switch <профиль>`
-  схема снимается (`xsplit.stop`). Схемные ступени (`relay`, `asv2-awg`) делают
-  это сами: `vpn start relay` / `vpn start` вызывают teardown прямого контура.
-  Сбой гашения → статус `teardown_failed`, переключение **не** выполняется.
-  Права: `sudo -n` (passwordless), в user-юните без TTY пароль не спрашивается.
-- **Детект mid-session обрыва (Detect-1, 2026-11-18):** `vpn-failover.timer`
-  будит агент раз в 60 с, и он проверяет канал **сквозь туннель**
-  (`curl --interface xray0` на split-домен). Никаких внешних коннектов к своему
-  443 и никакого разбора логов — xray при дефолтном loglevel молчит, поэтому
-  `G-01`/`G-09` в середине сессии не срабатывают. Два провала подряд при живом
-  `local_net_check()` → триггер `active_probe_dead` → обычная лестница.
-  Настройки: `failover.liveness_enabled` (true), `liveness_interval_sec` (60),
-  `liveness_failures` (2). Счётчик обнуляется в момент срабатывания и при
-  blackout, чтобы таймер не копил провалы поверх уже отработавшего триггера.
-  **Защита от ложного каскада:** если проба упала, но локальный резолвер хоста
-  мёртв (`local_dns_ok() == False`), переключение не запускается — статус
-  `suppressed_local_dns_dead`: смена ступени DNS не починит.
-- **Ручная остановка важнее:** `vpn down`/`vpn reset` ставят маркер
-  (`activity_scope`) и глушат агент на 5 мин; отдельного `desired_state` нет.
-- **Total blackout:** ровно один проход, backoff `120 → 300 → 900` с,
-  `urgency=critical` и запись в очередь; при `kill_switch=false` —
-  **гарантированный возврат трафика провайдеру**: сначала user-scope `vpn down`,
-  затем проверка egress (`api.ipify.org`); если маршрут всё ещё мёртв —
-  root-`vpn reset`. В уведомлении честно пишется, подтверждён ли провайдерский
-  трафик. Оба вызова идут по абсолютному пути CLI (в user-юните PATH без
-  `~/.local/bin`).
-- **Восстановление (`recovered`):** если мы в blackout (backoff активен) и
-  сервер триггерного профиля снова отвечает по TCP, агент выполняет
-  `vpn reset` (чистое состояние), очищает backoff/pin, пишет событие
-  `recovered` и уведомляет: «сервер снова доступен, трафик у провайдера;
-  подключиться: `vpn scheme xray-split <profile>`». Сам **не** переподключается
-  (OQ-4 — решение за человеком).
-- **Никакого авто-возврата:** событие сервера `lockdown_off` только снимает
-  `pin.lockdown_active` и уведомляет — человек сам решает, возвращаться ли на
-  `vpn switch asv2-reality`.
-
-```bash
-vpn guard failover status            # enabled/pin/cooldown/backoff/лок + досылка очереди
-vpn guard failover run --once        # один проход (вызывает юнит)
-vpn guard failover reset             # снять pin/cooldown/backoff
-vpn guard failover enable --apply    # config.failover.enabled=true + юниты
-vpn guard failover disable --apply   # снять юниты (guard продолжает работать)
-vpn guard failover test-notify       # проверить desktop/Telegram
-```
-
-Конфиг (`~/.config/vpn-manager/guard.json`), по умолчанию **выключено**:
-
-```json
-{
-  "failover": {
-    "enabled": false,
-    "trigger_profiles": ["asv2-reality"],
-    "ladder": ["relay", "asv2-hy2", "asv2-awg", "asv2-cdn"],
-    "cooldown_sec": 900, "max_switches_per_hour": 3,
-    "candidate_cooldown_sec": 600, "backoff_sec": [120, 300, 900],
-    "pre_flight_timeout_sec": 2.0, "post_flight_timeout_sec": 4.0,
-    "confirm_lockdown_via_sync": true, "kill_switch": false
-  },
-  "notify": {
-    "failover_desktop": false,
-    "telegram": {"enabled": false,
-                 "bot_token_file": "~/.config/vpn-manager/telegram.token",
-                 "chat_id": "", "timeout_sec": 4.0}
-  }
-}
-```
-
-Desktop-баннеры — **отдельный opt-in** `notify.failover_desktop` (не наследует
-`notify.desktop`). Telegram-токен — только из файла 0600 (шире — warning, но
-чтение продолжается); токен попадает в `<redacted:tg_token>` и не утекает в
-исключения (`URLError` содержит URL). Недоставленное уведомление уходит в
-`pending_alerts.jsonl` (FIFO ≤50/≤1 МБ) и досылается после успешного
-`post_flight`, в `vpn guard sync` и `vpn guard failover status`.
-
-Артефакты (все 0600, каталог 0700, через `store.py` со схемами
-`guard.failover_state/1`, `guard.failover_history/1`,
-`guard.pending_alerts/1`):
-
-| Путь | Лимит |
-|------|-------|
-| `guard/failover_state.json` | ≤16 КБ: pin, cooldown-метки, backoff |
-| `guard/failover_history.jsonl` | 5 × 4 МБ / 14 дней (как findings) |
-| `guard/pending_alerts.jsonl` | ≤50 записей / ≤1 МБ, FIFO |
 
 ## `vpn scout` — активная разведка маршрутов (2026-11-17, WP-S1…S4)
 

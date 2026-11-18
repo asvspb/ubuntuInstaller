@@ -29,10 +29,6 @@ STATUS_SCHEMA = "guard.status/1"
 SERVER_VERDICT_SCHEMA = "guard.server_verdict/1"
 CONFIG_SCHEMA = "guard.config/1"
 INCIDENT_SCHEMA = "guard.incident/1"
-#: WP-FAILOVER artefacts (SPEC-20261118 §9): additive schemas with own files.
-FAILOVER_STATE_SCHEMA = "guard.failover_state/1"
-FAILOVER_HISTORY_SCHEMA = "guard.failover_history/1"
-PENDING_ALERTS_SCHEMA = "guard.pending_alerts/1"
 
 # schema id -> file name inside ``vpnm/guard/schemas/``
 SCHEMA_FILES: Mapping[str, str] = {
@@ -43,9 +39,6 @@ SCHEMA_FILES: Mapping[str, str] = {
     SERVER_VERDICT_SCHEMA: "guard.server_verdict.1.schema.json",
     CONFIG_SCHEMA: "guard.config.1.schema.json",
     INCIDENT_SCHEMA: "guard.incident.1.schema.json",
-    FAILOVER_STATE_SCHEMA: "guard.failover_state.1.schema.json",
-    FAILOVER_HISTORY_SCHEMA: "guard.failover_history.1.schema.json",
-    PENDING_ALERTS_SCHEMA: "guard.pending_alerts.1.schema.json",
 }
 
 # --- sources and protocols ------------------------------------------------------

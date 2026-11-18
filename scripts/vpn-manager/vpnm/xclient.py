@@ -147,11 +147,7 @@ def xray_config(link: ProfileLink, socks_port: int) -> str:
     }
     outbound = _xray_outbound(link)
     outbound.pop("tag", None)
-    # A default (silent) log makes a client-side outage invisible to
-    # `journalctl -u vpn-*`: guard records xray as blind and G-01/G-09 never
-    # fire.  `warning` is enough for dial failures and does not spam.
-    return json.dumps({"log": {"loglevel": "warning"},
-                       "inbounds": [inbound], "outbounds": [outbound]},
+    return json.dumps({"inbounds": [inbound], "outbounds": [outbound]},
                       indent=2, ensure_ascii=False)
 
 
@@ -199,8 +195,7 @@ def xray_tun_config(link: ProfileLink, tun_name: str = "xray0",
                "rules": [{"type": "field",
                           "inboundTag": ["tun"],
                           "outboundTag": "proxy"}]}
-    return json.dumps({"log": {"loglevel": "warning"},
-                       "inbounds": [inbound], "outbounds": outbounds,
+    return json.dumps({"inbounds": [inbound], "outbounds": outbounds,
                        "routing": routing},
                       indent=2, ensure_ascii=False)
 

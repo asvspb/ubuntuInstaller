@@ -131,9 +131,9 @@ def test_cli_reset_idempotent_full_cycle(monkeypatch):
     calls: list = []
     monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: None)
     monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: calls.append(("split", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
     monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: calls.append(("tun", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
     from vpnm import doh as doh_mod
     monkeypatch.setattr(doh_mod, "disable", lambda run=None: (True, "off"))
     result = CliRunner().invoke(cli_app, ["reset"])
@@ -152,9 +152,9 @@ def test_cli_reset_reports_partial_failure(monkeypatch):
     from typer.testing import CliRunner
     monkeypatch.setattr(runners_mod, "get_active", lambda *a, **k: None)
     monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: (False, "mock fail"))
+                        lambda a, run=None: (False, "mock fail"))
     monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: (True, "ok"))
+                        lambda a, run=None: (True, "ok"))
     from vpnm import doh as doh_mod
     monkeypatch.setattr(doh_mod, "disable", lambda run=None: (True, "off"))
     result = CliRunner().invoke(cli_app, ["reset"])
@@ -163,39 +163,21 @@ def test_cli_reset_reports_partial_failure(monkeypatch):
 
 
 def test_cli_start_awg_order_tunnel_then_split(monkeypatch):
-    from vpnm import xsplit as xsplit_mod
-    monkeypatch.setattr(xsplit_mod, "_ensure_doh", lambda run=None: (True, "doH ok"))
-    monkeypatch.setattr(xsplit_mod, "_wait_doh", lambda run=None: (True, "doH ready"))
     """vpn start awg: туннель ДО split (nft нужен iface), идемпотентен."""
     from vpnm import amneziawg as awg
     from vpnm.cli import app as cli_app
     from typer.testing import CliRunner
     calls: list = []
     monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: calls.append(("tun", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
     monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: calls.append(("split", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
     result = CliRunner().invoke(cli_app, ["start", "awg"])
     assert result.exit_code == 0, result.output
     assert calls == [("tun", "on"), ("split", "on")]
-
-
-def test_cli_scheme_awg_continues_when_doh_dead(monkeypatch):
-    """DoH is a privacy upgrade, not a prerequisite: 15_domain-split writes a
-    77.88.8.8 fallback and still fills the nft set."""
-    from vpnm import amneziawg as awg, xsplit as xsplit_mod
-    from vpnm.cli import app as cli_app
-    from typer.testing import CliRunner
-    calls: list = []
-    monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: calls.append(("tun", a)) or (True, "ok"))
-    monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: calls.append(("split", a)) or (True, "ok"))
-    monkeypatch.setattr(xsplit_mod, "_ensure_doh",
-                        lambda run=None: (False, "doh_layer_egress_dead"))
-    result = CliRunner().invoke(cli_app, ["scheme", "awg"])
-    assert result.exit_code == 0, result.output
-    assert calls == [("tun", "on"), ("split", "on")]
+    assert "основная схема активна" in result.output
+    result2 = CliRunner().invoke(cli_app, ["start", "awg"])
+    assert result2.exit_code == 0, result2.output
 
 
 def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
@@ -204,26 +186,23 @@ def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
     from typer.testing import CliRunner
     calls: list = []
     monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: calls.append(("tun", a)) or (False, "no tunnel"))
+                        lambda a, run=None: calls.append(("tun", a)) or (False, "no tunnel"))
     monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: calls.append(("split", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
     result = CliRunner().invoke(cli_app, ["start", "awg"])
     assert result.exit_code == 1
     assert calls == [("tun", "on")]  # split не пытаемся без iface
 
 
 def test_cli_scheme_awg_calls_tunnel_then_split(monkeypatch):
-    from vpnm import xsplit as xsplit_mod
-    monkeypatch.setattr(xsplit_mod, "_ensure_doh", lambda run=None: (True, "doH ok"))
-    monkeypatch.setattr(xsplit_mod, "_wait_doh", lambda run=None: (True, "doH ready"))
     from vpnm import amneziawg as awg
     from vpnm.cli import app as cli_app
     from typer.testing import CliRunner
     calls: list = []
     monkeypatch.setattr(awg, "tunnel_control",
-                        lambda a, run=None, dev=None: calls.append(("tun", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
     monkeypatch.setattr(awg, "domain_split_apply",
-                        lambda a, run=None, dev=None: calls.append(("split", a)) or (True, "ok"))
+                        lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
     result = CliRunner().invoke(cli_app, ["scheme", "awg"])
     assert result.exit_code == 0, result.output
     assert calls == [("tun", "on"), ("split", "on")]
@@ -467,27 +446,3 @@ def test_status_direct_mode_when_unit_active_is_unchanged(env, monkeypatch):
     assert result.exit_code == 0
     assert "DIRECT(amneziawg, laptop)" in result.output
     assert "неактивен" not in result.output
-
-
-def test_domain_split_gets_actual_awg_iface(monkeypatch):
-    """15_domain-split defaults to awg0-split; vpnm's iface is the profile name.
-    Without --dev the split silently fails and `vpn start` routes nothing."""
-    from vpnm import amneziawg as awg
-    args_seen = []
-
-    def fake_apply(action, run=None, dev=None):
-        args_seen.append((action, dev))
-        return True, "ok"
-
-    monkeypatch.setattr(awg, "domain_split_apply", fake_apply)
-    monkeypatch.setattr(awg, "local_instance", lambda run=None: "laptop")
-
-    from vpnm.cli import _apply_awg_scheme
-    from vpnm import xsplit as xsplit_mod
-    monkeypatch.setattr(xsplit_mod, "_ensure_doh", lambda run=None: (True, "ok"))
-    monkeypatch.setattr(xsplit_mod, "_wait_doh", lambda run=None: (True, "ok"))
-    monkeypatch.setattr(awg, "tunnel_control", lambda a, run=None, dev=None: (True, "ok"))
-
-    ok, _msg = _apply_awg_scheme()
-    assert ok
-    assert args_seen == [("on", "laptop")]

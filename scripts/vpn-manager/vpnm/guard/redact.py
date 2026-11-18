@@ -45,7 +45,6 @@ LINK_PLACEHOLDER = "<link>"
 URL_PLACEHOLDER = "<url>"
 EMAIL_PLACEHOLDER = "<email>"
 HOST_PLACEHOLDER = "<host>"
-TG_TOKEN_PLACEHOLDER = "<redacted:tg_token>"
 IP_PREFIX = "ip:"
 
 #: Schema limits of the free-text fields (guard.finding/1); redaction happens
@@ -99,14 +98,10 @@ _URL_TOKEN_RE = re.compile(
 )
 #: Canonical fixture prefix from AGENTS §6 / SPEC-20261116-vpn-guard AC-13.
 #: Must be caught even as a bare token without a ``password=`` context.
-#: ``TG_TOKEN`` is the WP-FAILOVER fixture family (SPEC-20261118 AC-F10).
 _FIXTURE_RE = re.compile(
-    r"\bFIXTURE_(?:PW|UUID|SECRET|TG_TOKEN)_[A-Za-z0-9_-]+",
+    r"\bFIXTURE_(?:PW|UUID|SECRET)_[A-Za-z0-9_-]+",
     re.IGNORECASE,
 )
-#: Telegram bot token: ``<8-10 digits>:<35 chars>`` (SPEC-20261118 §9).  It
-#: must never survive into an artefact, an exception text or an export.
-_TG_TOKEN_RE = re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")
 
 _VALUE = r"[^\s\"',;}\]]+"
 _CONTEXT_PATTERNS: Tuple[re.Pattern[str], ...] = (
@@ -145,7 +140,6 @@ _SCANNER_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
         r"(?i)\bauth\s*[=:]\s*[^\s<]+")),
     ("url_userinfo", _URL_USERINFO_RE),
     ("url_token", _URL_TOKEN_RE),
-    ("tg_token", _TG_TOKEN_RE),
     ("fixture_marker", _FIXTURE_RE),
     ("base64_blob", re.compile(r"\b[A-Za-z0-9+/]{32,}={0,2}\b")),
     ("hex_blob", re.compile(r"\b[0-9a-fA-F]{40,}\b")),
@@ -168,8 +162,6 @@ def redact_text(text: str) -> Tuple[str, int]:
     out, n = _URL_USERINFO_RE.subn(URL_PLACEHOLDER, out)
     hits += n
     out, n = _URL_TOKEN_RE.subn(URL_PLACEHOLDER, out)
-    hits += n
-    out, n = _TG_TOKEN_RE.subn(TG_TOKEN_PLACEHOLDER, out)
     hits += n
     out, n = _UUID_RE.subn(UUID_PLACEHOLDER, out)
     hits += n
@@ -254,7 +246,7 @@ def _scan_value(key: str, value: Any, path: str, found: List[str]) -> None:
             return  # canonical ``sha256:<64 hex>`` is a contract value
         if value.startswith((REDACTED, BLOB, UUID_PLACEHOLDER, LINK_PLACEHOLDER,
                              URL_PLACEHOLDER, EMAIL_PLACEHOLDER,
-                             HOST_PLACEHOLDER, TG_TOKEN_PLACEHOLDER)):
+                             HOST_PLACEHOLDER)):
             return  # already-masked placeholder, nothing to leak
         if re.fullmatch(r"ip:[0-9a-f]{12}", value):
             return  # deterministic IP pseudonym (hash_ip output)
@@ -485,7 +477,6 @@ __all__ = [
     "MAX_SNIPPET_CHARS",
     "REDACTED",
     "SNIPPET_KEY",
-    "TG_TOKEN_PLACEHOLDER",
     "URL_PLACEHOLDER",
     "UUID_PLACEHOLDER",
     "export_gate",

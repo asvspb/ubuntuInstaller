@@ -21,7 +21,6 @@ passwordless sudo возвращают печатную ручную подск�
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -177,110 +176,17 @@ def actual_server(run: Optional[RunCmd] = None) -> Optional[str]:
     return None
 
 
-PROBE_NAME = "ya.ru"
+def enable(run: Optional[RunCmd] = None) -> Tuple[bool, str]:
+    """Включить DoH-режим на сессию.
 
-# Neutral canaries for the end-to-end check.  Deliberately NOT api.ipify.org:
-# `vpn doh on` runs on the RAW provider, before any tunnel, so a blocked
-# "what is my IP" endpoint must not veto starting the VPN exactly when the
-# user needs it.  The tunnel's own post_flight verifies foreign traffic later.
-EGRESS_CANARIES = (
-    "https://ya.ru",
-    "http://example.com",
-    "http://connectivitycheck.gstatic.com/generate_204",
-)
-EGRESS_OK_CODES = ("200", "204", "301", "302")
-
-
-def _probe(runner: RunCmd, *, port: Optional[int] = None,
-           attempts: int = 20, name: str = PROBE_NAME) -> bool:
-    """Poll a DNS layer directly; never touches systemd-resolved."""
-    # dig requires the = form: "+time 2" is rejected as "Invalid option" and
-    # returns empty output (which a probe would read as "layer dead").
-    args = ["dig", "+short", "+time=2", "+tries=1"]
-    if port is not None:
-        args += ["-p", str(port)]
-    args += [f"@{LOCAL_RESOLVER}", name]
-    for attempt in range(max(1, attempts)):
-        rc, out, _err = runner(args)
-        if rc == 0 and out.strip():
-            return True
-        if attempt + 1 < attempts:
-            time.sleep(1)
-    return False
-
-
-def _egress_ok(runner: RunCmd, *, attempts: int = 2,
-               timeout: int = 5) -> bool:
-    """E2E through the new chain: at least 2 of 3 neutral canaries answer.
-
-    Resolution alone is not proof: previously `vpn doh on` reported success
-    while curl returned 000 (DoH hands out addresses the raw provider drops).
-    """
-    for attempt in range(max(1, attempts)):
-        hits = 0
-        for url in EGRESS_CANARIES:
-            rc, out, _err = runner([
-                "curl", "-4", "-s", "-o", "/dev/null",
-                "--max-time", str(timeout), "-w", "%{http_code}", url])
-            if rc == 0 and out.strip() in EGRESS_OK_CODES:
-                hits += 1
-        if hits >= 2:
-            return True
-        if attempt + 1 < attempts:
-            time.sleep(2)
-    return False
-
-
-def probe_chain(runner: RunCmd, *, attempts: int = 20) -> Tuple[bool, str]:
-    """Layered health check: :5053 → :53 → system resolver.
-
-    Returns ``(ok, layer)`` where ``layer`` is one of
-    ``doh_layer_5053_dead`` / ``doh_layer_53_dead`` /
-    ``doh_layer_resolved_dead`` or ``ok``.  Used both before switching
-    resolved (verify-before-switch) and by the split wait loop.
-    """
-    if not _probe(runner, port=5053, attempts=attempts):
-        return False, "doh_layer_5053_dead"
-    if not _probe(runner, port=53, attempts=attempts):
-        return False, "doh_layer_53_dead"
-    if not _probe(runner, attempts=attempts):
-        return False, "doh_layer_resolved_dead"
-    return True, "ok"
-
-
-def _rollback(runner: RunCmd) -> None:
-    """Put the host back on provider DNS.  Best effort, never raises.
-
-    Called whenever the chain failed to prove itself: the invariant is that a
-    failed `vpn doh on` must never leave the host without DNS.
-    """
-    if dropin_state() == "on":
-        runner(["sudo", "-n", "mv", str(DROPIN), str(DROPIN_DISABLED)])
-    runner(["sudo", "-n", "systemctl", "restart", "systemd-resolved"])
-    runner(["sudo", "-n", "systemctl", "stop", *SERVICES])
-
-
-def enable(run: Optional[RunCmd] = None,
-           attempts: int = 20) -> Tuple[bool, str]:
-    """Включить DoH-режим на сессию (verify-before-switch).
-
-    Порядок намеренно fail-safe: сначала поднимаем сервисы и **доказываем**
-    каждый слой (:5053 → :53 → системный резолвер), и только потом направляем
-    systemd-resolved на 127.0.0.1.  При любом сбое выполняется откат: drop-in
-    снимается (если успел включиться), сервисы останавливаются, resolved
-    остаётся/возвращается на провайдерский DNS.  Раньше drop-in включался
-    первым, и неудачный старт cloudflared оставлял хост вообще без DNS —
-    именно это выглядело как «пропал интернет».
-
-    Идемпотентно. Никогда не бросает исключений — ошибки возвращаются строкой
-    с именем мёртвого слоя.
+    Идемпотентно: если drop-in уже активен, только убеждается, что сервисы
+    запущены. Никогда не бросает исключений — ошибки возвращаются строкой.
     """
     runner: RunCmd = run or run_cmd
     if dropin_state() == "missing":
         return False, (f"drop-in не найден ни как {DROPIN}, ни как "
                        f"{DROPIN_DISABLED}; восстановите его из бэкапа или "
                        "создайте: [Resolve] DNS=127.0.0.1, Domains=~.")
-    # 1. services only — resolved is still on the provider
     rc, _out, err = runner(
         ["sudo", "-n", "systemctl", "start", *SERVICES])
     if rc != 0:
@@ -288,55 +194,22 @@ def enable(run: Optional[RunCmd] = None,
         return False, (f"не удалось запустить {' '.join(SERVICES)} "
                        f"({detail[-1] if detail else f'exit {rc}'}); "
                        f"вручную: {_manual_hint('on')}")
-    # 2. prove :5053 and :53 BEFORE touching resolved
-    ok, layer = probe_chain(runner, attempts=attempts)
-    if not ok:
-        _rollback(runner)
-        reason = {
-            "doh_layer_5053_dead":
-                "cloudflared-proxy-dns не отвечает на 127.0.0.1:5053",
-            "doh_layer_53_dead":
-                "dnsmasq не отвечает на 127.0.0.1:53 (при живом :5053)",
-            "doh_layer_resolved_dead":
-                "systemd-resolved не резолвит после переключения",
-        }.get(layer, layer)
-        return False, (f"{layer}: {reason}; DNS оставлен у провайдера "
-                       f"(drop-in не активирован), сервисы остановлены. "
-                       f"Диагностика: vpn doh status")
-    # 3. only now point resolved at the local chain
     if dropin_state() != "on":
         rc, _out, err = runner(
             ["sudo", "-n", "mv", str(DROPIN_DISABLED), str(DROPIN)])
         if rc != 0:
             detail = (err or "").strip().splitlines()
-            _rollback(runner)
-            return False, (f"сервисы живы, но drop-in не активирован "
+            return False, (f"сервисы запущены, но drop-in не активирован "
                            f"({detail[-1] if detail else f'exit {rc}'}); "
-                           f"DNS у провайдера; вручную: {_manual_hint('on')}")
-    # Explicit cache flush on top of the restart: a stale A/AAAA record left
-    # from the provider mode makes clients skip dnsmasq, so the split's nft
-    # set (filled by dnsmasq) stays empty until TTL expiry.  Best effort: a
-    # failure here must not fail the DoH switch.
-    runner(["resolvectl", "flush-caches"])
+                           f"вручную: {_manual_hint('on')}")
     rc, _out, err = runner(
         ["sudo", "-n", "systemctl", "restart", "systemd-resolved"])
     if rc != 0:
         detail = (err or "").strip().splitlines()
-        _rollback(runner)
-        return False, ("doh_layer_resolved_dead: systemd-resolved не "
-                       f"перезапущен ({detail[-1] if detail else f'exit {rc}'}); "
-                       "DNS возвращён провайдеру")
-    # 4. final verification through the system resolver
-    if not _probe(runner, attempts=attempts):
-        _rollback(runner)
-        return False, ("doh_layer_resolved_dead: systemd-resolved не резолвит "
-                       "через локальную цепочку; DNS возвращён провайдеру")
-    # 5. prove the chain end-to-end with neutral canaries (see EGRESS_CANARIES)
-    if not _egress_ok(runner):
-        _rollback(runner)
-        return False, ("doh_layer_egress_dead: DNS-цепочка резолвит, но трафик "
-                       "через неё не идёт (2 из 3 нейтральных канареек не "
-                       "ответили); DNS возвращён провайдеру")
+        return False, ("DoH включён, но systemd-resolved не перезапущен — "
+                       "резолвинг может ещё идти по-старому "
+                       f"({detail[-1] if detail else f'exit {rc}'}); "
+                       "вручную: sudo systemctl restart systemd-resolved")
     chosen = actual_server(run)
     message = (f"DoH-режим включён: resolved → {LOCAL_RESOLVER} "
                "(dnsmasq → cloudflared → Cloudflare DoH). "
