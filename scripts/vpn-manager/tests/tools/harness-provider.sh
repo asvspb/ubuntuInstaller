@@ -61,7 +61,19 @@ provider_on() {
   say "-- DNS обратно к провайдеру (без локальной петли 127.0.0.1)"
   vpn doh off >/dev/null 2>&1 || true
   sudo -n systemctl restart systemd-resolved 2>/dev/null || true
-  sleep 1
+  # `vpn doh off` can lose a race with a just-stopped split; verify instead of
+  # trusting it, otherwise the "provider baseline" still depends on the DoH
+  # chain and dies when its upstream is blocked.
+  local i current
+  for i in 1 2 3; do
+    sleep 1
+    current=$(resolvectl status 2>/dev/null | grep -m1 "Current DNS Server" | awk '{print $NF}')
+    case "$current" in
+      127.0.0.1) vpn doh off >/dev/null 2>&1 || true
+                 sudo -n systemctl restart systemd-resolved 2>/dev/null || true ;;
+      *) break ;;
+    esac
+  done
   say "-- проверка"
   check
 }
@@ -112,6 +124,14 @@ check() {
     printf '  %-26s rc=%-2s http=%s\n' "$url" "$rc" "$code"
     [ "$rc" -ne 0 ] && failures=$((failures + 1))
   done
+  # Provider baseline must not depend on the DoH chain at all.
+  local resolver
+  resolver=$(resolvectl status 2>/dev/null | grep -m1 "Current DNS Server" | awk '{print $NF}')
+  case "$resolver" in
+    127.0.0.1) say "  resolver: 127.0.0.1 — это DoH-цепочка, НЕ provider baseline"
+               failures=$((failures + 1)) ;;
+    *) say "  resolver: $resolver (ISP)" ;;
+  esac
   # DNS itself must answer; a dead resolver looks like a dead tunnel
   if dig +short +time=3 www.youtube.com >/dev/null 2>&1 \
      && [ -n "$(dig +short +time=3 www.youtube.com | head -1)" ]; then
