@@ -142,6 +142,10 @@ _SIGNAL_FAMILIES: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     # `tunnel_down`, so only the startup lines the SPEC names are accepted.
     ("app_banner_ok", re.compile(
         r"(?:\bXray\b[^\n]*\bstarted\b|"
+        # Xray 26.x печатает две строки пролога: сначала версия
+        # (`Xray 26.1.23 (Xray, Penetrates Everything.) …`), затем
+        # `[Warning] core: Xray 26.1.23 started`. Обе — доказательство старта.
+        r"\bXray\s+v?\d+\.\d+|"
         r"\bHysteria2\b[^\n]*\bclient mode\b|"
         r"\bhy2 client mode\b|"
         # Hysteria2 2.x печатает баннер как `INFO\tclient mode` — без имени
@@ -334,11 +338,11 @@ class JournalParser:
         unit = _first_str(entry, "_SYSTEMD_USER_UNIT", "_SYSTEMD_UNIT", "UNIT")
         if not unit or _is_self(entry, unit):
             return None
-        proto = self._proto_for(entry, unit)
+        message = _message_text(entry)
+        proto = self._proto_for(entry, unit, message)
         if proto is None:
             return None  # not a vpnm-*/AWG unit — foreign noise (RSK-4)
 
-        message = _message_text(entry)
         ts, mono_us, clock_fallback = _timestamps(entry, self.now_us)
         invocation = _first_str(entry, "_SYSTEMD_INVOCATION_ID", "INVOCATION_ID")
         level = _level_of(entry, message)
@@ -379,6 +383,12 @@ class JournalParser:
             # v6-маршрута, а не падение локальной сети. Иначе dual-stack
             # процессы (cloudflared по [2606:4700::…], xray) дают G-07 high
             # каждые ~5 с и своим батчем маскируют реальный G-06 (§8.4).
+            self.stats.ignored_infra += 1
+            return None
+        if signal is None and proto in APP_PROTOS and _is_engine_noise(message):
+            # Стартовый «пролог» движков (поле G6 2026-11-19): строка версии
+            # и «Reading config» у Xray, «update available» у Hysteria2 2.x.
+            # Сигнала не несёт → infra-шум, не портит AC-5-знаменатель.
             self.stats.ignored_infra += 1
             return None
         if signal is None:
@@ -478,12 +488,30 @@ class JournalParser:
 
     # --- classification ----------------------------------------------------------
 
-    def _proto_for(self, entry: Mapping[str, Any], unit: str) -> Optional[str]:
-        """proto by unit/identifier/source (§7.1); ``None`` = skip the line."""
+    def _proto_for(self, entry: Mapping[str, Any], unit: str,
+                   message: Optional[str] = None) -> Optional[str]:
+        """proto by unit/identifier/source (§7.1); ``None`` = skip the line.
+
+        Для ``vpnm-*`` протокол разрешается тремя уровнями (D6, поле G6
+        2026-11-19): hint из profile-store → содержимое строки → суффикс имени
+        юнита. Раньше hint был единственным источником, а в боевом
+        ``build_runner`` он не заполнялся вообще, из-за чего события всех
+        профилей получали ``unknown``, а ``signals.xray``/``signals.hysteria2``
+        навсегда оставались ``blind``. Найденный по контенту/имени протокол
+        кэшируется в ``proto_hints`` (если контейнер изменяемый).
+        """
         if unit.startswith(VPNM_PREFIX):
             hint = self.proto_hints.get(unit)
             if hint in ("xray", "hysteria2"):
                 return hint
+            by_content = _engine_from_text(message)
+            if by_content is not None:
+                self._cache_hint(unit, by_content)
+                return by_content
+            by_name = _engine_from_unit_name(unit)
+            if by_name is not None:
+                self._cache_hint(unit, by_name)
+                return by_name
             return "unknown"
         if unit.startswith(AWG_UNIT_RES):
             return "amneziawg"
@@ -507,6 +535,16 @@ class JournalParser:
                 return "amneziawg"
         return None
 
+    def _cache_hint(self, unit: str, proto: str) -> None:
+        """Запомнить найденный протокол юнита (best-effort, D6).
+
+        ``proto_hints`` — ``Mapping``: если вызывающий передал неизменяемый
+        объект, просто не кэшируем (разрешение повторится по контенту/имени).
+        """
+        hints = self.proto_hints
+        if isinstance(hints, dict):
+            hints.setdefault(unit, proto)
+
 
 # --- helpers ----------------------------------------------------------------------
 
@@ -517,6 +555,56 @@ def _first_str(entry: Mapping[str, Any], *keys: str) -> Optional[str]:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+#: Служебные строки движков без сигнала: пролог Xray (версия/конфиг),
+#: уведомление об апдейте и штатное завершение Hysteria2. Авторитетный
+#: lifecycle-сигнал даёт systemd (`unit_stop`), поэтому эти строки — шум.
+_ENGINE_NOISE_RE = re.compile(
+    r"(?:a unified platform for anti-censorship|"
+    r"infra/conf/serial:\s*reading config)|"
+    r"\bupdate available\b|"
+    r"\breceived signal,\s*shutting down\b", re.I)
+
+#: Однозначные маркеры движка в тексте строки (D6, fallback #1).
+_ENGINE_TEXT_RES: Tuple[Tuple[str, re.Pattern[str]], ...] = (
+    ("xray", re.compile(
+        r"\bXray\s+v?\d+\.\d+|infra/conf/serial:\s*reading config|"
+        r"\bcore:\s*Xray\b", re.I)),
+    ("hysteria2", re.compile(
+        r"\bclient mode\b|\bSOCKS5 server listening\b|"
+        r"\bupdate available\b[^\n]*\"version\"\s*:\s*\"v2\.", re.I)),
+)
+
+#: Суффиксы имени юнита (D6, fallback #2) — если store и контент не помогли.
+_UNIT_NAME_HINTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("hysteria2", ("-hy2", "hysteria")),
+    ("xray", ("-reality", "-xhttp", "-xray", "-ws", "-cdn")),
+)
+
+
+def _engine_from_text(message: Optional[str]) -> Optional[str]:
+    """Протокол по содержимому строки (Xray/Hysteria2-специфичные маркеры)."""
+    if not message:
+        return None
+    for proto, pattern in _ENGINE_TEXT_RES:
+        if pattern.search(message):
+            return proto
+    return None
+
+
+def _engine_from_unit_name(unit: str) -> Optional[str]:
+    """Протокол по суффиксу ``vpnm-<profile>.service`` (последний резерв)."""
+    lowered = unit.lower()
+    for proto, markers in _UNIT_NAME_HINTS:
+        if any(marker in lowered for marker in markers):
+            return proto
+    return None
+
+
+def _is_engine_noise(message: Optional[str]) -> bool:
+    """Служебная строка движка (пролог/апдейт/штатное завершение)."""
+    return bool(message) and bool(_ENGINE_NOISE_RE.search(message))
 
 
 def _message_text(entry: Mapping[str, Any]) -> Optional[str]:

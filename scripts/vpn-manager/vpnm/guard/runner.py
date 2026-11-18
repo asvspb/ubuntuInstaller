@@ -59,6 +59,54 @@ SUSPEND_DRIFT_S = 5.0
 #: degradation (field G6 2026-11-18).  The raw counter stays in ``status``.
 MIN_APP_LINES_FOR_RATIO = 20
 
+#: ``profiles.json`` protocol → guard proto (D6).  Порядок важен: префикс
+#: сравнивается по началу строки протокола из store.
+_STORE_PROTO_PREFIXES: Tuple[Tuple[str, str], ...] = (
+    ("hysteria2", "hysteria2"),
+    ("hy2", "hysteria2"),
+    ("amneziawg", "amneziawg"),
+    ("awg", "amneziawg"),
+    ("xray", "xray"),
+    ("vless", "xray"),
+    ("vmess", "xray"),
+    ("trojan", "xray"),
+)
+
+
+def profile_proto_hints() -> Dict[str, str]:
+    """``proto_hints`` для ``vpnm-<profile>.service`` из клиентского store.
+
+    D6 (поле G6 2026-11-19): демон вообще не заполнял ``proto_hints``, поэтому
+    каждое событие ``vpnm-*`` получало ``proto="unknown"``, а ``signals.xray`` /
+    ``signals.hysteria2`` навсегда оставались ``blind`` даже при живом трафике.
+    Store — структурированный источник протокола (``xray-reality``,
+    ``hysteria2``, …); при недоступном/битом store возвращаем пустую карту,
+    а парсер доразрешит протокол по контенту и имени юнита (fallback #1/#2).
+    """
+    try:
+        from .. import profiles
+        from ..profiles import ProfileStoreError
+    except ImportError:  # guard установлен отдельным пакетом — не фатально
+        return {}
+    try:
+        records = profiles.list_profiles()
+    except (ProfileStoreError, OSError):
+        return {}
+    hints: Dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name")
+        protocol = record.get("protocol")
+        if not isinstance(name, str) or not isinstance(protocol, str):
+            continue
+        lowered = protocol.lower()
+        for prefix, proto in _STORE_PROTO_PREFIXES:
+            if lowered.startswith(prefix):
+                hints[f"vpnm-{name}.service"] = proto
+                break
+    return hints
+
 
 @dataclass
 class RunCounters:
@@ -661,7 +709,7 @@ def build_runner(*, config_root: Optional[Path] = None,
     engine = RuleEngine(thresholds=thresholds,
                         server=context if context.present else None)
     correlator = Correlator(server=context if context.present else None)
-    parser = parse.JournalParser()
+    parser = parse.JournalParser(proto_hints=profile_proto_hints())
     if readers is None:
         built: List[Any] = []
         if enabled.get("user_journal", True):
@@ -713,6 +761,8 @@ __all__ = [
     "DEFAULT_QUEUE_MAX",
     "DEFAULT_TICK_S",
     "GuardRunner",
+    "MIN_APP_LINES_FOR_RATIO",
     "RunCounters",
     "build_runner",
+    "profile_proto_hints",
 ]

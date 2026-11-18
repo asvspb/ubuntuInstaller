@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -47,8 +48,10 @@ def entry(message: str, unit: str = UNIT) -> Dict[str, Any]:
 class FakeReader:
     """Reader protocol без journald (start/records/stop/status/note)."""
 
-    def __init__(self, records: List[Dict[str, Any]]) -> None:
+    def __init__(self, records: List[Dict[str, Any]],
+                 source: str = "journal:user") -> None:
         self.records_list = list(records)
+        self.source = source
         self.status = "off"
         self.note = None
 
@@ -157,3 +160,111 @@ def test_once_mode_keeps_high_as_exit_code_2(monkeypatch):
 def test_once_mode_without_high_exits_zero(monkeypatch):
     result = _invoke_run(monkeypatch, RunCounters(events=3), "--once")
     assert result.exit_code == 0
+
+
+# --- D6: proto_hints из profile-store + fallback'и -----------------------------
+
+XRAY_STARTUP = [
+    "Xray 26.1.23 (Xray, Penetrates Everything.) 0a42dba (go1.25.6 linux/amd64)",
+    "A unified platform for anti-censorship.",
+    "2026/11/19 00:32:32.644734 [Info] infra/conf/serial: Reading config: "
+    "&{Name:/tmp/generated/asv2-reality.json Format:json}",
+    "2026/11/19 00:32:32.647513 [Warning] core: Xray 26.1.23 started",
+]
+HY2_STARTUP = [
+    "2026-11-19T00:33:41+03:00\t\x1b[34mINFO\x1b[0m\tclient mode",
+    "2026-11-19T00:33:41+03:00\t\x1b[34mINFO\x1b[0m\tconnected to server\t"
+    "{\"addr\": \"203.0.113.10:443\"}",
+    "2026-11-19T00:33:41+03:00\t\x1b[34mINFO\x1b[0m\tSOCKS5 server listening\t"
+    "{\"addr\": \"127.0.0.1:2083\"}",
+    "2026-11-19T00:33:42+03:00\t\x1b[34mINFO\x1b[0m\tupdate available\t"
+    "{\"version\": \"v2.14.0\", \"url\": \"https://example.invalid\"}",
+]
+
+
+def test_xray_startup_block_has_zero_unparsed() -> None:
+    parser = parse.JournalParser(proto_hints={"vpnm-asv2-reality.service": "xray"})
+    signals = []
+    for line in XRAY_STARTUP:
+        event = parser.parse(entry(line, unit="vpnm-asv2-reality.service"))
+        if event is not None:
+            signals.append(event["signal"])
+
+    assert parser.stats.unparsed == 0
+    # шумовые строки пролога не попадают ни в unparsed, ни в app_lines
+    assert parser.stats.app_lines == 2
+    assert parser.stats.ignored_infra == 2
+    assert signals.count("app_banner_ok") >= 1
+
+
+def test_hy2_startup_block_has_zero_unparsed() -> None:
+    parser = parse.JournalParser(proto_hints={"vpnm-asv2-hy2.service": "hysteria2"})
+    signals = []
+    for line in HY2_STARTUP:
+        event = parser.parse(entry(line, unit="vpnm-asv2-hy2.service"))
+        if event is not None:
+            signals.append(event["signal"])
+
+    assert parser.stats.unparsed == 0
+    assert signals.count("app_banner_ok") >= 1
+    assert "quic_handshake_ok" in signals
+
+
+def test_hy2_graceful_shutdown_is_noise_not_unparsed() -> None:
+    """`received signal, shutting down` — lifecycle-шум; unit_stop даёт systemd."""
+    parser = parse.JournalParser(proto_hints={"vpnm-asv2-hy2.service": "hysteria2"})
+    event = parser.parse(entry(
+        "2026-11-19T00:34:16+03:00\t\x1b[34mINFO\x1b[0m\t"
+        "received signal, shutting down gracefully",
+        unit="vpnm-asv2-hy2.service"))
+
+    assert event is None
+    assert parser.stats.unparsed == 0
+    assert parser.stats.ignored_infra == 1
+
+
+def test_build_runner_fills_proto_hints_from_store(tmp_path, monkeypatch):
+    """D6: сигналы xray/hysteria2 должны становиться ok по живому трафику."""
+    from vpnm import profiles
+
+    store_path = tmp_path / "profiles.json"
+    store_path.write_text(json.dumps({"profiles": [
+        {"name": "asv2-reality", "protocol": "xray-reality", "link": "vless://x"},
+        {"name": "asv2-hy2", "protocol": "hysteria2", "link": "hysteria2://x"},
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(profiles, "STORE_PATH", store_path)
+
+    records = [entry(XRAY_STARTUP[-1], unit="vpnm-asv2-reality.service"),
+               entry(HY2_STARTUP[0], unit="vpnm-asv2-hy2.service")]
+    runner = build_runner(
+        readers=[FakeReader(records)], watcher=None, poller=None,
+        notifications=False,
+        sink=store.FindingsStore(path=tmp_path / "findings.jsonl"),
+        state_writer=lambda _payload: None,
+        coverage_writer=lambda _payload: None)
+    runner.run_once()
+    coverage = runner.coverage_payload()
+
+    assert coverage["signals"]["xray"] == "ok"
+    assert coverage["signals"]["hysteria2"] == "ok"
+    assert not any("app_signal=blind" in note for note in coverage["notes"])
+
+
+def test_proto_falls_back_to_line_content_and_is_cached() -> None:
+    parser = parse.JournalParser()  # store недоступен: hints пусты
+    first = parser.parse(entry(XRAY_STARTUP[-1], unit="vpnm-new-profile.service"))
+    second = parser.parse(entry("generic line without markers",
+                                unit="vpnm-new-profile.service"))
+
+    assert first is not None and first["proto"] == "xray"
+    assert second is not None and second["proto"] == "xray"
+    assert parser.proto_hints["vpnm-new-profile.service"] == "xray"
+
+
+def test_proto_falls_back_to_unit_name_suffix() -> None:
+    parser = parse.JournalParser()
+    event = parser.parse(entry("some app line", unit="vpnm-foo-hy2.service"))
+    assert event is not None and event["proto"] == "hysteria2"
+
+    other = parser.parse(entry("some app line", unit="vpnm-foo-reality.service"))
+    assert other is not None and other["proto"] == "xray"
