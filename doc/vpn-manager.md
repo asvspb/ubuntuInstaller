@@ -448,6 +448,11 @@ QR строит системный `qrencode` (`sudo apt install qrencode`); sha
 передаётся ему через stdin, поэтому секрет не попадает в argv/логи.
 Сканируется v2rayNG, Hiddify, Streisand и другими Xray-клиентами.
 
+> **В разработке:** единая подкоманда `vpn qr` (QR/URI/PNG/SVG по трём
+> измерениям — маршрут `--direct`/`--relay`, протокол `--awg`/`--reality`/
+> `--xhttp`/`--hy`, целевая ОС) — ТЗ, матрица совместимости и критерии приёмки в
+> [SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md) (G2 PASS, FROZEN).
+
 ## Интеграция с VDS-сервером (profile pull)
 
 На сервере (VDS Orchestrator) команда `vds gateway links` печатает share-ссылки
