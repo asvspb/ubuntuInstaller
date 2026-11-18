@@ -181,16 +181,21 @@ def render_failover_service(python_exe: Optional[str] = None) -> str:
         "Nice=10",
         "UMask=0077",
         "PrivateTmp=yes",
-        # The user manager sets NoNewPrivileges=yes, which makes any setuid
-        # binary fail: "sudo: The no new privileges flag is set".  Scheme rungs
-        # (relay / AWG) *must* escalate — that is the whole ADR-015 design — so
-        # the flag is lowered deliberately and only for this unit.
+        # The user manager forces NoNewPrivileges=yes, and *any* seccomp-based
+        # directive (RestrictAddressFamilies, SystemCallFilter,
+        # RestrictNamespaces, …) re-applies PR_SET_NO_NEW_PRIVS in the kernel
+        # even when NoNewPrivileges=no is set — verified:
+        #   systemd-run --user -p NoNewPrivileges=no \
+        #     -p RestrictAddressFamilies=… sudo -n true   -> rc=1
+        #   systemd-run --user -p NoNewPrivileges=no    sudo -n true -> rc=0
+        # Scheme rungs (relay / AWG) must escalate, so this oneshot carries no
+        # seccomp directives at all.  The long-lived reader (vpn-guard.service)
+        # keeps its full sandbox — it never calls sudo.
         "NoNewPrivileges=no",
         # AF_NETLINK is required: `awg show` reads its state via netlink, and
         # without it the whole ladder degrades — pre_flight(asv2-awg) returned
         # `awg_show_rc=1` and `vpn start relay` failed with "Address family not
         # supported", so a healthy relay looked dead (live acceptance).
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
         "StandardOutput=journal",
         "StandardError=journal",
         "SyslogIdentifier=vpn-failover",

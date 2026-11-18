@@ -163,6 +163,9 @@ def test_cli_reset_reports_partial_failure(monkeypatch):
 
 
 def test_cli_start_awg_order_tunnel_then_split(monkeypatch):
+    from vpnm import xsplit as xsplit_mod
+    monkeypatch.setattr(xsplit_mod, "_ensure_doh", lambda run=None: (True, "doH ok"))
+    monkeypatch.setattr(xsplit_mod, "_wait_doh", lambda run=None: (True, "doH ready"))
     """vpn start awg: туннель ДО split (nft нужен iface), идемпотентен."""
     from vpnm import amneziawg as awg
     from vpnm.cli import app as cli_app
@@ -195,6 +198,9 @@ def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
 
 
 def test_cli_scheme_awg_calls_tunnel_then_split(monkeypatch):
+    from vpnm import xsplit as xsplit_mod
+    monkeypatch.setattr(xsplit_mod, "_ensure_doh", lambda run=None: (True, "doH ok"))
+    monkeypatch.setattr(xsplit_mod, "_wait_doh", lambda run=None: (True, "doH ready"))
     from vpnm import amneziawg as awg
     from vpnm.cli import app as cli_app
     from typer.testing import CliRunner

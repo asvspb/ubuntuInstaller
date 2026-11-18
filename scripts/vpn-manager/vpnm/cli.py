@@ -927,6 +927,18 @@ def _apply_awg_scheme() -> Tuple[bool, str]:
     (_ok if ok_t else _err)(f"AWG: {msg_t}")
     if not ok_t:
         return False, "туннель не поднялся (split без iface не применяется)"
+    # The domain split routes through dnsmasq (nftset=): without the DoH chain
+    # the set stays empty and every "split" domain silently goes direct — a
+    # live tunnel carrying nothing.  `vpn reset` stops that chain, so it must
+    # be brought back here, fail-closed, exactly like xray-split does.
+    ok_doh, msg_doh = xsplit_mod._ensure_doh(runners.run_cmd)
+    if not ok_doh:
+        return False, (f"DoH-цепочка не включена ({msg_doh}) — "
+                       f"split без неё не работает")
+    ok_ready, msg_ready = xsplit_mod._wait_doh(runners.run_cmd)
+    if not ok_ready:
+        return False, (f"{msg_ready} — повторите 'vpn scheme awg' "
+                       f"после 'vpn doh status'")
     ok_s, msg_s = awg.domain_split_apply("on")
     (_ok if ok_s else _warn)(f"split: {msg_s}")
     if not ok_s:

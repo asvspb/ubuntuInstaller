@@ -202,6 +202,11 @@ def enable(run: Optional[RunCmd] = None) -> Tuple[bool, str]:
             return False, (f"сервисы запущены, но drop-in не активирован "
                            f"({detail[-1] if detail else f'exit {rc}'}); "
                            f"вручную: {_manual_hint('on')}")
+    # Explicit cache flush on top of the restart: a stale A/AAAA record left
+    # from the provider mode makes clients skip dnsmasq, so the split's nft
+    # set (filled by dnsmasq) stays empty until TTL expiry.  Best effort: a
+    # failure here must not fail the DoH switch.
+    runner(["resolvectl", "flush-caches"])
     rc, _out, err = runner(
         ["sudo", "-n", "systemctl", "restart", "systemd-resolved"])
     if rc != 0:

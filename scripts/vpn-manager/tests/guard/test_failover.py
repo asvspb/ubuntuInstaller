@@ -975,12 +975,13 @@ def test_install_failover_plan_includes_timer(tmp_path: Path) -> None:
     assert any("vpn-failover.timer" in cmd for cmd in plan["commands"])
 
 
-def test_failover_service_allows_netlink() -> None:
-    """`awg show` needs netlink; without it a healthy relay looks dead."""
-    text = install.render_failover_service()
-    line = next((row for row in text.splitlines()
-                 if row.startswith("RestrictAddressFamilies=")), "")
-    assert "AF_NETLINK" in line, line
+def test_guard_unit_allows_netlink() -> None:
+    """`awg show` needs netlink in the *reader* unit; the oneshot must not be
+    sandboxed at all (see the seccomp/NoNewPrivileges test)."""
+    # The reader unit keeps its seccomp sandbox (AF_NETLINK is opt-in via the
+    # v1.1 profile); the oneshot must have none of it.
+    assert "RestrictAddressFamilies=" in install.render_unit()
+    assert "RestrictAddressFamilies=" not in install.render_failover_service()
 
 
 # --- recovery: provider traffic is a hard guarantee --------------------------
@@ -1179,6 +1180,16 @@ def test_failover_unit_has_no_hardening_that_blocks_root() -> None:
     """The oneshot must not inherit guard's sandbox: no ProtectSystem,
     PrivateDevices, CapabilityBoundingSet or RestrictSUIDSGID (Q1)."""
     text = install.render_failover_service()
-    for directive in ("ProtectSystem=", "PrivateDevices=",
-                      "CapabilityBoundingSet=", "RestrictSUIDSGID="):
+    # Seccomp-based directives re-apply PR_SET_NO_NEW_PRIVS even when
+    # NoNewPrivileges=no is set (verified with systemd-run), so the oneshot
+    # must carry none of them — otherwise `sudo vpn start relay` cannot
+    # escalate and the whole ladder dies.  The reader daemon keeps its own.
+    forbidden = ("ProtectSystem=", "PrivateDevices=", "CapabilityBoundingSet=",
+                 "RestrictSUIDSGID=", "RestrictAddressFamilies=",
+                 "SystemCallFilter=", "RestrictNamespaces=",
+                 "ProtectKernel", "LockPersonality=",
+                 "MemoryDenyWriteExecute=")
+    for directive in forbidden:
         assert directive not in text, directive
+    # the long-lived reader keeps its sandbox (it never calls sudo)
+    assert "RestrictAddressFamilies=" in install.render_unit()
