@@ -69,7 +69,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "failover_desktop": False,
         "telegram": {
             "enabled": False,
-            "bot_token_file": "~/.config/vpn-manager/alert-tg.token",
+            "bot_token_file": "~/.config/vpn-manager/telegram.token",
             "chat_id": "",
             "timeout_sec": 4.0,
         },
