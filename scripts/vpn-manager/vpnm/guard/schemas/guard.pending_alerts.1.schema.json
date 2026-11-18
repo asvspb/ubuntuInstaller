@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guard.pending_alerts/1",
+  "title": "guard.pending_alerts/1",
+  "description": "Queued Telegram notification that could not be delivered (SPEC-20261118-vpn-failover §8.2). JSONL, 0600, FIFO, ≤50 records / ≤1 MB; the text is redacted before it is written.",
+  "type": "object",
+  "required": ["schema", "ts", "text"],
+  "properties": {
+    "schema": {"const": "guard.pending_alerts/1"},
+    "ts": {"type": "string", "maxLength": 40},
+    "event": {"type": "string", "maxLength": 40},
+    "text": {"type": "string", "maxLength": 4000}
+  },
+  "additionalProperties": false
+}

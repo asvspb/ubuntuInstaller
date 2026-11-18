@@ -104,6 +104,11 @@ vpn install --linger
 | `vpn guard sync [--host root@asv] [--timeout 10.0]` | **Единственная сетевая команда:** один ssh-запрос серверного вердикта |
 | `vpn guard install [--apply] [--linger] [--sync-timer] [--netlink]` | user-юнит `vpn-guard.service` (opt-in, dry-run по умолчанию); `--netlink` — AF_NETLINK для sysfs-AWG |
 | `vpn guard remove [--apply] [--purge]` | Выключить/удалить юнит guard (dry-run по умолчанию); `--purge` — вместе с findings/state |
+| `vpn guard failover status [--json]` | Авто-переключение каналов: enabled/pin/cooldown/backoff/лок; досылает очередь уведомлений |
+| `vpn guard failover run --once [--json]` | Один проход: триггер → local_net → лестница relay→hy2→awg→cdn → pin/blackout |
+| `vpn guard failover reset` | Снять pin/cooldown/backoff (эксплуатационный сброс) |
+| `vpn guard failover enable\|disable [--apply]` | Конфиг + юниты `vpn-failover.service`/`.path` (dry-run без `--apply`) |
+| `vpn guard failover test-notify` | Проверить каналы failover: desktop (opt-in) и Telegram |
 | `vpn install [--linger] [--autostart [profile]]` | Установка бинарей + linger + автозапуск профиля |
 | `vpn install-bins` | Только бинари xray/hysteria (без linger/автозапуска) |
 
@@ -695,6 +700,80 @@ JSON-контракты — `guard.event/1`, `guard.finding/1`, `guard.incident/
 `guard.status/1`, `guard.coverage/1`, `guard.server_verdict/1`, `guard.config/1`
 (`vpnm/guard/schemas/`, package-data); `vpn guard selftest` проверяет, что
 `pip install` довёз схемы, парсер, правила и пост-сканер.
+
+## `vpn guard failover` — авто-переключение каналов (2026-11-18, WP-FAILOVER)
+
+Отдельный **исполняющий** агент (SPEC-20261118-vpn-failover, ADR-015): когда
+прямой 443/tcp закрыт серверным локом, переключает на резерв без участия
+человека. `vpn-guard.service` остаётся read-only — это другой процесс и другой
+юнит (`vpn-failover.service` + `vpn-failover.path`, префикс `vpn-`, не `vpnm-`).
+
+- **Триггеры узкие:** `G-01` (high), `G-09` (≥ medium) и **производное**
+  `expected_lockdown` (свежий `server-verdict.json` ≤10 мин + `lockdown.active`
+  + активный профиль из `trigger_profiles`). `G-02` и ТСПУ-подписи **не**
+  триггерят.
+- **Шаг 0 — `local_net_check`:** нет default route / связи вне туннеля →
+  `suppressed_local_net_down`, ни одного переключения.
+- **Лестница:** `relay → asv2-hy2 → asv2-awg → asv2-cdn`; на каждом кандидате
+  `pre_flight` (≤2 с) → switch → `post_flight` (≤4 с). Провал `pre_flight` =
+  `dead_entry` (switch не вызывается), провал `post_flight` = `dead_exit` +
+  cooldown кандидату 600 с.
+- **Ручная остановка важнее:** `vpn down`/`vpn reset` ставят маркер
+  (`activity_scope`) и глушат агент на 5 мин; отдельного `desired_state` нет.
+- **Total blackout:** ровно один проход, backoff `120 → 300 → 900` с,
+  `urgency=critical` и запись в очередь; при `kill_switch=false` —
+  возврат на штатный маршрут (`vpn down`).
+- **Никакого авто-возврата:** событие сервера `lockdown_off` только снимает
+  `pin.lockdown_active` и уведомляет — человек сам решает, возвращаться ли на
+  `vpn switch asv2-reality`.
+
+```bash
+vpn guard failover status            # enabled/pin/cooldown/backoff/лок + досылка очереди
+vpn guard failover run --once        # один проход (вызывает юнит)
+vpn guard failover reset             # снять pin/cooldown/backoff
+vpn guard failover enable --apply    # config.failover.enabled=true + юниты
+vpn guard failover disable --apply   # снять юниты (guard продолжает работать)
+vpn guard failover test-notify       # проверить desktop/Telegram
+```
+
+Конфиг (`~/.config/vpn-manager/guard.json`), по умолчанию **выключено**:
+
+```json
+{
+  "failover": {
+    "enabled": false,
+    "trigger_profiles": ["asv2-reality"],
+    "ladder": ["relay", "asv2-hy2", "asv2-awg", "asv2-cdn"],
+    "cooldown_sec": 900, "max_switches_per_hour": 3,
+    "candidate_cooldown_sec": 600, "backoff_sec": [120, 300, 900],
+    "pre_flight_timeout_sec": 2.0, "post_flight_timeout_sec": 4.0,
+    "confirm_lockdown_via_sync": true, "kill_switch": false
+  },
+  "notify": {
+    "failover_desktop": false,
+    "telegram": {"enabled": false,
+                 "bot_token_file": "~/.config/vpn-manager/alert-tg.token",
+                 "chat_id": "", "timeout_sec": 4.0}
+  }
+}
+```
+
+Desktop-баннеры — **отдельный opt-in** `notify.failover_desktop` (не наследует
+`notify.desktop`). Telegram-токен — только из файла 0600 (шире — warning, но
+чтение продолжается); токен попадает в `<redacted:tg_token>` и не утекает в
+исключения (`URLError` содержит URL). Недоставленное уведомление уходит в
+`pending_alerts.jsonl` (FIFO ≤50/≤1 МБ) и досылается после успешного
+`post_flight`, в `vpn guard sync` и `vpn guard failover status`.
+
+Артефакты (все 0600, каталог 0700, через `store.py` со схемами
+`guard.failover_state/1`, `guard.failover_history/1`,
+`guard.pending_alerts/1`):
+
+| Путь | Лимит |
+|------|-------|
+| `guard/failover_state.json` | ≤16 КБ: pin, cooldown-метки, backoff |
+| `guard/failover_history.jsonl` | 5 × 4 МБ / 14 дней (как findings) |
+| `guard/pending_alerts.jsonl` | ≤50 записей / ≤1 МБ, FIFO |
 
 ## `vpn scout` — активная разведка маршрутов (2026-11-17, WP-S1…S4)
 

@@ -201,6 +201,13 @@
 - `vpn guard` — real-time разбор клиентских логов (правила G-01…G-12),
   read-only: демон ничего не рестартит и в сеть не ходит; сеть только у
   `vpn guard sync`. Юнит `vpn-guard.service` — opt-in (`install --apply`)
+- `vpn guard failover` — авто-переключение каналов при отказе прямого
+  (SPEC-20261118, ADR-015): отдельный исполняющий агент
+  `vpn-failover.service`/`.path` (префикс `vpn-`, не `vpnm-`), по умолчанию
+  выключен; триггеры G-01/G-09/`expected_lockdown`, лестница
+  relay→hy2→awg→cdn с pre/post-flight, backoff при blackout, без
+  авто-возврата после снятия лока. Подкоманды `status`/`run --once`/`reset`/
+  `enable|disable`/`test-notify`
 - `vpn scout` — активная разведка маршрутов: read-only probe + скоринг +
   рекомендация; по умолчанию Stealth Cascade (0 байт в эфир для UDP,
   TLS+`HEAD /` на 443/tcp); `vpn up --scout` поднимает рекомендованный

@@ -18,6 +18,7 @@ Artefacts (SPEC §10.3), all under ``~/.local/share/vpn-manager/guard/``
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import time
@@ -61,9 +62,34 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "netlink": False,
         "server_verdict": True,
     },
-    "notify": {"desktop": False, "min_severity": "high"},
+    "notify": {
+        "desktop": False,
+        "min_severity": "high",
+        # WP-FAILOVER §8.1: own opt-in, does NOT inherit notify.desktop
+        "failover_desktop": False,
+        "telegram": {
+            "enabled": False,
+            "bot_token_file": "~/.config/vpn-manager/alert-tg.token",
+            "chat_id": "",
+            "timeout_sec": 4.0,
+        },
+    },
     "redact": {"hosts_in_export": True, "snippets": False},
     "retention_days": 14,
+    # WP-FAILOVER §7: off by default (invariant I-6, AC-F8)
+    "failover": {
+        "enabled": False,
+        "trigger_profiles": ["asv2-reality"],
+        "ladder": ["relay", "asv2-hy2", "asv2-awg", "asv2-cdn"],
+        "cooldown_sec": 900,
+        "max_switches_per_hour": 3,
+        "candidate_cooldown_sec": 600,
+        "backoff_sec": [120, 300, 900],
+        "pre_flight_timeout_sec": 2.0,
+        "post_flight_timeout_sec": 4.0,
+        "confirm_lockdown_via_sync": True,
+        "kill_switch": False,
+    },
 }
 
 _CONFIG_BOOL_FLAGS: Mapping[str, Tuple[str, ...]] = {
@@ -71,6 +97,127 @@ _CONFIG_BOOL_FLAGS: Mapping[str, Tuple[str, ...]] = {
                 "server_verdict"),
     "redact": ("hosts_in_export", "snippets"),
 }
+
+#: Known ladder ids (SPEC §4.1).  An entry outside this set is a typo, not an
+#: extensibility point.
+FAILOVER_LADDER_IDS: Tuple[str, ...] = (
+    "relay", "asv2-hy2", "asv2-awg", "asv2-cdn")
+
+
+def _clamp_int(value: Any, low: int, high: int) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if low <= value <= high else None
+
+
+def _clamp_float(value: Any, low: float, high: float) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if low <= float(value) <= high else None
+
+
+def _valid_ladder(value: Any) -> Optional[List[str]]:
+    """``ladder`` = subset of known ids, non-empty, order preserved."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    seen: List[str] = []
+    for item in value:
+        if not isinstance(item, str) or item not in FAILOVER_LADDER_IDS:
+            return None  # unknown id = typo: reject the whole block
+        if item not in seen:
+            seen.append(item)
+    return seen or None
+
+
+def _valid_backoff(value: Any) -> Optional[List[int]]:
+    """Increasing sequence, ≤3 elements, each 30…3600 (SPEC §7)."""
+    if not isinstance(value, (list, tuple)) or not 1 <= len(value) <= 3:
+        return None
+    steps: List[int] = []
+    for item in value:
+        step = _clamp_int(item, 30, 3600)
+        if step is None:
+            return None
+        steps.append(step)
+    if any(later <= earlier for earlier, later in zip(steps, steps[1:])):
+        return None
+    return steps
+
+
+def _failover_block(raw: Any) -> Dict[str, Any]:
+    """Validated ``failover`` section over the documented defaults.
+
+    Only known keys are accepted; a value outside its range keeps the default
+    for that key (a typo must not silently change behaviour, SPEC §10.3).
+    ``trigger_profiles`` is **not** validated against the profile store on
+    purpose: a profile may legitimately be imported later (SPEC §7).
+    """
+    block = copy.deepcopy(DEFAULT_CONFIG["failover"])
+    if not isinstance(raw, Mapping):
+        return block
+    for flag in ("enabled", "confirm_lockdown_via_sync", "kill_switch"):
+        if isinstance(raw.get(flag), bool):
+            block[flag] = bool(raw[flag])
+    cooldown = _clamp_int(raw.get("cooldown_sec"), 60, 7200)
+    if cooldown is not None:
+        block["cooldown_sec"] = cooldown
+    max_switches = _clamp_int(raw.get("max_switches_per_hour"), 1, 20)
+    if max_switches is not None:
+        block["max_switches_per_hour"] = max_switches
+    candidate = _clamp_int(raw.get("candidate_cooldown_sec"), 60, 3600)
+    if candidate is not None:
+        block["candidate_cooldown_sec"] = candidate
+    backoff = _valid_backoff(raw.get("backoff_sec"))
+    if backoff is not None:
+        block["backoff_sec"] = backoff
+    ladder = _valid_ladder(raw.get("ladder"))
+    if ladder is not None:
+        block["ladder"] = ladder
+    for timeout_key in ("pre_flight_timeout_sec", "post_flight_timeout_sec"):
+        timeout = _clamp_float(raw.get(timeout_key), 0.5, 10.0)
+        if timeout is not None:
+            block[timeout_key] = timeout
+    profiles = raw.get("trigger_profiles")
+    if isinstance(profiles, (list, tuple)):
+        names = [str(item) for item in profiles
+                 if isinstance(item, str) and item.strip()]
+        if names:
+            block["trigger_profiles"] = names
+    return block
+
+
+def _notify_block(raw: Any) -> Dict[str, Any]:
+    """Validated ``notify`` section over the documented defaults.
+
+    ``failover_desktop`` is an independent opt-in (SPEC §8.1): it is never
+    derived from ``desktop``.  ``telegram`` keeps the token **path**, never
+    the token itself.
+    """
+    from . import events
+
+    block = copy.deepcopy(DEFAULT_CONFIG["notify"])
+    if not isinstance(raw, Mapping):
+        return block
+    if isinstance(raw.get("desktop"), bool):
+        block["desktop"] = bool(raw["desktop"])
+    if raw.get("min_severity") in events.SEVERITIES:
+        block["min_severity"] = str(raw["min_severity"])
+    if isinstance(raw.get("failover_desktop"), bool):
+        block["failover_desktop"] = bool(raw["failover_desktop"])
+    telegram = raw.get("telegram")
+    if isinstance(telegram, Mapping):
+        if isinstance(telegram.get("enabled"), bool):
+            block["telegram"]["enabled"] = bool(telegram["enabled"])
+        token_file = telegram.get("bot_token_file")
+        if isinstance(token_file, str) and token_file.strip():
+            block["telegram"]["bot_token_file"] = token_file.strip()
+        chat_id = telegram.get("chat_id")
+        if isinstance(chat_id, str):
+            block["telegram"]["chat_id"] = chat_id.strip()[:64]
+        timeout = _clamp_float(telegram.get("timeout_sec"), 0.5, 10.0)
+        if timeout is not None:
+            block["telegram"]["timeout_sec"] = timeout
+    return block
 
 
 def effective_config(config_root: Optional[Path] = None) -> Dict[str, Any]:
@@ -80,17 +227,19 @@ def effective_config(config_root: Optional[Path] = None) -> Dict[str, Any]:
     fixed by SPEC §10.3 (OQ-13) and a typo must not silently change behaviour.
     Only known booleans/enums/retention are accepted; thresholds are parsed
     through :meth:`vpnm.guard.rules.Thresholds.from_mapping`.
+    ``notify`` and ``failover`` blocks go through their own validators
+    (:func:`_notify_block` / :func:`_failover_block`).
     """
-    from . import events
     from .rules import Thresholds
 
     raw = guard_config(config_root)
     payload: Dict[str, Any] = {
         "schema": DEFAULT_CONFIG["schema"],
         "sources": dict(DEFAULT_CONFIG["sources"]),
-        "notify": dict(DEFAULT_CONFIG["notify"]),
+        "notify": _notify_block(raw.get("notify")),
         "redact": dict(DEFAULT_CONFIG["redact"]),
         "retention_days": DEFAULT_CONFIG["retention_days"],
+        "failover": _failover_block(raw.get("failover")),
     }
     for block, flags in _CONFIG_BOOL_FLAGS.items():
         given = raw.get(block)
@@ -99,12 +248,6 @@ def effective_config(config_root: Optional[Path] = None) -> Dict[str, Any]:
         for flag in flags:
             if isinstance(given.get(flag), bool):
                 payload[block][flag] = bool(given[flag])
-    notify = raw.get("notify")
-    if isinstance(notify, Mapping):
-        if isinstance(notify.get("desktop"), bool):
-            payload["notify"]["desktop"] = bool(notify["desktop"])
-        if notify.get("min_severity") in events.SEVERITIES:
-            payload["notify"]["min_severity"] = str(notify["min_severity"])
     retention = raw.get("retention_days")
     if (isinstance(retention, int) and not isinstance(retention, bool)
             and 1 <= retention <= 90):
@@ -151,6 +294,65 @@ def redact_snippets(config_root: Optional[Path] = None) -> bool:
     return isinstance(redact_cfg, dict) and bool(redact_cfg.get("snippets"))
 
 
+# --- failover / notification settings (SPEC-20261118 §7/§8) --------------------
+
+def failover_settings(config_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Effective, validated ``failover`` block (defaults + ``guard.json``)."""
+    config = effective_config(config_root)
+    block = config.get("failover")
+    return dict(block) if isinstance(block, Mapping) else _failover_block(None)
+
+
+def failover_enabled(config_root: Optional[Path] = None) -> bool:
+    """``failover.enabled`` — **false** unless explicitly opted in (I-6)."""
+    return bool(failover_settings(config_root).get("enabled"))
+
+
+def failover_desktop_enabled(config_root: Optional[Path] = None) -> bool:
+    """``notify.failover_desktop`` — independent opt-in (SPEC §8.1)."""
+    config = effective_config(config_root)
+    notify = config.get("notify")
+    return (isinstance(notify, Mapping)
+            and bool(notify.get("failover_desktop")))
+
+
+def telegram_settings(config_root: Optional[Path] = None) -> Dict[str, Any]:
+    """``notify.telegram`` block; only the **token path**, never the token."""
+    config = effective_config(config_root)
+    notify = config.get("notify")
+    if not isinstance(notify, Mapping):
+        return copy.deepcopy(DEFAULT_CONFIG["notify"]["telegram"])
+    block = notify.get("telegram")
+    return (copy.deepcopy(block) if isinstance(block, Mapping)
+            else copy.deepcopy(DEFAULT_CONFIG["notify"]["telegram"]))
+
+
+def set_config_value(section: str, key: str, value: Any,
+                     config_root: Optional[Path] = None) -> Path:
+    """Merge one value into ``guard.json`` (0600, atomic) and return the path.
+
+    Only used by the ``vpn guard failover enable|disable`` surface: the rest
+    of ``guard.json`` is preserved verbatim.  The file stays a plain mapping;
+    :func:`effective_config` continues to ignore unknown keys.
+    """
+    root = config_root if config_root is not None else config_dir()
+    target = root / "guard.json"
+    payload: Dict[str, Any] = {}
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(loaded, Mapping):
+            payload = dict(loaded)
+    except (OSError, json.JSONDecodeError, ValueError):
+        payload = {}
+    block = payload.get(section)
+    merged = dict(block) if isinstance(block, Mapping) else {}
+    merged[key] = value
+    payload[section] = merged
+    atomic_write_0600(target, json.dumps(payload, ensure_ascii=False,
+                                         indent=2, sort_keys=True) + "\n")
+    return target
+
+
 def sanitize(payload: Mapping[str, Any], *,
              snippets: Optional[bool] = None,
              config_root: Optional[Path] = None) -> Tuple[Dict[str, Any], int]:
@@ -170,6 +372,10 @@ ACTIVITY_GRACE_S: dict = {
     "probe": 15 * 60,
     "speed": 30 * 60,
     "monitor": 10 * 60,
+    # SPEC-20261118 §3.2: a manual stop is a deliberate choice, not a fault —
+    # the failover agent must stay quiet for 5 minutes after it.
+    "down": 300,
+    "reset": 300,
 }
 DEFAULT_ACTIVITY_GRACE_S = 10 * 60
 
@@ -227,6 +433,7 @@ class FindingsStore:
                           sort_keys=True, separators=(",", ":")) + "\n"
         self._rotate_if_needed(len(line.encode("utf-8")))
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.path.parent, 0o700)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
         os.chmod(self.path, 0o600)
@@ -356,6 +563,207 @@ class FindingsStore:
         return ordered[:limit] if limit > 0 else ordered
 
 
+# --- failover artefacts (SPEC-20261118 §9) -------------------------------------
+#
+# Three bounded files under the 0700 guard directory, written only through
+# this module (atomic 0600 + schema validation), so ``selftest`` and
+# ``schema_hashes()`` stay meaningful:
+#
+#   failover_state.json      — pin/cooldown/backoff, ≤ 16 KB
+#   failover_history.jsonl   — attempts/outcomes, 5 × 4 MB / 14 days
+#   pending_alerts.jsonl     — undelivered Telegram, FIFO ≤ 50 / 1 MB
+
+FAILOVER_STATE_MAX_BYTES = 16 * 1024
+PENDING_ALERTS_MAX_RECORDS = 50
+PENDING_ALERTS_MAX_BYTES = 1024 * 1024
+
+
+def failover_state_path() -> Path:
+    return guard_dir() / "failover_state.json"
+
+
+def failover_history_path() -> Path:
+    return guard_dir() / "failover_history.jsonl"
+
+
+def pending_alerts_path() -> Path:
+    return guard_dir() / "pending_alerts.jsonl"
+
+
+def empty_failover_state() -> Dict[str, Any]:
+    """The documented neutral state (no pin, no cooldown, no backoff)."""
+    from . import events
+
+    return {
+        "schema": events.FAILOVER_STATE_SCHEMA,
+        "updated": "",
+        "pin": {"profile": None, "since": None, "reason": None,
+                "lockdown_active": False},
+        "last_switch_ts": None,
+        "last_switch_mono_ns": None,
+        "switches": [],
+        "candidate_cooldown": {},
+        "backoff": {"count": 0, "until": None},
+    }
+
+
+def read_failover_state(path: Optional[Path] = None
+                        ) -> Dict[str, Any]:
+    """Read ``failover_state.json``; a missing/broken file is neutral state."""
+    target = path if path is not None else failover_state_path()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return empty_failover_state()
+    if not isinstance(payload, Mapping):
+        return empty_failover_state()
+    return dict(payload)
+
+
+def write_failover_state(payload: Mapping[str, Any],
+                         path: Optional[Path] = None, *,
+                         config_root: Optional[Path] = None) -> Path:
+    """Validate, sanitize and persist the state (0600, ≤ 16 KB)."""
+    from . import events, schema
+
+    clean, _hits = sanitize(payload, snippets=False,
+                            config_root=config_root)
+    errors = schema.validate(clean, events.FAILOVER_STATE_SCHEMA)
+    if errors:
+        raise ValueError("invalid guard.failover_state/1: "
+                         + "; ".join(errors))
+    text = json.dumps(clean, ensure_ascii=False, sort_keys=True) + "\n"
+    encoded = text.encode("utf-8")
+    if len(encoded) > FAILOVER_STATE_MAX_BYTES:
+        raise ValueError(
+            f"guard.failover_state/1 exceeds {FAILOVER_STATE_MAX_BYTES} bytes")
+    target = path if path is not None else failover_state_path()
+    atomic_write_0600(target, text)
+    return target
+
+
+class FailoverHistory(FindingsStore):
+    """``failover_history.jsonl``: same rotation budget as findings.
+
+    Reuses :class:`FindingsStore` rotation/segment logic (5 × 4 MB / 14 days)
+    but validates each record against ``guard.failover_history/1`` and does
+    not add a ``redaction_hits`` counter — a history line is an outcome, not
+    a finding.
+    """
+
+    def __init__(self, path: Optional[Path] = None, *,
+                 segment_bytes: int = SEGMENT_BYTES,
+                 max_segments: int = MAX_SEGMENTS,
+                 max_age_days: int = MAX_AGE_DAYS,
+                 now_fn: float = time.time) -> None:
+        super().__init__(path if path is not None else failover_history_path(),
+                         segment_bytes=segment_bytes,
+                         max_segments=max_segments,
+                         max_age_days=max_age_days, now_fn=now_fn)
+
+    def append(self, record: Mapping[str, Any]) -> Dict[str, Any]:
+        from . import events, schema
+
+        clean, _hits = sanitize(record, snippets=False)
+        errors = schema.validate(clean, events.FAILOVER_HISTORY_SCHEMA)
+        if errors:
+            raise ValueError("invalid guard.failover_history/1: "
+                             + "; ".join(errors))
+        line = json.dumps(clean, ensure_ascii=False,
+                          sort_keys=True, separators=(",", ":")) + "\n"
+        self._rotate_if_needed(len(line.encode("utf-8")))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.path.parent, 0o700)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        os.chmod(self.path, 0o600)
+        return clean
+
+
+class PendingAlerts:
+    """FIFO queue of undelivered Telegram notifications (§8.2/§8.3).
+
+    Bounded by **records and bytes**: the oldest line is dropped first, so a
+    long offline window never grows the file without limit.
+    """
+
+    def __init__(self, path: Optional[Path] = None, *,
+                 max_records: int = PENDING_ALERTS_MAX_RECORDS,
+                 max_bytes: int = PENDING_ALERTS_MAX_BYTES) -> None:
+        self.path = path if path is not None else pending_alerts_path()
+        self.max_records = max(1, int(max_records))
+        self.max_bytes = max(1024, int(max_bytes))
+
+    def records(self) -> List[Dict[str, Any]]:
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        items: List[Dict[str, Any]] = []
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(payload, Mapping):
+                items.append(dict(payload))
+        return items
+
+    def enqueue(self, record: Mapping[str, Any]) -> Dict[str, Any]:
+        """Append one record, then enforce the FIFO record/byte budget."""
+        from . import events, schema
+
+        clean, _hits = sanitize(dict(record), snippets=False)
+        errors = schema.validate(clean, events.PENDING_ALERTS_SCHEMA)
+        if errors:
+            raise ValueError("invalid guard.pending_alerts/1: "
+                             + "; ".join(errors))
+        items = self.records()
+        items.append(clean)
+        self._rewrite(items)
+        return clean
+
+    def replace(self, items: Sequence[Mapping[str, Any]]) -> None:
+        """Atomically rewrite the queue (used by flush)."""
+        self._rewrite([dict(item) for item in items])
+
+    def _rewrite(self, items: List[Dict[str, Any]]) -> None:
+        trimmed = items[-self.max_records:]
+        text = ""
+        while trimmed:
+            text = "".join(
+                json.dumps(item, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":")) + "\n"
+                for item in trimmed)
+            if len(text.encode("utf-8")) <= self.max_bytes:
+                break
+            trimmed.pop(0)  # oldest first
+        atomic_write_0600(self.path, text)
+
+
+def enqueue_pending_alert(text: str, *, event: str = "notify",
+                          path: Optional[Path] = None,
+                          now: Optional[str] = None) -> Dict[str, Any]:
+    """Queue one redacted notification text (returns the written record)."""
+    from . import events
+    from .redact import redact_raw
+
+    safe, _hits = redact_raw(text)
+    stamp = now or datetime.now(timezone.utc).replace(
+        microsecond=0).isoformat().replace("+00:00", "Z")
+    return PendingAlerts(path).enqueue({
+        "schema": events.PENDING_ALERTS_SCHEMA,
+        "ts": stamp,
+        "event": event[:40],
+        "text": safe[:4000],
+    })
+
+
+def read_pending_alerts(path: Optional[Path] = None
+                        ) -> List[Dict[str, Any]]:
+    return PendingAlerts(path).records()
+
+
 # --- activity markers (FP-guard, SPEC §8.4) -----------------------------------
 
 def activity_path() -> Path:
@@ -425,6 +833,32 @@ def activity_active(now: Optional[float] = None,
     except (OSError, json.JSONDecodeError, ValueError):
         return False
     if not isinstance(payload, dict):
+        return False
+    until = payload.get("until")
+    if not isinstance(until, str):
+        return False
+    try:
+        horizon = datetime.fromisoformat(until.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return horizon.timestamp() >= moment
+
+
+def activity_active_cmd(cmd: str, now: Optional[float] = None,
+                        path: Optional[Path] = None) -> bool:
+    """True when the marker is in force **and** belongs to *cmd*.
+
+    :func:`activity_active` answers "is any probe running"; a manual
+    ``vpn down``/``vpn reset`` needs the command-scoped answer so a running
+    ``vpn speed`` cannot be mistaken for a deliberate stop (SPEC §3.2).
+    """
+    target = path if path is not None else activity_path()
+    moment = now if now is not None else time.time()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(payload, dict) or payload.get("cmd") != cmd:
         return False
     until = payload.get("until")
     if not isinstance(until, str):

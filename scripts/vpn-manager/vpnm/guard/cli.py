@@ -934,3 +934,188 @@ def notify_test(severity: str = typer.Option(
                 f"{reason or 'причина не сообщена'}", fg=typer.colors.RED)
     typer.secho(f"[info] {_notify_reason_hint(reason)}", fg=typer.colors.CYAN)
     raise typer.Exit(code=1)
+
+
+# --- WP-FAILOVER: ``vpn guard failover …`` (SPEC-20261118 §12 WP-F6) ---------
+
+failover_app = typer.Typer(
+    help="Авто-переключение каналов при отказе прямого (SPEC-20261118). "
+         "Исполняющий агент: vpn-failover.service/path; по умолчанию выключен.")
+
+
+def _failover_notifier() -> Any:
+    from . import notify as notify_mod
+    return notify_mod.Notifier()
+
+
+@failover_app.command("status")
+def failover_status(as_json: bool = typer.Option(
+        False, "--json", help="Machine-readable статус")) -> None:
+    """Состояние: enabled, pin, cooldown, backoff, свежесть лока.
+
+    Read-only: очередь отложенных уведомлений досылается (SPEC §8.3),
+    состояние агента не меняется.
+    """
+    from . import failover as failover_mod
+    from . import notify as notify_mod, store
+
+    payload = failover_mod.status()
+    flushed = {}
+    try:
+        flushed = notify_mod.flush_pending_alerts(_failover_notifier())
+    except (OSError, ValueError, RuntimeError) as exc:
+        flushed = {"error": type(exc).__name__}
+    pending = len(store.read_pending_alerts())
+    if as_json:
+        payload["pending_alerts"] = pending
+        payload["flushed"] = flushed
+        _echo_json(payload)
+        raise typer.Exit(code=0)
+    state = "ON" if payload["enabled"] else "OFF (по умолчанию)"
+    typer.secho(f"[info] failover: {state}; профили триггера: "
+                f"{', '.join(payload['trigger_profiles']) or '-'}",
+                fg=typer.colors.CYAN)
+    typer.secho(f"[info] лестница: {', '.join(payload['ladder'])}",
+                fg=typer.colors.CYAN)
+    pin = payload.get("pin") or {}
+    if pin.get("profile"):
+        typer.secho(f"[info] pin: {pin['profile']} с {pin.get('since')} "
+                    f"(lockdown_active={bool(pin.get('lockdown_active'))})",
+                    fg=typer.colors.CYAN)
+    else:
+        typer.secho("[info] pin: нет", fg=typer.colors.CYAN)
+    backoff = payload.get("backoff") or {}
+    if backoff.get("remaining_sec"):
+        typer.secho(f"[warning] backoff: ещё {backoff['remaining_sec']} с "
+                    f"(попытка {backoff.get('count')})", fg=typer.colors.YELLOW)
+    typer.secho(f"[info] переключений за час: "
+                f"{payload['switches_last_hour']} "
+                f"(лимит по конфигу); отложенных уведомлений: {pending}",
+                fg=typer.colors.CYAN)
+    lock = payload.get("lockdown_now")
+    lock_text = "нет данных/устарел" if lock is None else (
+        "активен" if lock else "не активен")
+    typer.secho(f"[info] server-verdict lockdown: {lock_text}",
+                fg=typer.colors.CYAN)
+    raise typer.Exit(code=0)
+
+
+@failover_app.command("run")
+def failover_run(once: bool = typer.Option(
+        False, "--once", help="Один проход (обязательно; демон-режима в v1 нет)"),
+        as_json: bool = typer.Option(False, "--json")) -> None:
+    """Один проход движка: триггер → local_net → лестница → pin/blackout."""
+    from . import failover as failover_mod
+    from . import notify as notify_mod
+
+    if not once:
+        typer.secho("[error] поддержан только `failover run --once` "
+                    "(юнит vpn-failover.service вызывает именно его)",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    notifier = _failover_notifier()
+    outcome = failover_mod.run_once(notifier=notifier)
+    for text in _render_failover_outcome(outcome):
+        typer.echo(text)
+    if outcome.status == "switched":
+        try:
+            notify_mod.flush_pending_alerts(notifier)  # §8.3 after success
+        except (OSError, ValueError, RuntimeError):
+            pass
+    if as_json:
+        _echo_json(outcome.as_dict())
+    raise typer.Exit(code=0)
+
+
+def _render_failover_outcome(outcome: Any) -> List[str]:
+    lines = [f"[info] failover: {outcome.status} "
+             f"(trigger={outcome.trigger.reason}"
+             + (f"/{outcome.trigger.rule}" if outcome.trigger.rule else "")
+             + ")"]
+    for item in outcome.attempts:
+        lines.append(f"  - {item.candidate}: {item.result}"
+                     + (f" ({item.detail})" if item.detail else ""))
+    if outcome.switched_to:
+        lines.append(f"[success] канал: {outcome.switched_to}"
+                     f" ({outcome.latency_ms} ms)")
+    if outcome.backoff_sec:
+        lines.append(f"[warning] total blackout: повтор через "
+                     f"{outcome.backoff_sec} с")
+    return lines
+
+
+@failover_app.command("reset")
+def failover_reset() -> None:
+    """Снять pin/cooldown/backoff (SPEC §5.2)."""
+    from . import failover as failover_mod
+
+    state = failover_mod.reset()
+    typer.secho(f"[ok] failover сброшен: pin=нет, backoff=0, "
+                f"candidate_cooldown={len(state.get('candidate_cooldown') or {})}",
+                fg=typer.colors.GREEN)
+    raise typer.Exit(code=0)
+
+
+def _set_failover(enabled: bool, apply: bool) -> None:
+    from . import install as install_mod, store
+
+    action = "включён" if enabled else "выключен"
+    target = store.config_dir() / "guard.json"
+    if not apply:
+        typer.secho(f"[info] dry-run: failover будет {action}, "
+                    f"guard.json: {target}; повторите с --apply",
+                    fg=typer.colors.YELLOW)
+        raise typer.Exit(code=0)
+    store.set_config_value("failover", "enabled", enabled)
+    if enabled:
+        plan = install_mod.install_failover(apply=True)
+    else:
+        plan = install_mod.remove_failover(apply=True)
+    if plan.get("error"):
+        typer.secho(f"[error] юниты: {plan['error']}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    typer.secho(f"[ok] failover {action}; юниты "
+                f"{install_mod.FAILOVER_SERVICE}/{install_mod.FAILOVER_PATH} "
+                f"обновлены", fg=typer.colors.GREEN)
+    if enabled:
+        typer.secho("[info] desktop-баннеры — отдельный opt-in "
+                    "notify.failover_desktop=true; Telegram — "
+                    "notify.telegram.enabled=true + bot_token_file 0600",
+                    fg=typer.colors.CYAN)
+    raise typer.Exit(code=0)
+
+
+@failover_app.command("enable")
+def failover_enable(apply: bool = typer.Option(
+        False, "--apply", help="Записать конфиг и поставить юниты")) -> None:
+    """Включить агент (config.failover.enabled=true) и юниты."""
+    _set_failover(True, apply)
+
+
+@failover_app.command("disable")
+def failover_disable(apply: bool = typer.Option(
+        False, "--apply", help="Записать конфиг и снять юниты")) -> None:
+    """Выключить агент и снять юниты (guard продолжает работать)."""
+    _set_failover(False, apply)
+
+
+@failover_app.command("test-notify")
+def failover_test_notify() -> None:
+    """Проверить каналы уведомлений failover (desktop opt-in + Telegram)."""
+    from . import notify as notify_mod
+
+    notifier = notify_mod.Notifier()
+    desktop = notifier.send_failover(
+        "VPN failover: тест", "канал desktop работает", urgency="normal")
+    tg_ok, tg_reason = notifier.send_telegram(
+        "🔄 [client: test] тестовое уведомление failover")
+    desktop_text = "sent" if desktop else (
+        "не отправлен: " + str(notifier.last_reason or "opt-in off"))
+    typer.echo(f"[info] desktop: {desktop_text}")
+    typer.secho(f"[{'ok' if tg_ok else 'warning'}] telegram: "
+                f"{'sent' if tg_ok else tg_reason}",
+                fg=typer.colors.GREEN if tg_ok else typer.colors.YELLOW)
+    raise typer.Exit(code=0 if (desktop or tg_ok) else 1)
+
+
+guard_app.add_typer(failover_app, name="failover")

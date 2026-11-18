@@ -729,40 +729,47 @@ def down(name: Optional[str] = typer.Argument(None)) -> None:
     from . import amneziawg as awg
     from . import mode as mode_mod
     from . import runners
-    if name:
-        try:
-            stopped = runners.down(name)
-        except (profiles.ProfileStoreError, runners.RunnerError) as exc:
-            _err(str(exc))
-            raise typer.Exit(code=2)
-        _ok(f"stopped '{stopped}'")
-        _sync_sysproxy_off_after()
-        return
+    from .guard import store as guard_store
+    # SPEC-20261118 §3.2: a deliberate stop suppresses the failover agent for
+    # ACTIVITY_GRACE_S — it must not "rescue" a channel the owner just closed.
+    guard_store.mark_activity("down")
+    try:
+        if name:
+            try:
+                stopped = runners.down(name)
+            except (profiles.ProfileStoreError, runners.RunnerError) as exc:
+                _err(str(exc))
+                raise typer.Exit(code=2)
+            _ok(f"stopped '{stopped}'")
+            _sync_sysproxy_off_after()
+            return
 
-    failures: list = []
-    stopped, profile_failures = runners.stop_all_profiles()
-    if stopped:
-        _sync_sysproxy_off_after()
-        _ok("остановлены профили: " + ", ".join(stopped))
-    failures.extend(profile_failures)
+        failures: list = []
+        stopped, profile_failures = runners.stop_all_profiles()
+        if stopped:
+            _sync_sysproxy_off_after()
+            _ok("остановлены профили: " + ", ".join(stopped))
+        failures.extend(profile_failures)
 
-    relay_was_active = awg.instance_active(RELAY_INSTANCE)
-    ok_r, msg_r = _stop_relay_contour()
-    if relay_was_active:
-        (_ok if ok_r else _err)(msg_r)
-        if not ok_r:
-            failures.append(msg_r)
+        relay_was_active = awg.instance_active(RELAY_INSTANCE)
+        ok_r, msg_r = _stop_relay_contour()
+        if relay_was_active:
+            (_ok if ok_r else _err)(msg_r)
+            if not ok_r:
+                failures.append(msg_r)
 
-    if failures:
-        _err("не всё остановлено: " + "; ".join(failures))
-        raise typer.Exit(code=1)
-    if not stopped and not relay_was_active:
+        if failures:
+            _err("не всё остановлено: " + "; ".join(failures))
+            raise typer.Exit(code=1)
+        if not stopped and not relay_was_active:
+            mode_mod.clear_mode()
+            typer.echo("нет активных туннелей (профили и релей не запущены)")
+            return
         mode_mod.clear_mode()
-        typer.echo("нет активных туннелей (профили и релей не запущены)")
-        return
-    mode_mod.clear_mode()
-    _ok("VPN выключен: профили и релей остановлены; vpn guard продолжает "
-        "работать")
+        _ok("VPN выключен: профили и релей остановлены; vpn guard продолжает "
+            "работать")
+    finally:
+        guard_store.mark_activity_end("down")
 
 
 @app.command("scheme")
@@ -1202,51 +1209,57 @@ def reset() -> None:
     from . import amneziawg as awg
     from . import doh as doh_mod
     from . import runners
-    failures: list = []
+    from .guard import store as guard_store
+    guard_store.mark_activity("reset")  # SPEC-20261118 §3.2: suppress failover
+    try:
+        failures: list = []
 
-    active = runners.get_active()
-    if active:
-        try:
-            runners.down(active)
-            _sync_sysproxy_off_after()
-            _ok(f"профиль '{active}' остановлен, системный прокси off")
-        except runners.RunnerError as exc:
-            failures.append(f"профиль: {exc}")
-    else:
-        typer.echo("vpnm: нет активного профиля")
+        active = runners.get_active()
+        if active:
+            try:
+                runners.down(active)
+                _sync_sysproxy_off_after()
+                _ok(f"профиль '{active}' остановлен, системный прокси off")
+            except runners.RunnerError as exc:
+                failures.append(f"профиль: {exc}")
+        else:
+            typer.echo("vpnm: нет активного профиля")
 
-    from . import xsplit as xsplit_mod
-    ok_x, msg_x = xsplit_mod.stop()
-    (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
-    if not ok_x:
-        failures.append("xsplit")
-    ok_s, msg_s = awg.domain_split_apply("off")
-    (_ok if ok_s else _warn)(f"split: {msg_s}")
-    if not ok_s:
-        failures.append("split")
-    ok_t, msg_t = awg.tunnel_control("off")
-    (_ok if ok_t else _warn)(f"AWG: {msg_t}")
-    if not ok_t:
-        failures.append("AWG")
-    relay_was_active = awg.instance_active(RELAY_INSTANCE)
-    ok_r, msg_r = _stop_relay_contour()
-    if relay_was_active:
-        (_ok if ok_r else _warn)(f"релей: {msg_r}")
-        if not ok_r:
-            failures.append("релей")
-    from . import mode as mode_mod
-    mode_mod.clear_mode()
-    ok_d, msg_d = doh_mod.disable()
-    (_ok if ok_d else _warn)(f"DoH: {msg_d}")
-    if not ok_d:
-        failures.append("DoH")
+        from . import xsplit as xsplit_mod
+        ok_x, msg_x = xsplit_mod.stop()
+        (_ok if ok_x else _warn)(f"xsplit: {msg_x}")
+        if not ok_x:
+            failures.append("xsplit")
+        ok_s, msg_s = awg.domain_split_apply("off")
+        (_ok if ok_s else _warn)(f"split: {msg_s}")
+        if not ok_s:
+            failures.append("split")
+        ok_t, msg_t = awg.tunnel_control("off")
+        (_ok if ok_t else _warn)(f"AWG: {msg_t}")
+        if not ok_t:
+            failures.append("AWG")
+        relay_was_active = awg.instance_active(RELAY_INSTANCE)
+        ok_r, msg_r = _stop_relay_contour()
+        if relay_was_active:
+            (_ok if ok_r else _warn)(f"релей: {msg_r}")
+            if not ok_r:
+                failures.append("релей")
+        from . import mode as mode_mod
+        mode_mod.clear_mode()
+        ok_d, msg_d = doh_mod.disable()
+        (_ok if ok_d else _warn)(f"DoH: {msg_d}")
+        if not ok_d:
+            failures.append("DoH")
 
-    if failures:
-        _warn("не всё снялось: " + ", ".join(failures)
-              + " — повторите 'vpn reset' или выполните напечатанные подсказки")
-        raise typer.Exit(code=1)
-    _ok("система в состоянии чистого старта: DNS у провайдера, "
-        "туннелей и прокси нет")
+        if failures:
+            _warn("не всё снялось: " + ", ".join(failures)
+                  + " — повторите 'vpn reset' или выполните напечатанные "
+                    "подсказки")
+            raise typer.Exit(code=1)
+        _ok("система в состоянии чистого старта: DNS у провайдера, "
+            "туннелей и прокси нет")
+    finally:
+        guard_store.mark_activity_end("reset")
 
 
 @app.command()

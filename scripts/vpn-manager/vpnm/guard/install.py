@@ -33,6 +33,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 UNIT_NAME = "vpn-guard.service"
 SYNC_SERVICE = "vpn-guard-sync.service"
 SYNC_TIMER = "vpn-guard-sync.timer"
+#: WP-FAILOVER (ADR-015): prefix **vpn-**, never ``vpnm-`` — the profile
+#: sweeps/autostart treat ``vpnm-*`` as VPN profiles and must not disable the
+#: emergency agent (invariant I-5, AC-F11).
+FAILOVER_SERVICE = "vpn-failover.service"
+FAILOVER_PATH = "vpn-failover.path"
 INSTALL_STATE = "install-state.json"
 
 #: HMAC key for ``redact.hash_ip`` — 32 random bytes, hex-encoded text,
@@ -149,6 +154,133 @@ def render_sync_service(python_exe: Optional[str] = None) -> str:
         f"ExecStart={exe} -m vpnm guard sync",
         "",
     ]) + "\n"
+
+
+def failover_exec_start(python_exe: Optional[str] = None) -> str:
+    exe = python_exe or sys.executable
+    return f"{exe} -m vpnm guard failover run --once"
+
+
+def render_failover_service(python_exe: Optional[str] = None) -> str:
+    """One-shot failover pass (SPEC-20261118 §12 WP-F5).
+
+    The agent **acts** (``sudo -n vpn …``), so this unit deliberately carries
+    no ``NoNewPrivileges``: a setuid ``sudo`` must keep working.  Everything
+    else stays minimal and read-only with respect to guard artefacts.
+    """
+    return "\n".join([
+        "[Unit]",
+        "Description=VPN failover — switch the channel when the direct "
+        "channel is closed",
+        "After=network-online.target",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        f"ExecStart={failover_exec_start(python_exe)}",
+        "Nice=10",
+        "UMask=0077",
+        "PrivateTmp=yes",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+        "StandardOutput=journal",
+        "StandardError=journal",
+        "SyslogIdentifier=vpn-failover",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ]) + "\n"
+
+
+def render_failover_path(findings: Optional[Path] = None) -> str:
+    """Path unit: every appended finding wakes the agent (cheap no-op when
+    ``failover.enabled`` is false)."""
+    target = findings if findings is not None else guard_data_dir() / "findings.jsonl"
+    return "\n".join([
+        "[Unit]",
+        "Description=VPN failover — wake on a new guard finding",
+        "",
+        "[Path]",
+        f"PathChanged={target}",
+        f"Unit={FAILOVER_SERVICE}",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ]) + "\n"
+
+
+def install_failover(*, apply: bool = False,
+                     python_exe: Optional[str] = None,
+                     unit_root: Optional[Path] = None,
+                     data_dir: Optional[Path] = None,
+                     run: Optional[RunCmd] = None) -> Dict[str, Any]:
+    """Write + enable ``vpn-failover.service`` and ``vpn-failover.path``.
+
+    Dry-run by default (AGENTS §5.8).  Enabling the **path** unit is enough:
+    it pulls in the service on every findings change.
+    """
+    runner = run if run is not None else _run_cmd
+    root = unit_root if unit_root is not None else unit_dir()
+    target_data = data_dir if data_dir is not None else guard_data_dir()
+    service_file = root / FAILOVER_SERVICE
+    path_file = root / FAILOVER_PATH
+    commands: List[List[str]] = [
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", FAILOVER_PATH],
+    ]
+    plan: Dict[str, Any] = {
+        "apply": apply,
+        "service_path": str(service_file),
+        "path_path": str(path_file),
+        "commands": [" ".join(cmd) for cmd in commands],
+    }
+    if not apply:
+        return plan
+    target_data.mkdir(parents=True, exist_ok=True)
+    os.chmod(target_data, 0o700)
+    root.mkdir(parents=True, exist_ok=True)
+    service_file.write_text(render_failover_service(python_exe),
+                            encoding="utf-8")
+    os.chmod(service_file, 0o644)
+    path_file.write_text(
+        render_failover_path(target_data / "findings.jsonl"), encoding="utf-8")
+    os.chmod(path_file, 0o644)
+    errors: List[str] = []
+    for cmd in commands:
+        rc, _out, err = runner(cmd)
+        if rc != 0:
+            errors.append(f"{' '.join(cmd)}: {err.strip()}")
+    if errors:
+        plan["error"] = "; ".join(errors)
+    return plan
+
+
+def remove_failover(*, apply: bool = False,
+                    unit_root: Optional[Path] = None,
+                    run: Optional[RunCmd] = None) -> Dict[str, Any]:
+    """Disable + remove both failover units (idempotent)."""
+    runner = run if run is not None else _run_cmd
+    root = unit_root if unit_root is not None else unit_dir()
+    commands: List[List[str]] = [
+        ["systemctl", "--user", "disable", "--now", FAILOVER_PATH],
+        ["systemctl", "--user", "disable", "--now", FAILOVER_SERVICE],
+        ["systemctl", "--user", "daemon-reload"],
+    ]
+    plan: Dict[str, Any] = {"apply": apply,
+                            "commands": [" ".join(cmd) for cmd in commands]}
+    if not apply:
+        return plan
+    warnings: List[str] = []
+    for cmd in commands:
+        rc, _out, _err = runner(cmd)
+        if rc != 0:
+            warnings.append(f"{' '.join(cmd)}: rc={rc}")
+    plan["warnings"] = warnings
+    for name in (FAILOVER_PATH, FAILOVER_SERVICE):
+        candidate = root / name
+        if candidate.exists():
+            candidate.unlink()
+    return plan
 
 
 def render_sync_timer() -> str:
@@ -343,6 +475,7 @@ def unit_profile_note(state: Optional[Dict[str, Any]]) -> Optional[str]:
 
 def install(*, apply: bool = False, linger: bool = False,
             sync_timer: bool = False, netlink: bool = False,
+            failover: bool = False,
             python_exe: Optional[str] = None,
             unit_root: Optional[Path] = None,
             data_dir: Optional[Path] = None,
@@ -384,6 +517,10 @@ def install(*, apply: bool = False, linger: bool = False,
         "commands": [" ".join(cmd) for cmd in commands],
         "journal_group": in_systemd_journal_group(),
     }
+    if failover:
+        plan["failover"] = install_failover(
+            apply=False, python_exe=python_exe, unit_root=root,
+            data_dir=target_data, run=runner)
     if not apply:
         return plan
 
@@ -441,6 +578,10 @@ def install(*, apply: bool = False, linger: bool = False,
     plan["unit_profile"] = profile_used
     plan["fallback_reason"] = fallback_reason
     plan["notify_delivery"] = notify_delivery
+    if failover:
+        plan["failover"] = install_failover(
+            apply=apply, python_exe=python_exe, unit_root=root,
+            data_dir=target_data, run=runner)
     return plan
 
 
@@ -477,6 +618,9 @@ def remove(*, apply: bool = False, purge: bool = False,
             # disable/stop of a not-fully-installed unit is not an error:
             # uninstall must be idempotent
             warnings.append(f"{' '.join(cmd)}: rc={rc}")
+    # failover units are unrelated to the guard unit but share the prefix
+    # sweep: uninstall removes them too (idempotent when absent).
+    remove_failover(apply=True, unit_root=root, run=runner)
     for name in (SYNC_TIMER, SYNC_SERVICE, UNIT_NAME):
         candidate = root / name
         if candidate.exists():

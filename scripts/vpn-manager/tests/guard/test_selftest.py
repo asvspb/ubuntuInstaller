@@ -34,7 +34,12 @@ def test_selftest_is_green_on_the_package() -> None:
     assert set(named) == {"schemas", "parser", "rules", "post-scanner"}
     assert all(item["ok"] for item in checks), checks
     assert ok is True
-    assert "7/7" in named["schemas"]["detail"]
+    # WP-FAILOVER appended three additive schemas (state/history/pending
+    # alerts): the count follows events.SCHEMA_FILES, not a literal.
+    from vpnm.guard import events
+
+    count = len(events.SCHEMA_FILES)
+    assert f"{count}/{count}" in named["schemas"]["detail"]
     assert "rules_hash=sha256:" in named["rules"]["detail"]
 
 
