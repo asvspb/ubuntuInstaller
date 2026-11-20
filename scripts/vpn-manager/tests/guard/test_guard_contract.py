@@ -334,3 +334,38 @@ def test_shape_helper_is_order_insensitive() -> None:
     left = {"b": {"y": 1, "x": 2}, "a": [1, 2]}
     right = {"a": [1, 2], "b": {"x": 2, "y": 1}}
     assert _shape(left) == _shape(right)
+
+
+# ---------------------------------------------------------------------------
+# D-17 (DECISION Q1): lock-файл schema_hash — правка схемы без обновления lock
+# обязана ронять тест. Lock вендорит сервер (my-first-vds)
+# docs/contracts/guard-schema-hashes.json; сверка 1-в-1 идёт там.
+# ---------------------------------------------------------------------------
+
+LOCK_PATH = schema.SCHEMA_DIR / "schema_hashes.json"
+
+
+def test_schema_hashes_lock_matches_files() -> None:
+    assert LOCK_PATH.is_file(), f"missing lock file: {LOCK_PATH}"
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    assert lock["contract"] == "vpn-guard-schema-hashes/1"
+    assert lock["source_path"] == "scripts/vpn-manager/vpnm/guard/schemas"
+    assert len(lock["source_commit"]) == 40
+    assert set(lock["hashes"]) == set(events.SCHEMA_FILES)
+    live = schema.schema_hashes()
+    drifted = {name: (lock["hashes"].get(name), digest)
+               for name, digest in live.items()
+               if lock["hashes"].get(name) != digest}
+    assert not drifted, (
+        "schema changed without updating schema_hashes.json: "
+        f"{drifted}; перегенерируйте lock и закоммитьте вместе со схемой"
+    )
+
+
+def test_schema_hashes_lock_ships_in_package() -> None:
+    """Lock обязан попасть в wheel: он лежит в package-data каталоге схем."""
+    assert LOCK_PATH.parent == schema.SCHEMA_DIR
+    assert LOCK_PATH.name == "schema_hashes.json"
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+    assert '"vpnm.guard.schemas" = ["*.json"]' in text

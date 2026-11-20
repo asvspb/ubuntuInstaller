@@ -1,0 +1,18 @@
+{
+  "contract": "vpn-guard-schema-hashes/1",
+  "description": "Lock-файл schema_hash контрактов vpn guard (DECISION Q1 / D-17). Источник правды: схемы рядом. Обновляется ТОЛЬКО вместе с правкой схемы: python3 -c \"import json; from vpnm.guard import schema; print(json.dumps(schema.schema_hashes(), indent=2, sort_keys=True))\" — иначе tests/guard/test_guard_contract.py падает. Сервер (my-first-vds) вендорит этот файл в docs/contracts/guard-schema-hashes.json.",
+  "source_repo": "ubuntuInstaller",
+  "source_path": "scripts/vpn-manager/vpnm/guard/schemas",
+  "source_commit": "1e5401158108b2628c93c665c57d6f091432b268",
+  "generated_at": "2026-11-20",
+  "hash_algorithm": "sha256 канонического JSON схемы (sorted keys, компактные разделители, UTF-8) — vpnm.guard.schema.schema_hash",
+  "hashes": {
+    "guard.config/1": "sha256:afe3bd8d0619696427f4bc48d22a1240291ffa86d4ffc853b005f4689e64f75b",
+    "guard.coverage/1": "sha256:40d934e8116417956d9ffd5a6466756c6ddb881c62a9bd924ee04301dd6e28fb",
+    "guard.event/1": "sha256:144dcc6a57397d25c8a858e7e25c5a8e8b40ffabc3f05da647a9f22c9427be3e",
+    "guard.finding/1": "sha256:8a8aafc06aa2337405c6fef4fb16e6b0c07c8de1098db2c8a10aad4d60c2b262",
+    "guard.incident/1": "sha256:aed9427acf847f94dece3eb99a0d3d329ec1d8e65e4b630dbde95ec7cce07472",
+    "guard.server_verdict/1": "sha256:93a7ae70935bd4634ec72fa58d4927c864641723f032fb3b79f5c5ac8069d555",
+    "guard.status/1": "sha256:b9e88424117c10fe7b2afaecbfe7d784b4de410bc4554e578f1a0a86d2183a2a"
+  }
+}
