@@ -59,6 +59,28 @@ app = VpnTyper(
 трафик провайдера. Любой VPN включается вручную и живёт до выключения
 или ребута; автостарт всех VPN-юнитов отключён.
 
+Протоколы, которые можно активировать:
+
+AmneziaWG — UDP/443 (через релей) или UDP/51825 (exit). Активация: vpn start
+(туннель + доменный split) либо vpn amneziawg tunnel on.
+
+Reality — VLESS Reality, TCP/443, tun xray0. Активация: vpn start reality.
+
+XHTTP — VLESS XHTTP, TCP/8443, tun xray0. Активация: vpn start xhttp.
+
+Hysteria2 — QUIC UDP/443, socks 127.0.0.1:2083. Активация: vpn up asv2-hy2
+(имя профиля — из vpn profile list).
+
+CDN (ws) — VLESS+WS за Cloudflare, TCP/443. ХОЛОДНЫЙ РЕЗЕРВ (DECISION Q6,
+2026-11-20): origin не развёрнут, канал не поднимается; команда vpn scheme cdn
+работает только при живом origin и профиле CDN.
+
+RU-релей — AWG до релея, дальше policy релея. Активация: vpn start relay;
+socks-фолбэк Reality: vpn start relay --proto reality.
+
+Профиль для 'vpn up' — из 'vpn profile list'; его транспорт (Reality/XHTTP/
+Hysteria2/CDN) и есть протокол, порт socks смотрите там же.
+
 Активация VPN — из вкладки терминала:
 
   vpn start                  # AWG + доменный split (по умолчанию)
@@ -1131,6 +1153,11 @@ def start(scheme: str = typer.Argument(
                        — фолбэк: socks-профиль relay-reality
     vpn start reality  — Reality-split: tun xray0 → VLESS Reality (TCP 443)
     vpn start xhttp    — XHTTP-split: tun xray0 → VLESS XHTTP (TCP 8443)
+
+    Протоколы, которые можно активировать: awg (AmneziaWG, UDP 443 через
+    релей или 51825 напрямую), relay (awg; --proto reality — socks-фолбэк),
+    reality (VLESS Reality, TCP 443), xhttp (VLESS XHTTP, TCP 8443).
+    Hysteria2 (QUIC UDP 443) поднимается профилем: 'vpn up asv2-hy2'.
 
     Контуры взаимоисключающие: одновременно живёт либо прямой, либо релейный.
     Reality/XHTTP берут первый подходящий профиль из 'vpn profile list'
