@@ -196,6 +196,30 @@ def test_recent_cursor_list_is_bounded(tmp_path: Path, monkeypatch) -> None:
     assert len(cursors.recent("journal:user")) == 4
 
 
+def test_concurrent_save_no_lost_update(tmp_path: Path) -> None:
+    """P19: 4 threads x 100 save() — каждый источник сохранил свой последний
+    курсор, read-modify-write не сериализуется в lost-update."""
+    import threading
+
+    cursors = reader.CursorStore(tmp_path / "cursor.json")
+    sources = ["journal:user", "journal:system", "file:speed", "file:traffic"]
+
+    def worker(source: str) -> None:
+        for index in range(100):
+            cursors.save(source, f"{source}-c{index}")
+
+    threads = [threading.Thread(target=worker, args=(src,)) for src in sources]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    stored = json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))
+    for source in sources:
+        # последний курсор каждого источника пережил все интерливинг-записи
+        assert stored.get(source) == f"{source}-c99", source
+
+
 def test_cursor_write_failure_degrades_not_crashes(tmp_path: Path) -> None:
     class BrokenStore:
         """Duck-typed cursor store whose save always fails (read-only fs)."""

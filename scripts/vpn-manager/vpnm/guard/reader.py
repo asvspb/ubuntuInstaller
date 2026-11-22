@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -274,6 +275,10 @@ class CursorStore:
     re-emit events that were already processed (AC-11).
     """
 
+    #: Serializes read-modify-write of :meth:`save` across reader threads
+    #: (journal:user / journal:system share one ``cursor.json``; TECHDEBT P19).
+    _lock = threading.Lock()
+
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path if path is not None else cursor_path()
 
@@ -313,12 +318,14 @@ class CursorStore:
              recent: Optional[List[str]] = None) -> None:
         if not cursor and not recent:
             return
-        state = self.load()
-        if cursor:
-            state[source] = cursor
-        if recent is not None:
-            state[f"{source}:recent"] = recent[-PERSIST_RECENT_MAX:]
-        _atomic_write_0600(self.path, json.dumps(state, sort_keys=True) + "\n")
+        with self._lock:
+            state = self.load()
+            if cursor:
+                state[source] = cursor
+            if recent is not None:
+                state[f"{source}:recent"] = recent[-PERSIST_RECENT_MAX:]
+            _atomic_write_0600(
+                self.path, json.dumps(state, sort_keys=True) + "\n")
 
 
 # --- reader process -----------------------------------------------------------
