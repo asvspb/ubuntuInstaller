@@ -10,6 +10,7 @@ from vpnm.links import ProfileLink  # noqa: E402
 from vpnm.xclient import (  # noqa: E402
     XHTTP_PADDING_BYTES,
     XHTTP_XMUX,
+    XHTTP_SC,
     hysteria2_config,
     xray_config,
     xray_tun_config,
@@ -216,3 +217,71 @@ def test_hy2_obfs_block_rendered():
 def test_generate_dispatch(tmp_path):
     assert json.loads(generate(reality_link(), 2080))["outbounds"][0]["protocol"] == "vless"
     assert "server:" in generate(hy2_link(), 2083)
+
+
+# --- И43 (дельта SPEC-20261116-xhttp-xmux-padding, 2026-11-22) ---------------
+# SC-поля следующего уровня: соседи `xmux` в `xhttpSettings`, НЕ вложенные в
+# него. Диапазонные строки подтверждены `xray -test` 26.1.23 (Configuration OK).
+SPEC_XSC = {
+    "scMaxEachPostBytes": "800000-1200000",
+    "scMinPostsIntervalMs": "100-300",
+}
+
+
+def test_xhttp_sc_constants_match_spec():
+    assert XHTTP_SC == SPEC_XSC
+
+
+def _socks_xhttp_settings():
+    return json.loads(xray_config(xhttp_link(), 2084))[
+        "outbounds"][0]["streamSettings"]["xhttpSettings"]
+
+
+def test_xhttp_socks_config_has_sc_fields():
+    """И43: socks-конфиг несёт scMaxEachPostBytes/scMinPostsIntervalMs."""
+    xh = _socks_xhttp_settings()
+    assert xh["scMaxEachPostBytes"] == SPEC_XSC["scMaxEachPostBytes"]
+    assert xh["scMinPostsIntervalMs"] == SPEC_XSC["scMinPostsIntervalMs"]
+    # SC — строковые диапазоны-соседи xmux, не вложены внутрь него.
+    assert isinstance(xh["scMaxEachPostBytes"], str)
+    assert "scMaxEachPostBytes" not in xh["xmux"]
+    assert "scMinPostsIntervalMs" not in xh["xmux"]
+
+
+def test_xhttp_tun_config_has_sc_fields():
+    """И43: tun-конфиг (`vpn start xhttp`) несёт те же SC-поля."""
+    cfg = json.loads(xray_tun_config(xhttp_link()))
+    xh = cfg["outbounds"][0]["streamSettings"]["xhttpSettings"]
+    assert xh["scMaxEachPostBytes"] == SPEC_XSC["scMaxEachPostBytes"]
+    assert xh["scMinPostsIntervalMs"] == SPEC_XSC["scMinPostsIntervalMs"]
+
+
+def test_xhttp_gr25_fields_not_lost():
+    """И43 не затирает GR-25: весь согласованный набор полей xhttpSettings."""
+    xh = _socks_xhttp_settings()
+    assert set(xh) == {
+        "path", "host", "mode",
+        "xPaddingBytes", "xmux",
+        "scMaxEachPostBytes", "scMinPostsIntervalMs",
+    }
+    assert xh["xPaddingBytes"] == "100-1000"
+    assert xh["xmux"] == SPEC_XMUX
+
+
+def test_xhttp_sc_structure_byte_identical_between_configs():
+    """Структура outbound json.dumps-идентична для двух конфигов:
+    SC-поля попадают на то же место и с теми же значениями."""
+    a = xray_config(xhttp_link(), 2084)
+    b = xray_config(xhttp_link(), 2085)
+    ja = json.loads(a)["outbounds"][0]
+    jb = json.loads(b)["outbounds"][0]
+    assert a != b  # порт в inbound разный — конфиги не совпадают целиком
+    assert json.dumps(ja, sort_keys=True) == json.dumps(jb, sort_keys=True)
+
+
+def test_reality_configs_have_no_sc_fields():
+    """Reality (socks и tun) не получает SC-полей."""
+    for text in (xray_config(reality_link(), 2080),
+                 xray_tun_config(reality_link())):
+        assert "scMaxEachPostBytes" not in text
+        assert "scMinPostsIntervalMs" not in text

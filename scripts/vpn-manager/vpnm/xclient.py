@@ -44,6 +44,18 @@ XHTTP_XMUX: Dict[str, Any] = {
     # Без пинг-метронома в простое (нет трафика — нет маяков).
     "keepAlivePeriod": 0,
 }
+# И43 (SPEC-20261116-xhttp-xmux-padding, дельта 2026-11-22): SC-поля следующего
+# уровня — СОСЕДИ `xmux` в `xhttpSettings`, НЕ вложенные в него. Профиль
+# «стриминг/облачный диск»: короткие chunked-POST (кап ~0.8–1.2 МБ) с паузой
+# 100–300 мс рвут эвристику DPI «долгоживущий прокси» (одна бесконечная
+# POST-труба — маркер для ML-классификатора). Диапазонные строки подтверждены
+# `xray -test` 26.1.23 (Configuration OK).
+XHTTP_SC: Dict[str, Any] = {
+    # Ротация chunked-POST: закрывать POST после ~0.8–1.2 МБ.
+    "scMaxEachPostBytes": "800000-1200000",
+    # Пауза между POST-чанками 100–300 мс (не метроном).
+    "scMinPostsIntervalMs": "100-300",
+}
 
 
 def _hysteria2_server(link: ProfileLink) -> str:
@@ -119,6 +131,9 @@ def _xray_outbound(link: ProfileLink, tag: str = "proxy") -> Dict[str, Any]:
                 "mode": link.params.get("mode") or "auto",
                 "xPaddingBytes": XHTTP_PADDING_BYTES,
                 "xmux": dict(XHTTP_XMUX),
+                # И43 (дельта 22.11): SC-поля — соседи xmux, не вложены в него.
+                "scMaxEachPostBytes": XHTTP_SC["scMaxEachPostBytes"],
+                "scMinPostsIntervalMs": XHTTP_SC["scMinPostsIntervalMs"],
             },
         }
     else:
