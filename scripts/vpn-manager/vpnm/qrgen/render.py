@@ -1,9 +1,14 @@
-"""Рендер QR и вывод результата ``vpn qr`` (SPEC-20261118-vpn-qr §5).
+"""Рендер QR и вывод результата ``vpn qr`` (SPEC-20261118-vpn-qr §5, v1.1 §9.2).
 
 Только системный ``qrencode`` (никаких Python-зависимостей): payload уходит
 ему через stdin (``-r /dev/stdin``), поэтому секрет не попадает в argv.
 Файлы пишутся атомарно с правами 0600; терминал проверяется на ширину до
 печати, чтобы не выпустить «рваный» (нечитаемый) QR.
+
+v1.1 (D2): канонический каталог артефактов ``ARTIFACTS_DIR`` (0700) с
+авто-сохранением sanitized ``.conf``/``.uri``/``.png`` (0600, атомарная
+перезапись при смене ``payload_sha256``) и masked-вывод ``vpn conf`` с
+подсказкой ``--reveal``.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from .builders import BuiltPayload
 from .models import (
@@ -191,7 +196,79 @@ def write_image(built: BuiltPayload, path: Path, *, image: str,
         raise QrRenderError(f"не удалось записать {path}: {exc}") from exc
 
 
-# --- шапка, подсказка, JSON (§5.3, §5.4) --------------------------------------
+# --- артефакты (v1.1, D2/§9.2) --------------------------------------------------
+
+#: env-переопределение каталога артефактов (изоляция тестов, AC-QR-9c).
+ARTIFACTS_DIR_ENV = "VPN_MANAGER_ARTIFACTS_DIR"
+
+#: Права каталога артефактов: PNG = секрет уровня .conf (§9.2).
+ARTIFACTS_DIR_MODE = 0o700
+
+#: WARNING, который печатается в stderr, когда ``--out`` лежит в каталоге,
+#: читаемом другими пользователями (напр. ``/tmp``) — §9.2.
+WORLD_READABLE_WARNING = (
+    "WARNING: родительский каталог файла {path} читается другими "
+    "пользователями (world-readable); файл записан с правами 0600, но "
+    "рекомендуется приватный каталог")
+
+
+def artifacts_dir() -> Path:
+    """Каталог артефактов: ``~/.local/share/vpn-manager/artifacts`` (D2).
+
+    Env ``VPN_MANAGER_ARTIFACTS_DIR`` переопределяет путь (читается при
+    вызове, чтобы тесты изолировали прогон от живого ноутбука).
+    """
+    override = os.environ.get(ARTIFACTS_DIR_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".local" / "share" / "vpn-manager" / "artifacts"
+
+
+def ensure_artifacts_dir(path: Optional[Path] = None) -> Path:
+    """Создать каталог артефактов с правами 0700 (идемпотентно)."""
+    target = path if path is not None else artifacts_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    os.chmod(target, ARTIFACTS_DIR_MODE)
+    return target
+
+
+def artifact_stem(resolved: ResolvedSource) -> str:
+    """Канонический stem артефакта (D3): ``<route>-<proto>-<os>-<profile>``."""
+    return (f"{resolved.route.value}-{resolved.proto.value}-"
+            f"{resolved.target_os.value}-{resolved.profile_name}")
+
+
+def canonical_path(resolved: ResolvedSource, ext: str) -> Path:
+    """``<ARTIFACTS_DIR>/<route>-<proto>-<os>-<profile>.<ext>`` (D3)."""
+    clean = ext.lstrip(".")
+    return ensure_artifacts_dir() / f"{artifact_stem(resolved)}.{clean}"
+
+
+def save_payload_auto(resolved: ResolvedSource, built: BuiltPayload) -> Path:
+    """Авто-сохранение sanitized payload (AWG → ``.conf``, URI → ``.uri``).
+
+    Всегда атомарно перезаписывает канонический файл (§9.3: при изменении
+    ``payload_sha256`` старый артефакт не может остаться рассинхронизирован-
+    ным); права результата — 0600.
+    """
+    ext = "conf" if built.payload_format == "conf" else "uri"
+    return write_text(canonical_path(resolved, ext), built.payload, force=True)
+
+
+def save_png_auto(built: BuiltPayload, path: Path) -> Path:
+    """Авто-сохранение PNG (0600, атомарная перезапись)."""
+    return write_image(built, path, image="png", force=True)
+
+
+def parent_world_readable(path: Path) -> bool:
+    """True, когда родительский каталог ``--out`` читается «другими» (§9.2)."""
+    try:
+        return bool(path.parent.stat().st_mode & 0o004)
+    except OSError:
+        return False
+
+
+# --- шапка, подсказка, JSON (§5.3, §5.4, §9.2) ---------------------------------
 
 def _short_sha(built: BuiltPayload) -> str:
     digest = built.payload_sha256.split(":", 1)[-1]
@@ -209,6 +286,66 @@ def header_lines(resolved: ResolvedSource, built: BuiltPayload) -> List[str]:
     ]
 
 
+#: Подсказка под masked-выводом ``vpn conf`` (§9.2).
+REVEAL_HINT = "Для сырого текста с секретами: добавьте --reveal"
+
+#: WARNING в stderr при ``--reveal``/``--show-uri`` (§9.2).
+REVEAL_WARNING = ("WARNING: вывод содержит секреты — не вставляйте "
+                  "в логи/чаты/git")
+
+
+def save_lines(source_conf: Optional[Path], saved_png: Optional[Path]) -> List[str]:
+    """Строки путей v1.1: исходный conf + сохранённый PNG (§9.1)."""
+    lines: List[str] = []
+    if source_conf is not None:
+        lines.append(f"Source conf: {source_conf}")
+    if saved_png is not None:
+        lines.append(f"Saved PNG: {saved_png} (0600)")
+    return lines
+
+
+def conf_header_lines(resolved: ResolvedSource, built: BuiltPayload, *,
+                      conf_path: Optional[Path] = None,
+                      png_path: Optional[Path] = None,
+                      origin: Optional[str] = None) -> List[str]:
+    """Шапка ``vpn conf`` (§9.2): оси | endpoint | sha256 | origin + пути."""
+    lines = [
+        f"[vpn conf] route={resolved.route.value} | proto={resolved.proto.value}"
+        f" | os={resolved.target_os.value} | client={resolved.client}"
+        f" | profile={resolved.profile_name} | endpoint={resolved.endpoint}"
+        f" | {_short_sha(built)} | origin={origin or 'local'}",
+    ]
+    if conf_path is not None:
+        lines.append(f"Conf: {conf_path} (0600)")
+    if png_path is not None:
+        lines.append(f"QR PNG: {png_path} (0600)")
+    return lines
+
+
+def conf_preview(resolved: ResolvedSource, built: BuiltPayload, *,
+                 conf_path: Optional[Path] = None,
+                 png_path: Optional[Path] = None,
+                 origin: Optional[str] = None,
+                 reveal: bool = False) -> str:
+    """Текстовый вывод ``vpn conf``: шапка + тело через ``redact`` (§9.2).
+
+    По умолчанию тело маскируется (``PrivateKey = <redacted>``, URI целиком);
+    ``reveal=True`` печатает сырой payload (пригодно для ``| xclip``) —
+    WARNING в stderr печатает CLI-слой.
+    """
+    lines = conf_header_lines(resolved, built, conf_path=conf_path,
+                              png_path=png_path, origin=origin)
+    lines += warning_lines(resolved)
+    lines.append("")
+    if reveal:
+        lines.append(built.payload.rstrip("\n"))
+    else:
+        lines.append(redact_text(built.payload).rstrip("\n"))
+        lines.append("")
+        lines.append(REVEAL_HINT)
+    return "\n".join(lines) + "\n"
+
+
 def hint_line(resolved: ResolvedSource) -> str:
     """Подсказка импорта под целевую ОС/клиент (§5.3, OQ-QR-3)."""
     hint = _HINTS.get(resolved.client, "Импортируйте QR-код в клиенте")
@@ -222,9 +359,16 @@ def warning_lines(resolved: ResolvedSource) -> List[str]:
 
 
 def format_terminal(resolved: ResolvedSource, built: BuiltPayload,
-                    qr_text: str, *, show_uri: bool = False) -> str:
-    """Полный текстовый вывод ``--format qr`` (шапка + QR + опц. payload)."""
-    lines = header_lines(resolved, built) + warning_lines(resolved)
+                    qr_text: str, *, show_uri: bool = False,
+                    saved_png: Optional[Path] = None,
+                    source_conf: Optional[Path] = None) -> str:
+    """Полный текстовый вывод ``--format qr`` (шапка + QR + опц. payload).
+
+    v1.1 (§9.1): ``saved_png``/``source_conf`` добавляют в шапку пути
+    авто-сохранённого PNG и исходного AWG-конфига (без секретов).
+    """
+    lines = header_lines(resolved, built) + save_lines(source_conf, saved_png)
+    lines += warning_lines(resolved)
     lines.append(hint_line(resolved))
     lines.append("")
     lines.append(qr_text.rstrip("\n"))
@@ -236,8 +380,13 @@ def format_terminal(resolved: ResolvedSource, built: BuiltPayload,
 
 def json_payload(resolved: ResolvedSource, built: BuiltPayload,
                  *, out_path: Optional[Path] = None,
-                 show_uri: bool = False) -> Dict[str, object]:
-    """Контракт ``vpnm.qr/1`` (§5.4); ``payload`` — только по ``--show-uri``."""
+                 show_uri: bool = False,
+                 saved_png: Optional[Path] = None,
+                 source_conf: Optional[Path] = None) -> Dict[str, object]:
+    """Контракт ``vpnm.qr/1`` (§5.4); ``payload`` — только по ``--show-uri``.
+
+    v1.1 (аддитивно): ``png_path`` (авто-сохранение) и ``source_conf``.
+    """
     return {
         "schema": "vpnm.qr/1",
         "profile": resolved.profile_name,
@@ -252,27 +401,38 @@ def json_payload(resolved: ResolvedSource, built: BuiltPayload,
         "payload_sha256": built.payload_sha256,
         "qr_ecc": built.qr_ecc,
         "out_path": str(out_path) if out_path else None,
+        "png_path": str(saved_png) if saved_png else None,
+        "source_conf": str(source_conf) if source_conf else None,
         "warnings": list(resolved.warnings),
     }
 
 
 def json_text(resolved: ResolvedSource, built: BuiltPayload,
               *, out_path: Optional[Path] = None,
-              show_uri: bool = False) -> str:
+              show_uri: bool = False,
+              saved_png: Optional[Path] = None,
+              source_conf: Optional[Path] = None) -> str:
     return json.dumps(
-        json_payload(resolved, built, out_path=out_path, show_uri=show_uri),
+        json_payload(resolved, built, out_path=out_path, show_uri=show_uri,
+                     saved_png=saved_png, source_conf=source_conf),
         indent=2, ensure_ascii=False) + "\n"
 
 
 # --- точка входа ---------------------------------------------------------------
 
 def emit(resolved: ResolvedSource, built: BuiltPayload,
-         request: QrRequest) -> Optional[str]:
+         request: QrRequest, *,
+         saved_png: Optional[Path] = None,
+         source_conf: Optional[Path] = None,
+         save_png_cb: Optional["Callable[[], Path]"] = None) -> Optional[str]:
     """Выполнить формат запроса; вернуть текст для stdout (или ``None``).
 
     Файловые форматы (``uri --out``, ``png``, ``svg``, ``json --out``) пишут
     файл и возвращают короткую строку-подтверждение; ``qr``/``uri``/``json``
     без ``--out`` возвращают готовый текст.
+
+    v1.1: ``save_png_cb`` — колбэк авто-сохранения PNG для ``--format qr``;
+    вызывается ПОСЛЕ TTY-guard (неудачный рендер не оставляет файл).
     """
     fmt = request.output_format
 
@@ -280,8 +440,11 @@ def emit(resolved: ResolvedSource, built: BuiltPayload,
         qr_text = render_qr_text(built, ascii_mode=request.ascii_mode,
                                  invert=request.invert)
         ensure_terminal_width(qr_text, no_tty_check=request.no_tty_check)
+        if save_png_cb is not None:
+            saved_png = save_png_cb()
         return format_terminal(resolved, built, qr_text,
-                               show_uri=request.show_uri)
+                               show_uri=request.show_uri,
+                               saved_png=saved_png, source_conf=source_conf)
 
     if fmt is OutputFormat.URI:
         if request.out_path is not None:
@@ -303,9 +466,11 @@ def emit(resolved: ResolvedSource, built: BuiltPayload,
             path = write_text(
                 request.out_path,
                 json_text(resolved, built, out_path=request.out_path,
-                          show_uri=request.show_uri),
+                          show_uri=request.show_uri, saved_png=saved_png,
+                          source_conf=source_conf),
                 force=request.force)
             return f"записано: {path} (0600)"
-        return json_text(resolved, built, show_uri=request.show_uri)
+        return json_text(resolved, built, show_uri=request.show_uri,
+                         saved_png=saved_png, source_conf=source_conf)
 
     raise QrRenderError(f"--format {fmt}: неизвестный формат вывода")

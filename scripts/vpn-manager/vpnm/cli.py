@@ -231,12 +231,91 @@ app.add_typer(amneziawg_app, name="amneziawg")
 # guard sub-app: light (typer + frozen contract); heavy modules load
 # lazily inside the commands (vpnm/guard/cli.py).
 app.add_typer(guard_app, name="guard")
-# `vpn qr` (SPEC-20261118-vpn-qr): резолвер и рендер живут в vpnm/qrgen/,
-# модуль лёгкий (typer + stdlib), поэтому регистрируем на импорте.
-from .qrgen.cli import qr_command  # noqa: E402  (регистрация ниже)
+# `vpn qr` / `vpn conf` (SPEC-20261118-vpn-qr v1.1): резолвер и рендер живут
+# в vpnm/qrgen/, модуль лёгкий (typer + stdlib), поэтому регистрируем на импорте.
+from .qrgen.cli import conf_command, qr_command  # noqa: E402  (регистрация ниже)
 
 app.command("qr", help="QR/URI клиентского профиля: маршрут × протокол × ОС "
-                       "(офлайн, без секретов в выводе)")(qr_command)
+                       "(офлайн, без секретов в выводе; v1.1 авто-сохраняет "
+                       "PNG, --no-save отключает запись)")(qr_command)
+app.command("conf", help="Локальный конфиг/URI профиля: маршрут × протокол × "
+                         "ОС (0600 в artifacts, masked-вывод; --qr — плюс QR; "
+                         "--reveal — сырой текст)")(conf_command)
+
+
+@app.command("sync")
+def sync_cmd(
+        direct: bool = typer.Option(False, "--direct",
+                                    help="Только прямой маршрут (exit-узел)"),
+        relay: bool = typer.Option(False, "--relay",
+                                   help="Только релейный маршрут"),
+        all_routes: bool = typer.Option(False, "--all",
+                                        help="Оба маршрута (по умолчанию)"),
+        exit_host: Optional[str] = typer.Option(
+            None, "--exit-host", help="ssh exit-узла (иначе — сохранённый "
+                                      "ssh_host из settings.json)"),
+        relay_host: Optional[str] = typer.Option(
+            None, "--relay-host", help="ssh релея (иначе — relay_ssh_host из "
+                                       "settings.json)"),
+        include_obfs: bool = typer.Option(
+            False, "--include-obfs",
+            help="также забрать obfs-профили hysteria2"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run",
+            help="Читать сервера, но ничего не писать локально"),
+) -> None:
+    """Подтянуть авторитетные серверные файлы (read-only; v1.1, D1).
+
+    Единственная сетевая точка стека qr/conf: ``vds gateway links`` по ssh и
+    scp клиентских ``*.conf`` из каталогов клиентов exit/релея. Сервера не
+    мутируются; локальные файлы не удаляются — профили, которых больше нет
+    на сервере, помечаются ``STALE (absent on server)`` с подсказкой
+    архивации.
+    """
+    from . import sync as sync_mod
+    routes: Tuple[str, ...]
+    if direct and relay:
+        _err("--direct и --relay несовместимы")
+        raise typer.Exit(code=2)
+    if direct:
+        routes = ("direct",)
+    elif relay:
+        routes = ("relay",)
+    else:
+        routes = ("direct", "relay")  # --all и пустой выбор означают оба
+    try:
+        report = sync_mod.run_sync(
+            exit_host=exit_host, relay_host=relay_host, routes=routes,
+            include_obfs=include_obfs, dry_run=dry_run)
+    except sync_mod.SyncError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=1)
+    mode_label = "dry-run" if dry_run else "synced"
+    for route, section in report.items():
+        if "error" in section:
+            _warn(f"{route}: {section['error']}")
+            continue
+        host = section.get("host") or "?"
+        typer.secho(f"── {route} ({host}) [{mode_label}] ──",
+                    fg=typer.colors.CYAN)
+        confs = section.get("confs") or {}
+        for category in ("imported", "updated", "skipped"):
+            for stem in confs.get(category) or []:
+                (_ok if category == "imported" else _warn)(
+                    f"{category} conf '{stem}'")
+        for stem in confs.get("stale") or []:
+            typer.secho(
+                f"STALE (absent on server): {stem} — подсказка: "
+                f"vpn profile archive {stem} --reason \"...\" --apply",
+                fg=typer.colors.YELLOW)
+        for name, action in section.get("links") or []:
+            (_ok if action in ("imported", "updated") else
+             (lambda m: typer.echo(m)))(f"{action} link '{name}'")
+        for name in section.get("links_stale") or []:
+            typer.secho(
+                f"STALE (absent on server): {name} — подсказка: "
+                f"vpn profile archive {name} --reason \"...\" --apply",
+                fg=typer.colors.YELLOW)
 
 
 def _awg_resolve_host() -> str:
@@ -1533,6 +1612,47 @@ def profile_pull(
         _ok(f"saved host '{host}' to settings")
     except OSError as exc:
         _warn(f"could not save host to settings: {exc}")
+
+
+@profile_app.command("archive")
+def profile_archive(
+        name: str = typer.Argument(..., help="Имя профиля (profiles.json) "
+                                             "или stem AWG-конфига"),
+        reason: str = typer.Option(
+            ..., "--reason", help="Причина архивации (пишется в archived_reason)"),
+        apply: bool = typer.Option(
+            False, "--apply",
+            help="Применить план (по умолчанию — только dry-run)"),
+) -> None:
+    """Пометить профиль архивным: мёртвый конфиг больше не выдаётся как
+    рабочий (v1.1, D3/R4).
+
+    Dry-run по умолчанию: печатает план (поля store + перенос ``.conf`` в
+    ``~/.awg/archive/``). С ``--apply`` ставит ``status=archived`` и
+    ``archived_reason`` в profiles.json и переносит клиентский ``.conf``
+    (root/direct/relay) в ``archive/`` с сохранением прав 0600.
+    """
+    if not reason.strip():
+        _err("--reason обязателен (почему профиль выводится из эксплуатации)")
+        raise typer.Exit(code=2)
+    try:
+        plan = profiles.archive(name, reason, apply=apply)
+    except profiles.ProfileStoreError as exc:
+        _err(str(exc))
+        raise typer.Exit(code=1)
+    label = "applied" if plan["applied"] else "dry-run (nothing changed)"
+    typer.secho(f"archive '{name}': {label}", fg=typer.colors.CYAN)
+    fields = plan.get("store_fields") or {}
+    typer.echo(f"  store: status={fields.get('status')} "
+               f"archived_reason={fields.get('archived_reason')!r}")
+    moves = plan.get("conf_moves") or []
+    if moves:
+        for move in moves:
+            typer.echo(f"  conf: {move['from']} -> {move['to']}")
+    else:
+        typer.echo("  conf: локальный .conf не найден (переносить нечего)")
+    if not plan["applied"]:
+        typer.echo("  для применения добавьте --apply")
 
 
 @app.command("sysproxy")

@@ -148,3 +148,15 @@ def live_env(tmp_path, monkeypatch):
     state.sudo_calls = _install_sudo(monkeypatch, state.etc_dir)
     state.qrencode_calls = _install_qrencode(monkeypatch)
     return state
+
+
+@pytest.fixture(autouse=True)
+def _isolate_artifacts_dir(tmp_path, monkeypatch):
+    """v1.1 (WP-QR6): авто-сохранение PNG не должно писать в живой HOME.
+
+    ``render.artifacts_dir()`` читает env при вызове, поэтому переопределения
+    достаточно для всех qrgen-тестов.
+    """
+    artifacts = tmp_path / "artifacts"
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", str(artifacts))
+    return artifacts

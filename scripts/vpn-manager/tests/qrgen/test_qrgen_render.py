@@ -255,3 +255,145 @@ def test_emit_qr_returns_header_and_matrix(qrencode, built):
     assert "[vpn qr] profile=asv2-reality" in text
     assert "ECC:" in text
     assert "████" in text
+
+
+# --- v1.1 (WP-QR6): артефакты, masked-preview (§9.2, AC-QR-9/12) --------------
+
+FIXTURE_AWG_INI = (
+    "[Interface]\n"
+    "Address = 10.10.0.2/32\n"
+    "PrivateKey = FIXTURE_PW_CLIENT_AWG\n"
+    "\n"
+    "[Peer]\n"
+    "PublicKey = FIXTURE_PW_SERVER_AWG\n"
+    "Endpoint = 203.0.113.10:51825\n"
+    "AllowedIPs = 0.0.0.0/0\n"
+)
+
+
+def _resolved_awg() -> models.ResolvedSource:
+    return models.ResolvedSource(
+        profile_name="mobile", route=models.Route.DIRECT, proto=models.Proto.AWG,
+        target_os=models.TargetOS.ANDROID, client="amneziawg",
+        endpoint_host="203.0.113.10", endpoint_port=51825, source="awg",
+        raw_awg_ini=FIXTURE_AWG_INI)
+
+
+def _awg_built() -> builders.BuiltPayload:
+    return builders.build_payload(_resolved_awg())
+
+
+def test_artifacts_dir_env_override_and_default(monkeypatch):
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", "/tmp/vpnm-art")
+    assert render.artifacts_dir() == Path("/tmp/vpnm-art")
+    monkeypatch.delenv("VPN_MANAGER_ARTIFACTS_DIR")
+    assert render.artifacts_dir() == (Path.home() / ".local" / "share" /
+                                      "vpn-manager" / "artifacts")
+
+
+def test_ensure_artifacts_dir_is_0700(tmp_path):
+    target = tmp_path / "nested" / "artifacts"
+    render.ensure_artifacts_dir(target)
+    assert oct(target.stat().st_mode & 0o777) == "0o700"
+    render.ensure_artifacts_dir(target)  # идемпотентно
+    assert oct(target.stat().st_mode & 0o777) == "0o700"
+
+
+def test_canonical_path_naming(tmp_path, monkeypatch):
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", str(tmp_path))
+    path = render.canonical_path(_resolved_awg(), "png")
+    assert path == tmp_path / "direct-awg-android-mobile.png"
+
+
+def test_save_payload_auto_conf_0600_and_replaces_on_change(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", str(tmp_path))
+    resolved = _resolved_awg()
+    path = render.save_payload_auto(resolved, _awg_built())
+    assert path.name == "direct-awg-android-mobile.conf"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert "Table = off" not in path.read_text()
+    # смена payload_sha256 → атомарная перезапись, права не сбрасываются
+    path.chmod(0o644)
+    second = render.save_payload_auto(resolved, _awg_built())
+    assert second == path
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_save_png_auto_0600_overwrites(qrencode, tmp_path, monkeypatch):
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", str(tmp_path))
+    target = tmp_path / "qr.png"
+    target.write_bytes(b"old")
+    path = render.save_png_auto(builders.build_payload(_resolved()), target)
+    assert path == target
+    assert path.read_bytes() == b"IMAGE-BYTES"
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+
+
+def test_parent_world_readable(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir()
+    private.chmod(0o700)
+    public = tmp_path / "public"
+    public.mkdir()
+    public.chmod(0o755)
+    assert render.parent_world_readable(private / "x.conf") is False
+    assert render.parent_world_readable(public / "x.conf") is True
+
+
+def test_conf_header_lines_origin_and_paths(tmp_path):
+    built = _awg_built()
+    lines = render.conf_header_lines(
+        _resolved_awg(), built, conf_path=tmp_path / "a.conf",
+        png_path=tmp_path / "a.png", origin="synced 2026-11-24T10:00:00+00:00")
+    joined = "\n".join(lines)
+    assert "[vpn conf] route=direct | proto=awg | os=android" in joined
+    assert "client=amneziawg | profile=mobile" in joined
+    assert "endpoint=203.0.113.10:51825" in joined
+    assert built.payload_sha256.split(":", 1)[-1][:4] in joined
+    assert "origin=synced 2026-11-24T10:00:00+00:00" in joined
+    assert f"Conf: {tmp_path / 'a.conf'} (0600)" in joined
+    assert f"QR PNG: {tmp_path / 'a.png'} (0600)" in joined
+    assert "FIXTURE" not in joined
+
+
+def test_conf_preview_masks_secrets_and_hints_reveal():
+    built = _awg_built()
+    text = render.conf_preview(_resolved_awg(), built)
+    assert "PrivateKey = <redacted>" in text
+    assert "FIXTURE_PW_CLIENT_AWG" not in text
+    # PublicKey — не секрет: остаётся в masked-выводе
+    assert "PublicKey = FIXTURE_PW_SERVER_AWG" in text
+    assert render.REVEAL_HINT in text
+    assert built.payload not in text
+
+
+def test_conf_preview_reveal_prints_raw_payload():
+    built = _awg_built()
+    text = render.conf_preview(_resolved_awg(), built, reveal=True)
+    assert "PrivateKey = FIXTURE_PW_CLIENT_AWG" in text
+    assert built.payload in text
+    assert render.REVEAL_HINT not in text
+
+
+def test_emit_qr_save_png_cb_after_guard(qrencode, tmp_path, monkeypatch):
+    monkeypatch.setenv("VPN_MANAGER_ARTIFACTS_DIR", str(tmp_path))
+    saved = tmp_path / "saved.png"
+    request = models.QrRequest(route=models.Route.DIRECT,
+                               proto=models.Proto.REALITY,
+                               target_os=models.TargetOS.ANDROID)
+    built = builders.build_payload(_resolved())
+    text = render.emit(_resolved(), built, request,
+                       save_png_cb=lambda: render.save_png_auto(built, saved))
+    assert f"Saved PNG: {saved} (0600)" in text
+    assert saved.read_bytes() == b"IMAGE-BYTES"
+
+
+def test_json_payload_reports_saved_png(tmp_path):
+    built = builders.build_payload(_resolved())
+    payload = render.json_payload(_resolved(), built,
+                                  saved_png=tmp_path / "p.png")
+    assert payload["png_path"] == str(tmp_path / "p.png")
+    payload2 = render.json_payload(_resolved(), built)
+    assert payload2["png_path"] is None
+    assert payload2["schema"] == "vpnm.qr/1"
