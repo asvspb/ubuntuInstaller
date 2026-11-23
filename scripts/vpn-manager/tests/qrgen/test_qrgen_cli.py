@@ -445,7 +445,7 @@ def test_vpn_profile_archive_dry_run_then_apply(env):
                       "--apply")
     assert applied.exit_code == 0, _all(applied)
     assert not (direct_dir / "dead.conf").exists()
-    moved = env.awg_dir / "archive" / "dead.conf"
+    moved = env.awg_dir / "archive" / "direct-dead.conf"
     assert moved.is_file()
     assert oct(moved.stat().st_mode & 0o777) == "0o600"
     from vpnm import profiles as profiles_mod

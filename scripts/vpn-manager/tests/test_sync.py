@@ -325,7 +325,7 @@ def test_profile_archive_dry_run_plans_but_writes_nothing(env):
     assert plan["applied"] is False
     assert plan["store_fields"]["status"] == "archived"
     assert plan["conf_moves"][0]["from"].endswith("direct/dead.conf")
-    assert plan["conf_moves"][0]["to"].endswith("archive/dead.conf")
+    assert plan["conf_moves"][0]["to"].endswith("archive/direct-dead.conf")
     # ничего не изменилось
     assert profiles.get("dead").get("status") is None
     assert (dest_dir / "dead.conf").is_file()
@@ -344,7 +344,7 @@ def test_profile_archive_apply_moves_conf_and_marks_store(env):
     assert record["status"] == "archived"
     assert record["archived_reason"] == "dead-pool"
     assert not (dest_dir / "dead.conf").exists()
-    moved = env / "awg" / "archive" / "dead.conf"
+    moved = env / "awg" / "archive" / "direct-dead.conf"
     assert moved.is_file()
     assert (os.stat(moved).st_mode & 0o777) == 0o600
     # повторная архивация — ошибка, а не тихий no-op
@@ -368,3 +368,83 @@ def test_resolver_never_picks_moved_archive_file(env):
             target_os=qr_models.TargetOS("android"))
     with pytest.raises(qr_models.QrConfigError):
         qr_resolver.resolve(req_dead())
+
+
+# --- WP-QR8 (review P1/P2 fixes) ------------------------------------------------
+
+def test_archive_awg_only_profile(env):
+    """P1-1: archive на AWG-only профиле (записи в profiles.json нет)."""
+    (env / "awg" / "mobile-awg.conf").write_text(FIXTURE_CONF_V1,
+                                                 encoding="utf-8")
+    result = profiles.archive("mobile-awg", "asv1 выключен", apply=True)
+    assert result["applied"] is True
+    moved = env / "awg" / "archive" / "mobile-awg.conf"
+    assert moved.is_file()
+    assert (os.stat(moved).st_mode & 0o777) == 0o600
+    assert not (env / "awg" / "mobile-awg.conf").exists()
+    # пустой store остаётся пустым — поле store обновлять нечему
+    assert profiles.list_profiles() == []
+    # name валидируется до построения путей: ../escape отклоняется
+    with pytest.raises(profiles.ProfileStoreError):
+        profiles.archive("../escape", "bad name", apply=True)
+    # одноимённые direct/ и relay/ конфиги архивируются рядом, без затирания
+    (env / "awg" / "direct").mkdir()
+    (env / "awg" / "relay").mkdir()
+    (env / "awg" / "direct" / "x.conf").write_text(FIXTURE_CONF_V1,
+                                                   encoding="utf-8")
+    (env / "awg" / "relay" / "x.conf").write_text(
+        FIXTURE_CONF_V2, encoding="utf-8")
+    plan = profiles.archive("x", "both nodes dead", apply=True)
+    assert len(plan["conf_moves"]) == 2
+    assert plan["conf_moves"][0]["to"].endswith("archive/direct-x.conf")
+    assert plan["conf_moves"][1]["to"].endswith("archive/relay-x.conf")
+    assert (env / "awg" / "archive" / "direct-x.conf").is_file()
+    assert (env / "awg" / "archive" / "relay-x.conf").is_file()
+    assert ((env / "awg" / "archive" / "direct-x.conf").read_text(
+        encoding="utf-8") == FIXTURE_CONF_V1)
+    assert ((env / "awg" / "archive" / "relay-x.conf").read_text(
+        encoding="utf-8") == FIXTURE_CONF_V2)
+
+
+def test_sync_relay_without_links_and_extra_remote_files(env):
+    """P1-2: PullError и посторонние файлы не роняют sync, хосты сохраняются."""
+    run, _calls = make_run({
+        "ls": {sync.RELAY_CLIENTS_DIR: "android.conf\nold.conf.bak\nREADME\n"},
+        "files": {sync.RELAY_CLIENTS_DIR: FIXTURE_CONF_V1},
+        "links": "",
+    })
+    report = sync.run_sync(relay_host=RELAY_HOST, routes=("relay",), run=run)
+    section = report["relay"]
+    assert section["confs"]["imported"] == ["android"]
+    assert section["confs"]["skipped_remote"] == ["old.conf.bak", "README"]
+    assert "links_error" in section
+    assert section["links"] == []
+    # прогон не упал; confs лежат на месте
+    assert (env / "awg" / "relay" / "android.conf").is_file()
+    # явный --relay-host сохранён в settings.json при dry_run=False
+    assert settings.get_relay_host() == RELAY_HOST
+    # явные хосты не сохраняются в dry-run
+    run2, _ = make_run({
+        "ls": {sync.RELAY_CLIENTS_DIR: "android.conf\n"},
+        "files": {sync.RELAY_CLIENTS_DIR: FIXTURE_CONF_V1},
+        "links": LINKS_OUTPUT,
+    })
+    sync.run_sync(relay_host="192.0.2.9", routes=("relay",), run=run2,
+                  dry_run=True)
+    assert settings.get_relay_host() == RELAY_HOST
+
+
+def test_sync_links_skipped_backfills_v11_metadata(env):
+    """P2-1: skipped-запись без route/source_host добирает метаданные."""
+    profiles.add(parse_link(FIXTURE_VLESS), raw_link=FIXTURE_VLESS,
+                 name="srv-reality")
+    run, _ = make_run({"links": LINKS_OUTPUT})
+    actions, _stale = sync.sync_links("direct", EXIT_HOST, run=run)
+    assert actions == [("srv-reality", "skipped")]
+    record = profiles.get("srv-reality")
+    assert record["route"] == "direct"
+    assert record["source_host"] == EXIT_HOST
+    assert record["synced_at"]
+    # у записи с уже полными метаданными synced_at не перетирается
+    sync.sync_links("direct", EXIT_HOST, run=run)
+    assert profiles.get("srv-reality")["source_host"] == EXIT_HOST

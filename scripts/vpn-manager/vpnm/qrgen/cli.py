@@ -144,6 +144,11 @@ def _run_sync(route: Route) -> None:
                 f"[vpn sync] {section_route}: STALE (absent on server): "
                 f"{name} — подсказка: vpn profile archive {name} "
                 "--reason \"...\" --apply")
+        if section.get("links_error"):
+            typer.secho(
+                f"[vpn sync] {section_route}: "
+                f"{redact_text(str(section['links_error']))}",
+                fg=typer.colors.YELLOW, err=True)
 
 
 def _awg_source_path(resolved: ResolvedSource) -> Optional[Path]:

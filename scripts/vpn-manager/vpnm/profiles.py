@@ -23,6 +23,7 @@ from .links import (
     ProfileLink,
     parse_link,
 )
+from .qrgen.models import PROFILE_NAME_RE
 
 CONFIG_DIR = Path(os.environ.get("VPN_MANAGER_CONFIG_DIR",
                                  str(Path.home() / ".config" / "vpn-manager")))
@@ -158,21 +159,38 @@ def archive(name: str, reason: str, apply: bool = False,
             awg_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Mark a profile as archived (dead profile, D3/R4). Dry-run by default.
 
-    Plan: ``status=archived`` + ``archived_reason`` in the store record, and —
-    if a client AWG ``<name>.conf`` exists in the local ``~/.awg`` root or in
-    ``direct/``/``relay/`` — a move into ``archive/<name>-<stem>.conf``
-    (deduplicated to ``archive/<name>.conf`` when stem equals the name). The
-    archive/ directory is never scanned by the auto-resolver, and the moved
-    file keeps its 0600 permissions.
+    The profile may live in the store (``profiles.json``) only, as a local
+    AWG conf only (``~/.awg/<name>.conf``, ``direct/<name>.conf``,
+    ``relay/<name>.conf`` — e.g. mobile-awg clients never entered the
+    store), or in both; a failure happens only when neither source has it.
+    ``name`` is validated against ``PROFILE_NAME_RE`` before any path is
+    built (no traversal: ``../escape`` is rejected).
+
+    Plan: ``status=archived`` + ``archived_reason`` in the store record (when
+    a store record exists), and — for every client AWG ``<name>.conf`` found
+    — a move into ``archive/``: ``archive/<name>.conf`` for the legacy root,
+    ``archive/<ns>-<name>.conf`` for ``direct/``/``relay/`` so same-named
+    confs on both nodes are archived side by side instead of silently
+    overwriting each other. The archive/ directory is never scanned by the
+    auto-resolver, and the moved file keeps its 0600 permissions.
 
     With ``apply=False`` (default) nothing is written or moved; the returned
     plan says exactly what ``--apply`` would do.
     """
     from . import amneziawg  # local import: avoids load at import time
 
+    if not (name and PROFILE_NAME_RE.match(name)):
+        raise ProfileStoreError(
+            f"invalid profile name {name!r}: латиница/цифры/'_'/'-', без "
+            "точек и разделителей пути (защита от ../ traversal)")
+
     records = _load(path)
-    record = _find(records, name)
-    if record.get("status") == STATUS_ARCHIVED:
+    record: Optional[Dict[str, Any]] = None
+    for entry in records:
+        if entry.get("name") == name:
+            record = entry
+            break
+    if record is not None and record.get("status") == STATUS_ARCHIVED:
         raise ProfileStoreError(f"profile '{name}' is already archived")
 
     awg_dir = Path(awg_dir) if awg_dir is not None else Path(amneziawg.LOCAL_CONF_DIR)
@@ -180,10 +198,16 @@ def archive(name: str, reason: str, apply: bool = False,
     for sub in ("", "direct", "relay"):
         src = awg_dir / sub / f"{name}.conf" if sub else awg_dir / f"{name}.conf"
         if src.is_file():
-            # D3: archive/<tag>-<stem>.conf; локальный файл один, тег = имя
-            # профиля, поэтому dest = archive/<name>.conf (без дублей).
+            # D3 (WP-QR8): корень → archive/<name>.conf; файл из
+            # direct//relay/ → archive/<ns>-<name>.conf, чтобы одноимённые
+            # конфиги direct- и relay-узлов не затирали друг друга.
+            dest_stem = f"{sub}-{name}" if sub else name
             moves.append({"from": str(src),
-                          "to": str(awg_dir / "archive" / f"{name}.conf")})
+                          "to": str(awg_dir / "archive" / f"{dest_stem}.conf")})
+    if record is None and not moves:
+        raise ProfileStoreError(
+            f"profile '{name}' not found: ни в profiles.json, ни в "
+            f"{awg_dir} (корень/direct/relay)")
     for move in moves:
         dest_path = Path(move["to"])
         if dest_path.exists():
@@ -206,8 +230,9 @@ def archive(name: str, reason: str, apply: bool = False,
         os.chmod(dest_path.parent, 0o700)
         os.replace(move["from"], dest_path)
         os.chmod(dest_path, 0o600)
-    record.update(result["store_fields"])
-    _save(records, path)
+    if record is not None:
+        record.update(result["store_fields"])
+        _save(records, path)
     result["applied"] = True
     return result
 

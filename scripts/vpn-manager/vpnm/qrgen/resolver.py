@@ -311,20 +311,33 @@ def _conf_is_archived(path: Path) -> bool:
     return head.startswith(ARCHIVED_HEADER)
 
 
-def _read_local_conf(stem: str) -> Optional[_AwgCandidate]:
-    """Read ``<stem>.conf`` из корня ``~/.awg`` или из ``direct/``/``relay/``.
+def _read_local_conf(
+        stem: str,
+        wanted_ns: Optional[str] = None) -> Optional[Tuple[_AwgCandidate, Path]]:
+    """Read ``<stem>.conf`` из ``~/.awg`` (namespace-aware).
 
-    Порядок: legacy-корень (совместимость), затем namespace-подкаталоги v1.1.
-    Файл с заголовком archived читается (для явного ``--profile`` резолвер
-    выдаёт код 4 на нём), но ``archive/`` сюда не входит никогда.
+    Порядок при заданном ``wanted_ns`` (``direct``/``relay``): запрошенный
+    namespace (WP-QR8 P1 — одноимённые ``<stem>.conf`` в direct/ и relay/
+    обязаны резолвиться по маршруту запроса, а не по фиксированному порядку
+    обхода), затем legacy-корень (совместимость), затем прочие namespace.
+    Без ``wanted_ns`` — legacy-корень, затем namespace-подкаталоги v1.1.
+    ``archive/`` сюда не входит никогда. Возвращается пара
+    ``(candidate, path)`` — путь нужен для archived-гейта у того же файла,
+    который был найден, а не у повторно найденного с корня.
     """
-    for ns in (None,) + NS_SUBDIRS:
+    order: Tuple[Optional[str], ...]
+    if wanted_ns in NS_SUBDIRS:
+        others = tuple(ns for ns in NS_SUBDIRS if ns != wanted_ns)
+        order = (wanted_ns, None) + others
+    else:
+        order = (None,) + NS_SUBDIRS
+    for ns in order:
         path = _conf_path(stem, ns)
         try:
             if not path.is_file():
                 continue
-            return _awg_candidate(stem, path.read_text(encoding="utf-8"),
-                                  "local", origin_ns=ns or "legacy")
+            return (_awg_candidate(stem, path.read_text(encoding="utf-8"),
+                                   "local", origin_ns=ns or "legacy"), path)
         except (OSError, UnicodeDecodeError):
             continue
     return None
@@ -427,23 +440,22 @@ def _finish_awg(chosen: _AwgCandidate, request: QrRequest, client: str,
         source="awg", raw_awg_ini=chosen.text, warnings=warnings)
 
 
-def _explicit_awg(stem: str) -> Optional[_AwgCandidate]:
-    """Явный ``--profile``: чтение из корня/direct//relay/ с archived-гейтом (код 4)."""
-    candidate = _read_local_conf(stem) or _read_system_conf(stem)
-    if candidate is None:
-        return None
-    if candidate.origin == "local":
-        path = _conf_path(stem)
-        if not path.is_file():
-            for ns in NS_SUBDIRS:
-                path = _conf_path(stem, ns)
-                if path.is_file():
-                    break
-        if path.is_file() and _conf_is_archived(path):
+def _explicit_awg(stem: str,
+                  wanted_ns: Optional[str] = None) -> Optional[_AwgCandidate]:
+    """Явный ``--profile``: чтение из корня/direct//relay/ с archived-гейтом (код 4).
+
+    ``wanted_ns`` (WP-QR8 P1) задаёт приоритет namespace маршрута запроса;
+    archived-гейт проверяет тот же найденный файл (не повторный обход с корня).
+    """
+    found = _read_local_conf(stem, wanted_ns)
+    if found is not None:
+        candidate, path = found
+        if _conf_is_archived(path):
             raise QrConfigError(
                 f"--profile '{stem}': " + _ARCHIVED_EXPLICIT_WARNING.format(
                     stem=stem, header=ARCHIVED_HEADER))
-    return candidate
+        return candidate
+    return _read_system_conf(stem)
 
 
 def _resolve_awg(request: QrRequest, client: str,
@@ -464,7 +476,8 @@ def _resolve_awg(request: QrRequest, client: str,
         return "relay" if relay_of(candidate) else "direct"
 
     if profile_name is not None:
-        chosen = _explicit_awg(profile_name)
+        chosen = _explicit_awg(
+            profile_name, wanted_ns="relay" if wanted_relay else "direct")
         if chosen is None:
             raise QrConfigError(
                 f"--profile '{profile_name}': AWG-конфиг не найден ни в "
@@ -524,7 +537,7 @@ def _resolve_awg(request: QrRequest, client: str,
     iface = _iface_from_mode()
     if iface and PROFILE_NAME_RE.match(iface) and not (
             iface == "relay" or iface.startswith("relay-")):
-        active = _explicit_awg(iface)
+        active = _explicit_awg(iface, wanted_ns="direct")
         if active is not None and not relay_of(active):
             if active.origin_ns == "legacy":
                 warnings.append(_LEGACY_LOCATION_WARNING.format(stem=active.stem))

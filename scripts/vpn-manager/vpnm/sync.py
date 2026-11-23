@@ -78,11 +78,15 @@ def _local_conf_is_archived(path: Path) -> bool:
 
 
 def list_remote_confs(host: str, remote_dir: str,
-                      run: Optional[RunCmd] = None) -> List[str]:
+                      run: Optional[RunCmd] = None,
+                      skipped: Optional[List[str]] = None) -> List[str]:
     """``ssh <host> ls -1 <remote_dir>`` → sorted remote ``*.conf`` stems.
 
-    Read-only on the server. Raises SyncError on a non-zero exit or when the
-    output contains anything that is not a plain filename list.
+    Read-only on the server. Entries that are not ``*.conf`` (``old.conf.bak``,
+    ``README``, subdirectories) are skipped — when ``skipped`` is a list, their
+    names are appended there for the caller to warn about. A ``*.conf`` entry
+    that is not a plain stem still raises SyncError (strict, fail-closed).
+    Raises SyncError on a non-zero exit too.
     """
     runner: RunCmd = run or run_cmd
     rc, out, err = runner(["ssh", host, "ls", "-1", remote_dir])
@@ -95,6 +99,12 @@ def list_remote_confs(host: str, remote_dir: str,
     for line in out.splitlines():
         name = line.strip()
         if not name:
+            continue
+        if not name.endswith(".conf"):
+            # посторонний файл (бэкап, README, подкаталог) — не повод ронять
+            # весь sync: пропускаем и отдаём наверх для предупреждения.
+            if skipped is not None:
+                skipped.append(name)
             continue
         if not _valid_remote_stem(name):
             raise SyncError(
@@ -138,13 +148,16 @@ def sync_confs(route: str, host: str, remote_dir: str,
 
     Report categories: ``imported`` (new locally), ``updated`` (content
     differs), ``skipped`` (identical), ``stale`` (local active file absent on
-    the server — reported, never deleted). ``dry_run`` still performs the
-    remote reads but skips every local write.
+    the server — reported, never deleted) and ``skipped_remote`` (non-.conf
+    entries on the server, e.g. ``old.conf.bak`` — reported, never fetched).
+    ``dry_run`` still performs the remote reads but skips every local write.
     """
     runner: RunCmd = run or run_cmd
     report: Dict[str, List[str]] = {
-        "imported": [], "updated": [], "skipped": [], "stale": []}
-    remote_stems = list_remote_confs(host, remote_dir, runner)
+        "imported": [], "updated": [], "skipped": [], "stale": [],
+        "skipped_remote": []}
+    remote_stems = list_remote_confs(host, remote_dir, runner,
+                                     skipped=report["skipped_remote"])
     dest_dir = _cache_dir(route)
     if not dry_run:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -167,11 +180,13 @@ def sync_confs(route: str, host: str, remote_dir: str,
             continue
         fd, tmp_name = tempfile.mkstemp(dir=str(dest_dir),
                                         prefix=f"{stem}.conf.", suffix=".tmp")
+        # chmod до записи (как в qrgen.render / profiles._atomic_write_0600):
+        # секрет никогда не лежит в мире-читаемом tmp-файле.
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), 0o600)
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.chmod(tmp_name, 0o600)
         os.replace(tmp_name, dest)
         report[action].append(stem)
 
@@ -217,6 +232,13 @@ def sync_links(route: str, host: str, run: Optional[RunCmd] = None,
             continue
         existing = profiles.get(name)
         if existing.get("link") == link:
+            # P2 (WP-QR8): skipped-записи без метаданных v1.1 (появились до
+            # vpn sync или без него) добирают route/source_host/synced_at —
+            # иначе stale-отчёт по source_host не увидит их никогда.
+            if not dry_run and not (
+                    existing.get("route") and existing.get("source_host")
+                    and existing.get("synced_at")):
+                profiles.update_fields(name, metadata)
             actions.append((name, "skipped"))
             continue
         if not dry_run:
@@ -251,8 +273,17 @@ def run_sync(exit_host: Optional[str] = None,
 
     A route whose host is unknown (not passed and not saved in settings.json)
     is skipped with ``error`` text in its report instead of failing the whole
-    run. Result shape: ``{"direct": {"confs": {...}, "links": [...],
-    "links_stale": [...], "host": H}, ...}`` (missing keys when skipped).
+    run. A failing ``vds gateway links`` (``PullError``) does not abort the
+    route either: the confs report is kept and the failure is recorded as
+    ``links_error`` in the route section. Result shape:
+    ``{"direct": {"confs": {...}, "links": [...], "links_stale": [...],
+    "links_error": "...", "host": H}, ...}`` (missing keys when skipped or
+    fine). With explicit ``--exit-host``/``--relay-host`` and
+    ``dry_run=False`` the host is persisted to settings.json
+    (``ssh_host``/``relay_ssh_host``) once that route syncs successfully
+    (same behavior as ``vpn profile pull`` saving ``ssh_host``); the save
+    happens once the route's confs were fetched (the host is proven
+    reachable), even when ``links`` failed with ``links_error``.
     """
     runner: RunCmd = run or run_cmd
     result: Dict[str, Dict[str, Any]] = {}
@@ -276,9 +307,25 @@ def run_sync(exit_host: Optional[str] = None,
             "confs": sync_confs(route, host, remote_dir, runner,
                                 dry_run=dry_run),
         }
-        links_actions, links_stale = sync_links(
-            route, host, runner, include_obfs=include_obfs, dry_run=dry_run)
-        section["links"] = links_actions
-        section["links_stale"] = links_stale
+        try:
+            links_actions, links_stale = sync_links(
+                route, host, runner, include_obfs=include_obfs,
+                dry_run=dry_run)
+        except pull.PullError as exc:
+            # links — не критический путь: confs уже синхронизированы,
+            # отчёт терять нельзя (WP-QR8 P1).
+            section["links"] = []
+            section["links_stale"] = []
+            section["links_error"] = str(exc)
+        else:
+            section["links"] = links_actions
+            section["links_stale"] = links_stale
+        # хост сохраняем, когда маршрут реально отвечал (confs вытянуты);
+        # сбой links этого не отменяет — хост проверен сессией scp/ls.
+        if not dry_run and "confs" in section:
+            if route == "direct" and exit_host:
+                settings.set_host(exit_host)
+            elif route == "relay" and relay_host:
+                settings.set_relay_host(relay_host)
         result[route] = section
     return result

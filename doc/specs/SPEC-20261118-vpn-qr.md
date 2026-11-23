@@ -624,11 +624,20 @@ Legacy `~/.awg/*.conf` читается только как fallback с WARNING:
 `archive/` и `# vpnm:status=archived` пропускаются авто-резолвером (даже если
 архивный файл — единственный non-relay кандидат, он НЕ выбирается, код 4).
 
-**AC-QR-11 (D3: archive + STALE).** `vpn profile archive` — dry-run по
+**AC-QR-11 (D3: archive + STALE; WP-QR8).** `vpn profile archive` — dry-run по
 умолчанию, `--apply` переносит `.conf` в `archive/` и ставит
-`status=archived` + `archived_reason` в `profiles.json`; `vpn sync` помечает
+`status=archived` + `archived_reason` в `profiles.json` (когда запись есть);
+профиль может существовать только как AWG-конфиг (mobile-awg) — падение только
+если не найден ни store, ни `~/.awg/{<name>,direct/<name>,relay/<name>}.conf`;
+`name` валидируется по `PROFILE_NAME_RE` (без `../`); корень →
+`archive/<name>.conf`, `direct/`/`relay/` → `archive/<ns>-<name>.conf`
+(одноимённые конфиги двух узлов не затирают друг друга); `vpn sync` помечает
 локальные профили, отсутствующие на сервере, как `STALE (absent on server)`;
-`vpn sync` не удаляет локальные файлы.
+`vpn sync` не удаляет локальные файлы; сбой `vds gateway links` (`PullError`)
+не роняет прогон — `links_error` в отчёте маршрута, confs сохраняются;
+посторонние записи в `ls` (не `*.conf`) пропускаются с предупреждением;
+явные `--exit-host`/`--relay-host` сохраняются в settings.json, когда маршрут
+успешно вытянул confs и не `--dry-run`.
 
 **AC-QR-12 (D1: авто-сохранение PNG + совместимость).** `vpn qr` по умолчанию
 авто-сохраняет PNG (0600) в `ARTIFACTS_DIR` и печатает оба пути в шапке;

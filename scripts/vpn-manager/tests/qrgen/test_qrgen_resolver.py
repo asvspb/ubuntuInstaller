@@ -535,3 +535,27 @@ def test_explicit_profile_finds_namespace_subdir_file(env):
     result = resolver.resolve(req("relay", "awg", "windows", profile="android"))
     assert result.profile_name == "android"
     assert result.endpoint_host == RELAY_DOMAIN
+
+
+# --- WP-QR8 P1-3: явный --profile при одноимённых direct/ и relay/ конфигах ------
+
+def test_explicit_profile_same_stem_both_namespaces(env):
+    """``laptop.conf`` на обоих узлах: маршрут запроса выбирает namespace."""
+    direct_endpoint = "203.0.113.172:51825"
+    relay_endpoint = f"{RELAY_DOMAIN}:443"
+    _mkdir(env, "direct").joinpath("laptop.conf").write_text(
+        _awg_text(direct_endpoint, address="10.9.0.2/32"), encoding="utf-8")
+    _mkdir(env, "relay").joinpath("laptop.conf").write_text(
+        _awg_text(relay_endpoint, address="10.11.0.2/32"), encoding="utf-8")
+
+    relay_resolved = resolver.resolve(
+        req("relay", "awg", "linux", profile="laptop"))
+    assert relay_resolved.profile_name == "laptop"
+    assert relay_resolved.endpoint_host == RELAY_DOMAIN
+
+    direct_resolved = resolver.resolve(
+        req("direct", "awg", "linux", profile="laptop"))
+    assert direct_resolved.profile_name == "laptop"
+    assert direct_resolved.endpoint_host == "203.0.113.172"
+    # legacy-варнинг не выдаётся: файл найден в namespace
+    assert not any("устаревшем" in w for w in direct_resolved.warnings)

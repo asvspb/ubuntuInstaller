@@ -272,6 +272,7 @@ def sync_cmd(
     на сервере, помечаются ``STALE (absent on server)`` с подсказкой
     архивации.
     """
+    from . import pull as pull_mod
     from . import sync as sync_mod
     routes: Tuple[str, ...]
     if direct and relay:
@@ -287,7 +288,7 @@ def sync_cmd(
         report = sync_mod.run_sync(
             exit_host=exit_host, relay_host=relay_host, routes=routes,
             include_obfs=include_obfs, dry_run=dry_run)
-    except sync_mod.SyncError as exc:
+    except (sync_mod.SyncError, pull_mod.PullError) as exc:
         _err(str(exc))
         raise typer.Exit(code=1)
     mode_label = "dry-run" if dry_run else "synced"
@@ -308,6 +309,8 @@ def sync_cmd(
                 f"STALE (absent on server): {stem} — подсказка: "
                 f"vpn profile archive {stem} --reason \"...\" --apply",
                 fg=typer.colors.YELLOW)
+        for entry in confs.get("skipped_remote") or []:
+            _warn(f"пропущен посторонний файл на сервере: {entry!r}")
         for name, action in section.get("links") or []:
             (_ok if action in ("imported", "updated") else
              (lambda m: typer.echo(m)))(f"{action} link '{name}'")
@@ -316,6 +319,9 @@ def sync_cmd(
                 f"STALE (absent on server): {name} — подсказка: "
                 f"vpn profile archive {name} --reason \"...\" --apply",
                 fg=typer.colors.YELLOW)
+        if section.get("links_error"):
+            _warn(f"links: {section['links_error']} "
+                  "(confs синхронизированы; store не обновлён)")
 
 
 def _awg_resolve_host() -> str:
