@@ -61,3 +61,22 @@ def set_host(host: str, path: Optional[Path] = None) -> None:
     settings["ssh_host"] = host
     _atomic_write_0600(path if path is not None else SETTINGS_PATH,
                        json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+
+
+def get_relay_host(path: Optional[Path] = None) -> Optional[str]:
+    """Return the saved relay ssh host, or None when not configured.
+
+    Backward compatible (SPEC-20261118-vpn-qr v1.1, D1): absence of the key
+    means "no relay host saved" — ``vpn sync --relay`` then requires an
+    explicit ``--relay-host``. ``ssh_host`` keeps meaning the exit node.
+    """
+    value = _load(path).get("relay_ssh_host")
+    return value if isinstance(value, str) and value else None
+
+
+def set_relay_host(host: str, path: Optional[Path] = None) -> None:
+    """Persist the relay ssh host (merges into the existing settings)."""
+    settings = _load(path)
+    settings["relay_ssh_host"] = host
+    _atomic_write_0600(path if path is not None else SETTINGS_PATH,
+                       json.dumps(settings, indent=2, ensure_ascii=False) + "\n")

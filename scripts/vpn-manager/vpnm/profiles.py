@@ -132,6 +132,86 @@ def get(name: str, path: Optional[Path] = None) -> Dict[str, Any]:
     return _find(_load(path), name)
 
 
+#: Аддитивные метаполя v1.1 (SPEC-20261118-vpn-qr §9.3, D3). Отсутствие поля =
+#: текущее поведение v1 (``status`` без значения = ``active``).
+STATUS_ACTIVE = "active"
+STATUS_ARCHIVED = "archived"
+
+
+def update_fields(name: str, fields: Dict[str, Any],
+                  path: Optional[Path] = None) -> Dict[str, Any]:
+    """Merge additive metadata fields into a record and persist the store.
+
+    Used by ``vpn sync`` (``route``/``source_host``/``synced_at``) and
+    ``archive()`` (``status``/``archived_reason``). Unknown keys are stored
+    verbatim; the caller owns the vocabulary.
+    """
+    profiles = _load(path)
+    record = _find(profiles, name)
+    record.update(fields)
+    _save(profiles, path)
+    return record
+
+
+def archive(name: str, reason: str, apply: bool = False,
+            path: Optional[Path] = None,
+            awg_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Mark a profile as archived (dead profile, D3/R4). Dry-run by default.
+
+    Plan: ``status=archived`` + ``archived_reason`` in the store record, and —
+    if a client AWG ``<name>.conf`` exists in the local ``~/.awg`` root or in
+    ``direct/``/``relay/`` — a move into ``archive/<name>-<stem>.conf``
+    (deduplicated to ``archive/<name>.conf`` when stem equals the name). The
+    archive/ directory is never scanned by the auto-resolver, and the moved
+    file keeps its 0600 permissions.
+
+    With ``apply=False`` (default) nothing is written or moved; the returned
+    plan says exactly what ``--apply`` would do.
+    """
+    from . import amneziawg  # local import: avoids load at import time
+
+    records = _load(path)
+    record = _find(records, name)
+    if record.get("status") == STATUS_ARCHIVED:
+        raise ProfileStoreError(f"profile '{name}' is already archived")
+
+    awg_dir = Path(awg_dir) if awg_dir is not None else Path(amneziawg.LOCAL_CONF_DIR)
+    moves: List[Dict[str, str]] = []
+    for sub in ("", "direct", "relay"):
+        src = awg_dir / sub / f"{name}.conf" if sub else awg_dir / f"{name}.conf"
+        if src.is_file():
+            # D3: archive/<tag>-<stem>.conf; локальный файл один, тег = имя
+            # профиля, поэтому dest = archive/<name>.conf (без дублей).
+            moves.append({"from": str(src),
+                          "to": str(awg_dir / "archive" / f"{name}.conf")})
+    for move in moves:
+        dest_path = Path(move["to"])
+        if dest_path.exists():
+            raise ProfileStoreError(
+                f"archive target already exists: {move['to']}")
+
+    result: Dict[str, Any] = {
+        "name": name,
+        "reason": reason,
+        "store_fields": {"status": STATUS_ARCHIVED, "archived_reason": reason},
+        "conf_moves": moves,
+        "applied": False,
+    }
+    if not apply:
+        return result
+
+    for move in moves:
+        dest_path = Path(move["to"])
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(dest_path.parent, 0o700)
+        os.replace(move["from"], dest_path)
+        os.chmod(dest_path, 0o600)
+    record.update(result["store_fields"])
+    _save(records, path)
+    result["applied"] = True
+    return result
+
+
 def resolve_cdn(path: Optional[Path] = None) -> Optional[str]:
     """Имя CDN-профиля (protocol ``xray-cdn-ws``) или ``None``.
 

@@ -421,3 +421,117 @@ def test_split_endpoint_handles_ipv6_and_rejects_garbage():
     for bad in ("", "no-port", "[2001:db8::1]", "host:notaport"):
         with pytest.raises(models.QrConfigError):
             resolver.split_endpoint(bad)
+
+
+# --- v1.1 (WP-QR5, SPEC §9.3/§9.5 AC-QR-10): namespace, алиасы, archived ------
+
+def _mkdir(env, name):
+    path = env.awg_dir / name
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def test_direct_and_relay_namespaces_resolve_without_collision(env):
+    """AC-QR-10: direct/mobile.conf + relay/android.conf резолвятся одновременно."""
+    _mkdir(env, "direct").joinpath("mobile.conf").write_text(
+        _awg_text("203.0.113.10:51825", address="10.9.0.2/32"), encoding="utf-8")
+    _mkdir(env, "relay").joinpath("android.conf").write_text(
+        _awg_text(f"{RELAY_DOMAIN}:443", address="10.10.0.4/32"), encoding="utf-8")
+
+    direct = resolver.resolve(req("direct", "awg", "android"))
+    relay = resolver.resolve(req("relay", "awg", "android"))
+
+    assert direct.profile_name == "mobile"
+    assert relay.profile_name == "android"
+    assert direct.endpoint_host == "203.0.113.10"
+    assert relay.endpoint_host == RELAY_DOMAIN
+
+
+def test_device_alias_laptop_maps_to_linux(env):
+    _mkdir(env, "direct").joinpath("laptop.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    result = resolver.resolve(req("direct", "awg", "linux"))
+    assert result.profile_name == "laptop"
+
+
+def test_device_alias_win_maps_to_windows(env):
+    _mkdir(env, "relay").joinpath("win.conf").write_text(
+        _awg_text(f"{RELAY_DOMAIN}:443"), encoding="utf-8")
+    result = resolver.resolve(req("relay", "awg", "windows"))
+    assert result.profile_name == "win"
+
+
+def test_two_alias_candidates_fail_closed_with_names_and_hint(env):
+    d = _mkdir(env, "direct")
+    d.joinpath("android.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    d.joinpath("mobile.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    with pytest.raises(models.QrConfigError) as excinfo:
+        resolver.resolve(req("direct", "awg", "android"))
+    assert excinfo.value.exit_code == models.EXIT_CONFIG_ERROR
+    message = str(excinfo.value)
+    assert "android.conf" in message and "mobile.conf" in message
+    assert "--profile" in message
+
+
+def test_archive_dir_is_never_resolved(env):
+    archive = _mkdir(env, "archive")
+    archive.joinpath("mobile.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    with pytest.raises(models.QrConfigError):
+        resolver.resolve(req("direct", "awg", "android"))
+    with pytest.raises(models.QrConfigError):
+        resolver.resolve(req("direct", "awg", "android", profile="mobile"))
+
+
+def test_archived_header_file_is_never_auto_selected(env):
+    """AC-QR-10: даже единственный non-relay кандидат с archived-заголовком
+    НЕ выбирается — код 4."""
+    _mkdir(env, "direct").joinpath("mobile.conf").write_text(
+        "# vpnm:status=archived reason=dead-pool\n" +
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    with pytest.raises(models.QrConfigError) as excinfo:
+        resolver.resolve(req("direct", "awg", "android"))
+    assert excinfo.value.exit_code == models.EXIT_CONFIG_ERROR
+
+
+def test_explicit_profile_on_archived_conf_is_code4(env):
+    d = _mkdir(env, "direct")
+    d.joinpath("mobile.conf").write_text(
+        "# vpnm:status=archived reason=dead-pool\n" +
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    d.joinpath("phone.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    # авто-резолвер берёт живой phone, архивный mobile не трогает
+    assert resolver.resolve(req("direct", "awg", "android")).profile_name == "phone"
+    # явный --profile на архивном — fail-closed код 4 с пометкой ARCHIVED
+    with pytest.raises(models.QrConfigError) as excinfo:
+        resolver.resolve(req("direct", "awg", "android", profile="mobile"))
+    assert excinfo.value.exit_code == models.EXIT_CONFIG_ERROR
+    assert "archived" in str(excinfo.value)
+
+
+def test_legacy_root_conf_resolves_with_warning(env):
+    env.add_awg("mobile", _awg_text("203.0.113.10:51825"))
+    result = resolver.resolve(req("direct", "awg", "android"))
+    assert result.profile_name == "mobile"
+    assert any("vpn sync" in w for w in result.warnings)
+    assert any("устаревшем" in w for w in result.warnings)
+
+
+def test_legacy_root_conf_skipped_when_namespace_copy_exists(env):
+    env.add_awg("mobile", _awg_text("198.51.100.99:51825"))
+    _mkdir(env, "direct").joinpath("mobile.conf").write_text(
+        _awg_text("203.0.113.10:51825"), encoding="utf-8")
+    result = resolver.resolve(req("direct", "awg", "android"))
+    assert result.endpoint_host == "203.0.113.10"
+    assert not any("устаревшем" in w for w in result.warnings)
+
+
+def test_explicit_profile_finds_namespace_subdir_file(env):
+    _mkdir(env, "relay").joinpath("android.conf").write_text(
+        _awg_text(f"{RELAY_DOMAIN}:443"), encoding="utf-8")
+    result = resolver.resolve(req("relay", "awg", "windows", profile="android"))
+    assert result.profile_name == "android"
+    assert result.endpoint_host == RELAY_DOMAIN

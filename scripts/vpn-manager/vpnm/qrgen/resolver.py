@@ -1,4 +1,4 @@
-"""Резолвер источников для ``vpn qr`` (SPEC-20261118-vpn-qr §3.2).
+"""Резолвер источников для ``vpn qr`` (SPEC-20261118-vpn-qr §3.2 + v1.1 §9.3).
 
 Читает только локальное состояние и ничего не мутирует:
 
@@ -42,14 +42,31 @@ _PROTO_BY_STORE = {
     links.PROTOCOL_HYSTERIA2: Proto.HY,
 }
 
-#: Приоритет релейных AWG-файлов по целевой ОС (§3.2C).
-_RELAY_AWG_PREFS: Dict[TargetOS, Tuple[str, ...]] = {
-    TargetOS.ANDROID: ("android", "relay"),
-    TargetOS.IOS: ("android", "relay"),
-    TargetOS.WINDOWS: ("windows", "relay"),
-    TargetOS.MACOS: ("windows", "relay"),
-    TargetOS.LINUX: ("relay",),
+#: Таблица алиасов устройств (v1.1, D3/§9.3): серверные пиры не переименовываются,
+#' разнобой exit (mobile/win/laptop) vs relay (android/windows) снимается здесь.
+DEVICE_ALIASES: Dict[TargetOS, Tuple[str, ...]] = {
+    TargetOS.ANDROID: ("android", "mobile", "phone"),
+    TargetOS.IOS: ("ios", "iphone", "ipad"),
+    TargetOS.WINDOWS: ("windows", "win"),
+    TargetOS.MACOS: ("macos", "mac"),
+    TargetOS.LINUX: ("linux", "laptop", "desktop"),
 }
+
+#: Заголовок, помечающий мёртвый AWG-конфиг (v1.1, D3/R4).
+ARCHIVED_HEADER = "# vpnm:status=archived"
+
+#: Подкаталоги namespace (v1.1, D3); archive/ резолвером не сканируется никогда.
+NS_SUBDIRS: Tuple[str, ...] = ("direct", "relay")
+
+_LEGACY_LOCATION_WARNING = (
+    "файл '{stem}.conf' лежит в устаревшем расположении ~/.awg/ (без "
+    "подкаталога direct//relay//archive/); выполните vpn sync или перенесите "
+    "его вручную")
+
+_ARCHIVED_EXPLICIT_WARNING = (
+    "конфиг '{stem}.conf' помечен архивным ({header}); авто-резолвер его не "
+    "выбирает — для работы с ним требуется --include-archived или перенос "
+    "в ~/.awg/archive/")
 
 _ACTIVE_PEER_WARNING = (
     "используется конфиг активного пира '{stem}' ({address}); одновременная "
@@ -259,13 +276,15 @@ class _AwgCandidate:
     origin: str  # "local" | "system"
     interface: Dict[str, str]
     peer: Dict[str, str]
+    origin_ns: str = "legacy"  # "legacy" (корень ~/.awg) | "direct" | "relay"
 
     @property
     def address(self) -> str:
         return self.interface.get("address", "")
 
 
-def _awg_candidate(stem: str, text: str, origin: str) -> _AwgCandidate:
+def _awg_candidate(stem: str, text: str, origin: str,
+                   origin_ns: str = "legacy") -> _AwgCandidate:
     ini = parse_ini(text)
     if "interface" not in ini or "peer" not in ini:
         raise QrConfigError(
@@ -274,17 +293,41 @@ def _awg_candidate(stem: str, text: str, origin: str) -> _AwgCandidate:
     host, port = split_endpoint(endpoint, context=f"конфиг '{stem}.conf' Endpoint")
     return _AwgCandidate(stem=stem, text=text, endpoint_host=host,
                          endpoint_port=port, origin=origin,
-                         interface=ini["interface"], peer=ini["peer"])
+                         interface=ini["interface"], peer=ini["peer"],
+                         origin_ns=origin_ns)
+
+
+def _conf_path(stem: str, ns: Optional[str] = None) -> Path:
+    base = Path(amneziawg.LOCAL_CONF_DIR)
+    return base / ns / f"{stem}.conf" if ns else base / f"{stem}.conf"
+
+
+def _conf_is_archived(path: Path) -> bool:
+    """True, когда файл начинается с заголовка ``# vpnm:status=archived`` (D3)."""
+    try:
+        head = path.read_text(encoding="utf-8").lstrip()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return head.startswith(ARCHIVED_HEADER)
 
 
 def _read_local_conf(stem: str) -> Optional[_AwgCandidate]:
-    path = Path(amneziawg.LOCAL_CONF_DIR) / f"{stem}.conf"
-    try:
-        if not path.is_file():
-            return None
-        return _awg_candidate(stem, path.read_text(encoding="utf-8"), "local")
-    except (OSError, UnicodeDecodeError):
-        return None
+    """Read ``<stem>.conf`` из корня ``~/.awg`` или из ``direct/``/``relay/``.
+
+    Порядок: legacy-корень (совместимость), затем namespace-подкаталоги v1.1.
+    Файл с заголовком archived читается (для явного ``--profile`` резолвер
+    выдаёт код 4 на нём), но ``archive/`` сюда не входит никогда.
+    """
+    for ns in (None,) + NS_SUBDIRS:
+        path = _conf_path(stem, ns)
+        try:
+            if not path.is_file():
+                continue
+            return _awg_candidate(stem, path.read_text(encoding="utf-8"),
+                                  "local", origin_ns=ns or "legacy")
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
 
 
 def _read_system_conf(stem: str) -> Optional[_AwgCandidate]:
@@ -302,10 +345,11 @@ def _read_system_conf(stem: str) -> Optional[_AwgCandidate]:
 
 
 def _local_conf_stems() -> List[str]:
-    """Стемы ``*.conf`` в ``LOCAL_CONF_DIR`` (без ``*.bak*``/``.hidden``)."""
+    """Стемы legacy ``*.conf`` в корне ``LOCAL_CONF_DIR`` (без ``.bak``/``.hidden``)."""
+    base = Path(amneziawg.LOCAL_CONF_DIR) / ns if ns else Path(amneziawg.LOCAL_CONF_DIR)
     out: List[str] = []
     try:
-        entries = sorted(Path(amneziawg.LOCAL_CONF_DIR).glob("*.conf"))
+        entries = sorted(base.glob("*.conf"))
     except OSError:
         return out
     for path in entries:
@@ -316,18 +360,35 @@ def _local_conf_stems() -> List[str]:
 
 
 def _local_conf_candidates() -> List[_AwgCandidate]:
-    """Все валидные ``*.conf`` из ``LOCAL_CONF_DIR`` (битые — пропускаются).
+    """Все валидные ``*.conf`` авто-резолвера (v1.1, D3): direct/ + relay/ + legacy-корень.
 
-    Один повреждённый файл не должен ломать выбор остальных: политика та же,
-    что у битой записи в store (``_profile_candidates``).
+    ``archive/`` не сканируется никогда; файлы с заголовком
+    ``# vpnm:status=archived`` пропускаются (мёртвый конфиг не выдаётся
+    молча как рабочий). Один повреждённый файл не должен ломать выбор
+    остальных: политика та же, что у битой записи в store. Namespace-копии
+    имеют приоритет над legacy-корнем при том же stem.
     """
     out: List[_AwgCandidate] = []
-    for stem in _local_conf_stems():
+    seen: set = set()
+    for ns in NS_SUBDIRS + (None,):
+        base = (Path(amneziawg.LOCAL_CONF_DIR) / ns if ns
+                else Path(amneziawg.LOCAL_CONF_DIR))
         try:
-            candidate = _read_local_conf(stem)
-        except QrConfigError:
+            entries = sorted(base.glob("*.conf"))
+        except OSError:
             continue
-        if candidate is not None:
+        for path in entries:
+            stem = path.name[:-len(".conf")]
+            if stem in seen or not path.is_file() or not PROFILE_NAME_RE.match(stem):
+                continue
+            if _conf_is_archived(path):
+                continue
+            try:
+                candidate = _awg_candidate(stem, path.read_text(encoding="utf-8"),
+                                           "local", origin_ns=ns or "legacy")
+            except (QrConfigError, OSError, UnicodeDecodeError):
+                continue
+            seen.add(stem)
             out.append(candidate)
     return out
 
@@ -366,6 +427,25 @@ def _finish_awg(chosen: _AwgCandidate, request: QrRequest, client: str,
         source="awg", raw_awg_ini=chosen.text, warnings=warnings)
 
 
+def _explicit_awg(stem: str) -> Optional[_AwgCandidate]:
+    """Явный ``--profile``: чтение из корня/direct//relay/ с archived-гейтом (код 4)."""
+    candidate = _read_local_conf(stem) or _read_system_conf(stem)
+    if candidate is None:
+        return None
+    if candidate.origin == "local":
+        path = _conf_path(stem)
+        if not path.is_file():
+            for ns in NS_SUBDIRS:
+                path = _conf_path(stem, ns)
+                if path.is_file():
+                    break
+        if path.is_file() and _conf_is_archived(path):
+            raise QrConfigError(
+                f"--profile '{stem}': " + _ARCHIVED_EXPLICIT_WARNING.format(
+                    stem=stem, header=ARCHIVED_HEADER))
+    return candidate
+
+
 def _resolve_awg(request: QrRequest, client: str,
                  profile_name: Optional[str]) -> ResolvedSource:
     relay_hosts = _relay_hosts()
@@ -373,31 +453,56 @@ def _resolve_awg(request: QrRequest, client: str,
     warnings: List[str] = []
 
     def relay_of(candidate: _AwgCandidate) -> bool:
+        if candidate.origin_ns == "direct":
+            return False
+        if candidate.origin_ns == "relay":
+            return True
+        # legacy-корень: классификация по stem/host (поведение v1)
         return _is_relay_awg(candidate.stem, candidate.endpoint_host, relay_hosts)
 
+    def namespace_of(candidate: _AwgCandidate) -> str:
+        return "relay" if relay_of(candidate) else "direct"
+
     if profile_name is not None:
-        chosen = _read_local_conf(profile_name) or _read_system_conf(profile_name)
+        chosen = _explicit_awg(profile_name)
         if chosen is None:
             raise QrConfigError(
                 f"--profile '{profile_name}': AWG-конфиг не найден ни в "
-                "~/.awg, ни в системном каталоге (или недоступен без пароля sudo)")
+                "~/.awg (direct//relay//корень), ни в системном каталоге "
+                "(или недоступен без пароля sudo)")
         if relay_of(chosen) != wanted_relay:
             kind = "relay" if relay_of(chosen) else "direct"
             want = "relay" if wanted_relay else "direct"
             raise QrConfigError(
                 f"--profile '{profile_name}': это {kind}-конфиг, а запрошен {want}")
+        if chosen.origin_ns == "legacy":
+            warnings.append(_LEGACY_LOCATION_WARNING.format(stem=chosen.stem))
         return _finish_awg(chosen, request, client, warnings)
 
-    if wanted_relay:
-        local = [c for c in _local_conf_candidates() if relay_of(c)]
-        by_stem = {c.stem: c for c in local}
-        chosen = None
-        for stem in _RELAY_AWG_PREFS[request.target_os]:
-            if stem in by_stem:
-                chosen = by_stem[stem]
-                break
-        if chosen is None and len(local) == 1:
-            chosen = local[0]
+    pool = [c for c in _local_conf_candidates()
+            if namespace_of(c) == ("relay" if wanted_relay else "direct")]
+    alias_stems = set(DEVICE_ALIASES[request.target_os]) | {
+        request.target_os.value}
+    alias_matches = [c for c in pool if c.stem in alias_stems]
+
+    chosen: Optional[_AwgCandidate] = None
+    if len(alias_matches) >= 2:
+        # v1.1, D3: fail-closed — никаких тихих угадываний
+        names = ", ".join(sorted(f"{c.stem}.conf" for c in alias_matches))
+        raise QrConfigError(
+            f"для {request.route.value}/{request.target_os.value} найдено "
+            f"{len(alias_matches)} кандидатов ({names}); уточните --profile "
+            "<NAME> или перенесите лишние файлы в ~/.awg/archive/")
+    if len(alias_matches) == 1:
+        chosen = alias_matches[0]
+    elif wanted_relay:
+        # legacy-фолбэк v1: единственный stem 'relay' → он; единственный
+        # релейный кандидат вообще → он; иначе системный каталог.
+        relay_stem = [c for c in pool if c.stem == "relay"]
+        if len(relay_stem) == 1:
+            chosen = relay_stem[0]
+        elif len(pool) == 1:
+            chosen = pool[0]
         if chosen is None:
             system = _read_system_conf("relay")
             if system is not None and relay_of(system):
@@ -407,32 +512,32 @@ def _resolve_awg(request: QrRequest, client: str,
                 "не найден релейный AWG-конфиг для "
                 f"{request.target_os.value} (уточните --profile <NAME> или "
                 "создайте пир: vpn amneziawg add-client <name>)")
-        return _finish_awg(chosen, request, client, warnings)
+    elif len(pool) == 1:
+        chosen = pool[0]
 
-    # --direct --awg: приоритет 1 — локальный direct-конфиг
-    local_direct = [c for c in _local_conf_candidates() if not relay_of(c)]
-    per_os = f"{request.target_os.value}"
-    chosen = next((c for c in local_direct if c.stem == per_os), None)
-    if chosen is None and len(local_direct) == 1:
-        chosen = local_direct[0]
     if chosen is not None:
+        if chosen.origin_ns == "legacy":
+            warnings.append(_LEGACY_LOCATION_WARNING.format(stem=chosen.stem))
         return _finish_awg(chosen, request, client, warnings)
 
-    # приоритет 2 — активный пир из mode.json (P2: только если он direct)
+    # приоритет 2 (direct) — активный пир из mode.json (P2: только если он direct)
     iface = _iface_from_mode()
     if iface and PROFILE_NAME_RE.match(iface) and not (
             iface == "relay" or iface.startswith("relay-")):
-        active = _read_local_conf(iface) or _read_system_conf(iface)
+        active = _explicit_awg(iface)
         if active is not None and not relay_of(active):
+            if active.origin_ns == "legacy":
+                warnings.append(_LEGACY_LOCATION_WARNING.format(stem=active.stem))
             warnings.append(_ACTIVE_PEER_WARNING.format(
                 stem=active.stem, address=active.address or "адрес неизвестен"))
             return _finish_awg(active, request, client, warnings)
 
     # приоритет 3 — fail-closed
     raise QrConfigError(
-        "локальный direct-конфиг AWG не найден (в ~/.awg только релейные "
-        "профили, системный каталог пуст или недоступен без пароля sudo); "
-        "используйте --relay --awg или создайте пир: vpn amneziawg add-client <name>")
+        "локальный direct-конфиг AWG не найден (в ~/.awg/direct/ пусто, в "
+        "~/.awg только релейные профили, системный каталог пуст или "
+        "недоступен без пароля sudo); выполните vpn sync, используйте "
+        "--relay --awg или создайте пир: vpn amneziawg add-client <name>")
 
 
 # --- точка входа ---------------------------------------------------------------
