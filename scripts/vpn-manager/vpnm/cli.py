@@ -234,6 +234,7 @@ app.add_typer(guard_app, name="guard")
 # `vpn qr` / `vpn conf` (SPEC-20261118-vpn-qr v1.1): резолвер и рендер живут
 # в vpnm/qrgen/, модуль лёгкий (typer + stdlib), поэтому регистрируем на импорте.
 from .qrgen.cli import conf_command, qr_command  # noqa: E402  (регистрация ниже)
+from .qrgen.redact import redact_text
 
 app.command("qr", help="QR/URI клиентского профиля: маршрут × протокол × ОС "
                        "(офлайн, без секретов в выводе; v1.1 авто-сохраняет "
@@ -320,7 +321,7 @@ def sync_cmd(
                 f"vpn profile archive {name} --reason \"...\" --apply",
                 fg=typer.colors.YELLOW)
         if section.get("links_error"):
-            _warn(f"links: {section['links_error']} "
+            _warn(f"links: {redact_text(section['links_error'])} "
                   "(confs синхронизированы; store не обновлён)")
 
 
