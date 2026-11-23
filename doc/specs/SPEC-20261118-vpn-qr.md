@@ -1,8 +1,8 @@
 # SPEC-20261118-vpn-qr: Подкоманда `vpn qr` — генерация QR-кодов и клиентских профилей подключения
 
 - **ID:** SPEC-20261118-vpn-qr
-- **Версия:** rev.3.2
-- **Статус:** G2 PASS — APPROVED & FROZEN (2026-11-18)
+- **Версия:** rev.4 (v1: rev.3.2 frozen; v1.1 добавлено rev.4)
+- **Статус:** v1 — G2 PASS, APPROVED & FROZEN (2026-11-18); v1.1 — спека APPROVED (rev.4, 2026-11-24, решения архлида D1–D4), реализация — WP-QR5/WP-QR6
 - **Репозиторий исполнения (КРИТИЧНО):** `~/Dev/ubuntuInstaller` (`scripts/vpn-manager/`).
   НЕ трогать серверный репозиторий `~/Dev/my-coding/vds/src/**`.
 
@@ -129,7 +129,7 @@ vpn qr (--direct | --relay) (--awg | --reality | --xhttp | --hy) \
 | Маршрут | Протокол | Статус | Источник креденшелов и параметров |
 |---|---|---|---|
 | `--direct` | `--reality` | ✅ Поддерживается | Direct-профиль Reality из `profiles.STORE_PATH` (напр. `asv2-reality`) |
-| `--relay` | `--reality` | ✅ Поддерживается | Relay-профиль Reality из `profiles.STORE_PATH` (напр. `relay-reality` со своими `host`, `uuid`, `pbk`, `sid`, `sni=ya.ru`) |
+| `--relay` | `--reality` | ✅ Поддерживается | Relay-профиль Reality из `profiles.STORE_PATH` (напр. `relay-reality` со своими `host`, `uuid`, `pbk`, `sid`, `sni=example.invalid`) |
 | `--direct` | `--xhttp` | ✅ Поддерживается | Direct-профиль XHTTP из `profiles.STORE_PATH` + анти-ML параметры GR-25 (`vpnm/xclient.py`) |
 | `--relay` | `--xhttp` | ❌ Код 3 | На релее нет XHTTP-инбаунда → `EXIT_UNSUPPORTED_COMBO` (3) |
 | `--direct` | `--hy` | ✅ Поддерживается | Direct-профиль Hysteria2 из `profiles.STORE_PATH` (напр. `asv2-hy2`) |
@@ -144,7 +144,7 @@ vpn qr (--direct | --relay) (--awg | --reality | --xhttp | --hy) \
 `relay_hosts` собирается из:
 
 1. `Endpoint` (часть host без порта) файла `amneziawg.LOCAL_CONF_DIR / "relay.conf"`,
-   если он существует (напр. `relay.asvpersonal.ru`);
+   если он существует (напр. `relay.fixtures.invalid`);
 2. поля `target` из `mode.read_mode()`, только если `mode == "relay"` (или
    `route == "relay"`) и ключ `target` присутствует и непуст.
 
@@ -161,7 +161,7 @@ host_is_relay = p.host in relay_hosts
 ```
 
 Если `name_is_relay and relay_hosts and not host_is_relay` (как у `relay-reality`
-с IP `185.80.91.135`), профиль классифицируется как relay и в `warnings`
+с IP `198.51.100.10`), профиль классифицируется как relay и в `warnings`
 добавляется:
 
 ```
@@ -365,10 +365,10 @@ def visible_qr_width(qr_output: str) -> int:
 `tests/test_profile_qr.py` зелёный.
 
 **AC-QR-2 (Резолв `relay-reality` при IP-хосте, R1).** На фикстуре с
-`relay.conf -> relay.asvpersonal.ru:443`, `mode.json -> {"mode":"direct","iface":"laptop"}`
-(без `target`) и `relay-reality -> 185.80.91.135` вызов
+`relay.conf -> relay.fixtures.invalid:443`, `mode.json -> {"mode":"direct","iface":"laptop"}`
+(без `target`) и `relay-reality -> 198.51.100.10` вызов
 `vpn qr --relay --reality --windows` выбирает `relay-reality`, эмитит его
-`uuid`/`pbk`/`sid` и `sni=ya.ru` + warning о классификации по имени.
+`uuid`/`pbk`/`sid` и `sni=example.invalid` + warning о классификации по имени.
 
 **AC-QR-3 (Матрица `--relay` и `--client` × proto, B2 + Мелочь 2).**
 `--relay --xhttp`, `--relay --hy`, `--client amneziavpn`, `--awg --client v2rayng`
@@ -381,7 +381,7 @@ def visible_qr_width(qr_output: str) -> int:
   `warnings` присутствует предупреждение об отсутствии DNS/`PersistentKeepalive`.
 - `--direct --awg --android` при наличии только релейных файлов в `LOCAL_CONF_DIR`
   выбирает `<AWG_SYSTEM_CONF_DIR>/laptop.conf` по `iface="laptop"` из
-  `mode.read_mode()`, проверяет, что его Endpoint (`213.108.23.119:51825`) не
+  `mode.read_mode()`, проверяет, что его Endpoint (`203.0.113.10:51825`) не
   релейный (P2), игнорирует `awg0-laptop.conf` и `*.bak*`, вырезает `Table = off`
   и добавляет warning о коллизии активного пира `laptop` (R4b).
 - Если в `mode.read_mode()` подставить `iface="relay"` (или конфиг, чей Endpoint
@@ -448,3 +448,207 @@ pipx install --force -e . && \
 > в `site-packages` лежит реальный каталог `vpnm/`, без editable-finder), поэтому
 > после каждой правки исходников reinstall обязателен, а импорт проверяется
 > **из venv**, а не из дерева исходников.
+
+## 9. v1.1 (rev.4): эволюция поверх v1 — решения архлида D1–D4
+
+> **Основание:** PROMPT-20261123-qr-conf-availability-arch-lead-response.md
+> (получен 2026-11-24 01:03 MSK). Аудит показал, что `vpn qr` v1 уже сдан
+> (G2 PASS, rev.3.2, 57+ тестов) — параллельный фасад не строится; все изменения
+> v1.1 **аддитивны**, разделы v1 выше остаются в силе.
+
+> **О нумерации AC.** AC-QR-8 из §7 (packaging/zbarimg) сохраняется и остаётся
+> обязательным. В v1.1 по решению архлида вводится новая серия AC-QR-8…AC-QR-12
+> (§9.5); чтобы избежать коллизии, AC из §7 помечен **AC-QR-8(v1)** в контексте
+> v1.1-приёмки, а новые AC имеют силу только для фич v1.1 (vpn conf, vpn sync,
+> авто-сохранение PNG, ARTIFACTS_DIR, archive).
+
+### 9.1. D1 — Форма CLI: `vpn conf` + `--qr` как опция, `vpn sync` как единственная сетевая точка
+
+**Решение.** Один движок `vpnm/qrgen/` обслуживает две команды:
+
+- `vpn conf <оси> [--qr] [--reveal] [--sync] [--no-save] [--out PATH] [--force]`
+  — основной сценарий оператора: гарантирует локальный файл `.conf`/`.uri`
+  (0600), печатает путь + маскированный текст; с `--qr` дополнительно рисует QR
+  в терминал и сохраняет PNG (0600) в канонический каталог артефактов.
+- `vpn qr <оси> [--sync] [--no-save] [--format qr|uri|png|svg|json] [--out PATH]
+  [--show-uri|--reveal] [--force]` — быстрый QR-сценарий. **В v1.1 по умолчанию
+  авто-сохраняет PNG** (0600) в канонический каталог артефактов и печатает в
+  шапке оба пути (исходный `.conf` + сохранённый `.png`) — закрывает R3.
+  `--no-save` отключает запись. Совместимость с v1: `--no-save` восстанавливает
+  поведение v1 (только вывод, без файлов).
+- `vpn sync [--direct|--relay|--all] [--exit-host H] [--relay-host H]
+  [--include-obfs] [--dry-run]` — **единственная сетевая точка**:
+  read-only подтяжка авторитетных серверных файлов (vds gateway links по ssh +
+  scp из клиентских каталогов, без мутации серверов). `vpn qr`/`vpn conf`
+  остаются офлайновыми по умолчанию; `--sync` — opt-in.
+
+**Оси** (единые для `vpn conf` и `vpn qr`, ровно по одному из группы, как в
+`qrgen/cli.py`):
+
+| Группа | Флаги |
+|---|---|
+| Маршрут | `--direct` / `--relay` |
+| Транспорт | `--awg` / `--reality` / `--xhttp` / `--hy` (алиас `--hy2`) |
+| Устройство/ОС | `--android` / `--ios` / `--windows` / `--macos` / `--linux` (алиас `--laptop` → linux как синоним) |
+| Уточнение/вывод | `--profile NAME`, `--client`, `--sync`, `--qr` (на vpn conf), `--reveal` (алиас `--show-uri`), `--no-save`, `--out PATH`, `--force` |
+
+**Матрица источников «флаг → источник»** (источник правды = сервер; локальный
+кэш = read-only копия 0600):
+
+| Маршрут | Протокол | Серверный источник правды (`vpn sync` / `--sync`) | Локальный кэш (офлайн-резолв `vpnm/qrgen`) |
+|---|---|---|---|
+| `--direct` | `--awg` | exit_host: `/opt/my-vds/gateway/clients/amneziawg/*.conf` (`AWG_CLIENTS_DIR`, scp) | `~/.awg/direct/<stem>.conf` (fallback: legacy `~/.awg/<stem>.conf` с warning, затем активный `mode.json` с warning о коллизии) |
+| `--relay` | `--awg` | relay_host: `/opt/my-vds/gateway/clients/relay/*.conf` (`RELAY_CLIENTS_DIR`, scp) | `~/.awg/relay/<stem>.conf` (fallback: legacy `~/.awg/relay*.conf` с warning) |
+| `--direct` | `--reality` / `--xhttp` / `--hy` | exit_host: `vds gateway links [--include-obfs]` (ssh) | `~/.config/vpn-manager/profiles.json` (записи с `route=direct` / не-relay host) |
+| `--relay` | `--reality` | relay_host: `vds gateway links` (ssh) | `~/.config/vpn-manager/profiles.json` (записи с `route=relay` / relay_host) |
+| `--relay` | `--xhttp` / `--hy` | — | **Код 3** `EXIT_UNSUPPORTED_COMBO` — на релее инбаундов нет |
+
+**Отвергнутые альтернативы** (зафиксировано): депрекация `vpn qr` в пользу
+только `vpn conf` (ломает сданный G2-контракт); расширение legacy-команд
+`vpn profile qr/config` / `vpn amneziawg qr` (разорваны по сторам, оперируют
+локальными именами, а не осью route × proto × os) — остаются как low-level
+legacy без слома совместимости; ходить по SSH/SCP на каждый вызов `vpn qr`/
+`vpn conf` по умолчанию (нарушает офлайн-инвариант §1.1 и смешивает read-only
+рендер с сетевой мутацией кэша).
+
+### 9.2. D2 — Политика секретов, прав доступа и вывода в терминал
+
+- **Каталог артефактов:** `ARTIFACTS_DIR = ~/.local/share/vpn-manager/artifacts/`,
+  переопределяется env `VPN_MANAGER_ARTIFACTS_DIR` (изоляция тестов).
+  Права каталога **0700**, права всех файлов внутри — **0600**
+  (паттерн `mkstemp` + `os.fchmod(fd, 0o600)` + `fsync` + `os.replace`,
+  уже реализованный в `qrgen/render.py`).
+- `--out <custom_path>` — права файла принудительно 0600; если родительский
+  каталог world-readable (например, `/tmp`) — WARNING в stderr.
+- **PNG = секрет уровня `.conf`**: PNG QR-кода для AWG содержит PrivateKey в
+  открытом виде (достаточно zbarimg), для Reality/Hy2 — uuid/auth/obfs-password.
+- **Вывод `vpn conf` по умолчанию — masked:**
+  - шапка: `[vpn conf] route | proto | os | client | profile | endpoint |
+    sha256 | origin (local/synced, mtime)`;
+  - строки путей: `Conf: <path> (0600)`, при `--qr` — `QR PNG: <path> (0600)`;
+  - тело конфига/URI пропускается через `vpnm/qrgen/redact.py`
+    (`PrivateKey = <redacted>`, `PresharedKey = <redacted>`, `vless://<redacted>…`);
+  - подсказка: «Для сырого текста с секретами: добавьте `--reveal`».
+- **`--reveal` / `--show-uri`:** сырой payload в stdout (пригодно для `| xclip`),
+  WARNING в stderr: «вывод содержит секреты — не вставляйте в логи/чаты/git».
+- **Запреты (расширяют §1.3):** секреты никогда не в argv, не в stdout/stderr
+  ошибок (`redact_error`), не в vpn guard и git; в доках и фикстурах — только
+  `FIXTURE_*`, RFC 5737 (`192.0.2.x` / `198.51.100.x` / `203.0.113.x`),
+  `11111111-2222-…`.
+
+### 9.3. D3 — Именование, маппинг устройств, маркировка мёртвых профилей
+
+**Изоляция маршрутов** (убирает коллизию `android.conf` между direct и relay):
+
+| Каталог | Содержимое | Источник |
+|---|---|---|
+| `~/.awg/direct/<stem>.conf` | direct-конфиги | пулл с exit_host `AWG_CLIENTS_DIR` |
+| `~/.awg/relay/<stem>.conf` | relay-конфиги | пулл с relay_host `RELAY_CLIENTS_DIR` |
+| `~/.awg/archive/<tag>-<stem>.conf` | выведенные из эксплуатации (напр. `asv1-mobile-awg.conf`) | резолвер туда не ходит (кроме явного `--include-archived`) |
+
+Legacy `~/.awg/*.conf` читается только как fallback с WARNING: «устаревшее
+расположение, выполните `vpn sync` или перенесите в `direct/`/`relay/`/`archive/`».
+
+**Таблица алиасов устройств** в `resolver.py` (без переименования серверных
+пиров; снимает разнобой exit vs relay, где файлы называются `mobile.conf` /
+`win.conf` / `laptop.conf`):
+
+| Ось | Алиасы stem'ов |
+|---|---|
+| android | `android`, `mobile`, `phone` |
+| windows | `windows`, `win` |
+| linux | `linux`, `laptop`, `desktop` |
+| ios | `ios`, `iphone`, `ipad` |
+| macos | `macos`, `mac` |
+
+При совпадении **≥2 кандидатов — fail-closed (код 4)** со списком найденных
+имён и подсказкой `--profile <NAME>` (никаких тихих угадываний).
+
+**Детерминированные имена артефактов:**
+`<ARTIFACTS_DIR>/<route>-<proto>-<os>-<profile>.{png,conf,uri}`
+(например `direct-awg-android-mobile.png`, `relay-awg-android-android.conf`).
+Для AWG авто-сохраняется sanitized-`.conf` (без `Table = off`, готовый к
+переносу на устройство); оригинал остаётся в `~/.awg/<route>/<profile>.conf`.
+При изменении `payload_sha256` файл перезаписывается атомарно (старый PNG не
+может рассинхронизироваться с новым конфигом).
+
+**Маркировка мёртвых профилей** (закрывает R4 — «мёртвый конфиг молча выдаётся
+как рабочий»):
+
+- `profiles.json` — аддитивные опциональные поля (обратная совместимость:
+  отсутствие = текущее поведение): `"status": "active" | "archived"`
+  (отсутствие = `"active"`), `"archived_reason": str`, `"route": "direct" |
+  "relay"`, `"source_host": str`, `"synced_at": str`.
+- AWG `.conf` — либо перенос в `~/.awg/archive/`, либо заголовок
+  `# vpnm:status=archived reason=<...>`; резолвер пропускает такие файлы при
+  авто-подборе, при явном `--profile` выдаёт код 4 или требует
+  `--include-archived` с громким WARNING: `ARCHIVED`.
+- Новая команда `vpn profile archive <name> --reason "..." [--apply]`
+  (**dry-run по умолчанию**, деструктив — только с `--apply`); для записей
+  `profiles.json` и AWG `.conf`.
+- `vpn sync` печатает **STALE-отчёт**: локальные активные профили, которых
+  больше нет на сервере, помечаются `STALE (absent on server)` с подсказкой
+  команды архивации. `vpn sync` **не удаляет** локальные файлы.
+
+### 9.4. Дополнение к таблице кодов возврата (§6)
+
+Поверх кодов v1 (0/2/3/4/5):
+
+| Код | Условие v1.1 |
+|---|---|
+| 2 | `vpn conf`: нарушение групп осей, невалидный `--profile` (P3), `--qr` с несовместимым `--format`, неизвестный флаг |
+| 3 | `--relay --xhttp` и `--relay --hy` — `EXIT_UNSUPPORTED_COMBO` (combo не поддерживается на релее; идентично §6.3a/3b) |
+| 4 | fail-closed резолвера: ≥2 кандидатов после алиасов устройств; профиль не найден; маршрут/протокол `--profile` не совпали; профиль `archived` без `--include-archived` |
+
+### 9.5. Критерии приёмки v1.1 (AC-QR-8…AC-QR-12, rev.4)
+
+Все тесты — под `tests/conftest.py` (sys_guard, без сети/root), `run_cmd`/`scp`
+замоканы, фикстуры `FIXTURE_*` + RFC 5737; env `VPN_MANAGER_ARTIFACTS_DIR` /
+`VPN_MANAGER_AWG_CONF_DIR` / `VPN_MANAGER_CONFIG_DIR` указывают на temp-каталоги.
+
+**AC-QR-8 (D1: CLI и матрица источников).** Все комбинации осей резолвятся;
+`--relay --xhttp` и `--relay --hy` → код 3; `vpn qr`/`vpn conf` по умолчанию не
+делают сетевых вызовов; `--sync` вызывает только read-only ssh/scp через мок
+(`vds gateway links`, `scp` из `AWG_CLIENTS_DIR`/`RELAY_CLIENTS_DIR`).
+
+**AC-QR-9 (D2: секреты и права).** (a) дефолтный вывод `vpn conf` и `vpn qr`
+не содержит `FIXTURE_PRIVATE_KEY` / `FIXTURE_UUID_…` ни в stdout, ни в stderr;
+(b) `--reveal`/`--show-uri` печатает payload в stdout и WARNING в stderr;
+(c) каталог артефактов 0700, сохранённые `.conf`/`.png`/`.uri` — 0600, права не
+сбрасываются при перезаписи; `--out` в world-readable каталог — WARNING в stderr.
+
+**AC-QR-10 (D3: namespace и алиасы).** `~/.awg/direct/mobile.conf` +
+`~/.awg/relay/android.conf` резолвятся одновременно без коллизии
+(`--direct --android` и `--relay --android`); алиасы `mobile`/`win`/`laptop`
+маппятся на android/windows/linux; при ≥2 кандидатах — код 4 со списком имён;
+`archive/` и `# vpnm:status=archived` пропускаются авто-резолвером (даже если
+архивный файл — единственный non-relay кандидат, он НЕ выбирается, код 4).
+
+**AC-QR-11 (D3: archive + STALE).** `vpn profile archive` — dry-run по
+умолчанию, `--apply` переносит `.conf` в `archive/` и ставит
+`status=archived` + `archived_reason` в `profiles.json`; `vpn sync` помечает
+локальные профили, отсутствующие на сервере, как `STALE (absent on server)`;
+`vpn sync` не удаляет локальные файлы.
+
+**AC-QR-12 (D1: авто-сохранение PNG + совместимость).** `vpn qr` по умолчанию
+авто-сохраняет PNG (0600) в `ARTIFACTS_DIR` и печатает оба пути в шапке;
+`--no-save` отключает запись (поведение v1); `vpn conf … --qr` печатает QR и
+сохраняет `.png`; опциональный zbarimg round-trip (§7 AC-QR-8(v1)) подтверждает
+совпадение с серверным `.conf` за вычетом `Table = off`. Все 57+ существующих
+тестов `tests/qrgen/` остаются зелёными (адаптация только тех, что проверяли
+запрет записи при дефолтном qr — перенос на `--no-save`).
+
+### 9.6. D4 — План WP-QR4…WP-QR7
+
+| WP | Содержание | Файлы-владелец | Зависимости |
+|---|---|---|---|
+| WP-QR4 (этот коммит) | Спека rev.4: D1–D3, матрица источников, коды 3/4, AC-QR-8…12 | `doc/specs/SPEC-20261118-vpn-qr.md` | нет (можно во время G6) |
+| WP-QR5 | Синхронизация и namespace: `vpnm/settings.py` (+`relay_ssh_host`, `ssh_host` = exit_host, обратная совместимость), новый `vpnm/sync.py` (read-only пулл, отчёт imported/updated/skipped/stale, `--dry-run`), `vpnm/qrgen/resolver.py` (direct//relay/, алиасы, ignore archive/ и archived), `vpnm/profiles.py` (аддитивные поля + `archive()`), `models.py` | `vpnm/settings.py`, `vpnm/sync.py`, `vpnm/profiles.py`, `vpnm/qrgen/{resolver,models}.py`, `tests/test_sync.py`, `tests/qrgen/test_qrgen_resolver.py` | WP-QR4 |
+| WP-QR6 | Фасад и рендер: `ARTIFACTS_DIR` (0700) + авто-сохранение sanitized `.conf`/`.png` (0600) в `render.py`, masked-вывод + `--reveal`; регистрация `vpn conf` / `vpn sync` / `vpn profile archive` в `cli.py`; апгрейд `vpn qr` (авто-сохранение, `--sync`, `--no-save`, алиас `--reveal`) | `vpnm/qrgen/{render,cli}.py`, `vpnm/cli.py`, `tests/qrgen/{test_qrgen_cli,test_qrgen_render}.py` | WP-QR5 |
+| WP-QR7 | Документация и живая приёмка: `doc/vpn-manager.md` (vpn qr / vpn conf / vpn sync / архивация, пометка legacy), живая проверка на ноутбуке: `vpn sync` подтягивает exit+relay, zbarimg round-trip, перенос мёртвого конфига в `archive/` через `vpn profile archive --apply` | `doc/vpn-manager.md` | WP-QR6 + закрытие G6 |
+
+**Ограничение по календарю:** до 2026-11-24 15:24 MSK (окно G6) — не
+переустанавливать vpnm в pipx на управляющем ноутбуке, не перезапускать
+`vpn-guard.service`. Кодить под моками (WP-QR5/WP-QR6) можно немедленно;
+**деплой на ноутбук — строго после закрытия G6 и вне окна A2**. Цикл полностью
+client-only: 0 изменений и 0 рестартов на серверах.
