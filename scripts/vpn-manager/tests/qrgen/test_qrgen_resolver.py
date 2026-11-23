@@ -32,8 +32,8 @@ REALITY_DIRECT = (
     "?security=reality&sni=www.google.com&pbk=FIXTURE_PBK_DIRECT&sid=01"
     "&flow=xtls-rprx-vision&fp=chrome#asv2-reality")
 REALITY_RELAY = (
-    "vless://11111111-2222-3333-4444-000000000002@185.80.91.135:443"
-    "?security=reality&sni=ya.ru&pbk=FIXTURE_PBK_RELAY&sid=02"
+    "vless://11111111-2222-3333-4444-000000000002@198.51.100.135:443"
+    "?security=reality&sni=example.invalid&pbk=FIXTURE_PBK_RELAY&sid=02"
     "&flow=xtls-rprx-vision&fp=chrome#relay-reality")
 REALITY_DIRECT_SECOND = (
     "vless://11111111-2222-3333-4444-000000000003@203.0.113.11:443"
@@ -42,7 +42,7 @@ REALITY_DIRECT_SECOND = (
 HY2 = ("hysteria2://FIXTURE_PW_HY2@203.0.113.20:443/?sni=asv2.example.invalid"
        "#asv2-hy2")
 
-RELAY_DOMAIN = "relay.asvpersonal.ru"
+RELAY_DOMAIN = "relay.fixtures.invalid"
 
 
 def _awg_text(endpoint: str, *, address: str = "10.10.0.2/32", dns: bool = True,
@@ -120,10 +120,10 @@ class Env:
             _awg_text("198.51.100.9:51825"), encoding="utf-8")
         # активный direct-пир доступен только через sudo -n cat
         self.add_system_awg("laptop", _awg_text(
-            "213.108.23.119:51825", address="10.9.0.2/32",
+            "192.0.2.119:51825", address="10.9.0.2/32",
             dns=False, keepalive=False, table_off=True))
         self.add_system_awg("awg0-laptop", _awg_text(
-            "103.45.247.172:51825", address="10.9.0.2/32", table_off=True))
+            "203.0.113.172:51825", address="10.9.0.2/32", table_off=True))
 
 
 @pytest.fixture()
@@ -237,11 +237,11 @@ def test_live_store_relay_reality_is_classified_by_name(env):
 
     assert result.profile_name == "relay-reality"
     assert result.source == "profile"
-    assert result.endpoint_host == "185.80.91.135"
+    assert result.endpoint_host == "198.51.100.135"
     assert result.client == "v2rayn"
     assert any("классифицирован как relay по имени" in w
                for w in result.warnings)
-    assert any("185.80.91.135" in w for w in result.warnings)
+    assert any("198.51.100.135" in w for w in result.warnings)
 
 
 def test_live_store_direct_reality_ignores_relay_profile(env):
@@ -318,7 +318,7 @@ def test_direct_awg_uses_active_peer_via_sudo(env, sudo):
     result = resolver.resolve(req("direct", "awg", "android"))
 
     assert result.profile_name == "laptop"
-    assert result.endpoint_host == "213.108.23.119"
+    assert result.endpoint_host == "192.0.2.119"
     assert result.endpoint_port == 51825
     assert any("активного пира 'laptop'" in w for w in result.warnings)
     assert any("10.9.0.2/32" in w for w in result.warnings)

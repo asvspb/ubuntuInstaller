@@ -25,12 +25,12 @@ REALITY_DIRECT = (
     "?security=reality&sni=www.google.com&pbk=FIXTURE_PBK_DIRECT&sid="
     "&flow=xtls-rprx-vision&fp=chrome#asv2-reality")
 REALITY_RELAY = (
-    "vless://11111111-2222-3333-4444-000000000002@185.80.91.135:443"
-    "?security=reality&sni=ya.ru&pbk=FIXTURE_PBK_RELAY&sid=02"
+    "vless://11111111-2222-3333-4444-000000000002@198.51.100.135:443"
+    "?security=reality&sni=example.invalid&pbk=FIXTURE_PBK_RELAY&sid=02"
     "&flow=xtls-rprx-vision&fp=chrome#relay-reality")
 HY2_LINK = (
     "hysteria2://FIXTURE_PW_HY2@203.0.113.20:443/?sni=asv2.example.invalid#asv2-hy2")
-RELAY_DOMAIN = "relay.asvpersonal.ru"
+RELAY_DOMAIN = "relay.fixtures.invalid"
 
 
 def awg_text(endpoint: str, *, address: str = "10.9.0.2/32",
@@ -96,7 +96,7 @@ class LiveEnv:
             awg_text(relay, address="10.10.0.2/32", dns=False,
                      keepalive=False), encoding="utf-8")
         (self.etc_dir / "laptop.conf").write_text(
-            awg_text("213.108.23.119:51825", dns=False, keepalive=False,
+            awg_text("192.0.2.119:51825", dns=False, keepalive=False,
                      table_off=True), encoding="utf-8")
 
 

@@ -34,7 +34,7 @@ AWG_RAW = "\n".join([
     "[Peer]",
     "PublicKey = FIXTURE_PW_SERVER_AWG",
     "PresharedKey = FIXTURE_PW_PSK_AWG",
-    "Endpoint = 213.108.23.119:51825",
+    "Endpoint = 192.0.2.119:51825",
     "AllowedIPs = 0.0.0.0/0",
     "PersistentKeepalive = 25",
 ]) + "\n"

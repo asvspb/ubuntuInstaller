@@ -68,7 +68,7 @@ def _awg_raw(*, table_off: bool = False, extra_system: bool = False,
         "[Peer]",
         "PublicKey = FIXTURE_PW_SERVER_AWG",
         "PresharedKey = FIXTURE_PW_PSK_AWG",
-        "Endpoint = 213.108.23.119:51825",
+        "Endpoint = 192.0.2.119:51825",
         f"AllowedIPs = {allowed_ips}",
     ]
     if keepalive:
@@ -83,7 +83,7 @@ def _resolved(profile_name: str, link: str, proto: models.Proto, *,
         parsed = links.parse_link(link)
         host, port = parsed.host, parsed.port
     else:
-        host, port = "213.108.23.119", 51825
+        host, port = "192.0.2.119", 51825
     return models.ResolvedSource(
         profile_name=profile_name, route=models.Route.DIRECT, proto=proto,
         target_os=models.TargetOS(os_name), client="auto",
@@ -111,7 +111,7 @@ def test_awg_strips_wg_quick_only_and_keeps_client_values():
             "Jc = 4", "S1 = 85", "H1 = 2093687166", "H4 = 9012",
             "PublicKey = FIXTURE_PW_SERVER_AWG",
             "PresharedKey = FIXTURE_PW_PSK_AWG",
-            "Endpoint = 213.108.23.119:51825",
+            "Endpoint = 192.0.2.119:51825",
             "AllowedIPs = 0.0.0.0/0",
             "PersistentKeepalive = 25"):
         assert expected in payload
