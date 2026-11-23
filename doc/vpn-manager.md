@@ -56,6 +56,7 @@ scripts/vpn-manager/
 | `~/.config/vpn-manager/state.json` | Активный профиль + флаг sysproxy |
 | `~/.config/vpn-manager/settings.json` | Настройки (ssh-хост для pull) |
 | `~/.local/share/vpn-manager/generated/` | Сгенерированные конфиги (0600) |
+| `~/.local/share/vpn-manager/artifacts/` | Артефакты `vpn qr`/`vpn conf`: `*.png`/`*.conf`/`*.uri` (0600, каталог 0700; env `VPN_MANAGER_ARTIFACTS_DIR`); PNG = секрет уровня `.conf` |
 | `~/.local/share/vpn-manager/last-speed.json` | Отчёт последнего `vpn speed` (0600) |
 | `~/.config/systemd/user/vpnm-*.service` | Systemd user units |
 | `~/.local/lib/vpn/` | Бинари xray / hysteria |
@@ -75,9 +76,12 @@ vpn install --linger
 | `vpn profile import <link>` | Импорт share-ссылки (`--name`, `--replace`) |
 | `vpn profile pull [--host root@asv1] [--include-obfs]` | Импорт ссылок с VDS-сервера по ssh (+ obfs-профили `<name>@obfs`) |
 | `vpn profile list` / `remove <name>` / `show <name> [--link]` | Управление профилями; `--link` — исходная share-ссылка (секрет) |
-| `vpn profile config <name> [--native]` | Конфиг текстом: share-ссылка или сгенерированный JSON/YAML (секрет) |
-| `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`) |
-| `vpn qr --direct\|--relay --awg\|--reality\|--xhttp\|--hy --android\|--ios\|--windows\|--macos\|--linux [--format qr\|uri\|png\|svg\|json]` | QR/URI клиентского профиля по маршруту × протоколу × ОС (офлайн, офлайн-резолв; вывод без секретов, `--show-uri` — сырой URI/INI) |
+| `vpn profile config <name> [--native]` | Конфиг текстом: share-ссылка или сгенерированный JSON/YAML (секрет). Legacy: низкоуровневая команда по локальному имени — остаётся без слома |
+| `vpn profile qr <name> [--native]` | QR в терминале для телефона (нужен `qrencode`). Legacy: низкоуровневая команда по локальному имени — остаётся без слома |
+| `vpn qr --direct\|--relay --awg\|--reality\|--xhttp\|--hy --android\|--ios\|--windows\|--macos\|--linux [--format qr\|uri\|png\|svg\|json] [--sync] [--no-save] [--reveal\|--show-uri]` | QR/URI клиентского профиля по маршруту × протоколу × ОС (офлайн, офлайн-резолв; вывод без секретов, `--reveal`/`--show-uri` — сырой URI/INI; v1.1 авто-сохраняет PNG + sanitized conf (0600) в ARTIFACTS_DIR, `--no-save` — поведение v1 без записи) |
+| `vpn conf --direct\|--relay --awg\|--reality\|--xhttp\|--hy --android\|--ios\|--windows\|--macos\|--linux [--qr] [--sync] [--reveal] [--no-save] [--out PATH] [--force]` | Основной сценарий оператора: гарантированный локальный файл `.conf`/`.uri` (0600 в ARTIFACTS_DIR), masked-вывод (шапка + пути + redacted-тело); `--qr` — плюс QR в терминал и PNG; `--reveal` — сырой текст с секретами (WARNING в stderr) |
+| `vpn sync [--direct\|--relay\|--all] [--exit-host H] [--relay-host H] [--include-obfs] [--dry-run]` | **Единственная сетевая точка** qr/conf: read-only подтяжка авторитетных серверных файлов (`vds gateway links` по ssh + scp клиентских `*.conf`); отчёт imported/updated/skipped/`STALE (absent on server)`; сервера не мутируются, локальные файлы не удаляются |
+| `vpn profile archive <name> --reason "..." [--apply]` | Пометить мёртвый профиль: `status=archived` + `archived_reason` в store и перенос `.conf` в `~/.awg/archive/` (dry-run по умолчанию; мутация только с `--apply`) |
 | `vpn profile export [-o FILE] [--stdout]` | Бандл всех профилей для бэкапа/переноса (JSON, 0600, содержит секреты) |
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план). `<name>` и `--scout` взаимоисключающие (вместе → exit 2) |
@@ -91,7 +95,7 @@ vpn install --linger
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
 | `vpn zapret on\|off\|status` | Канал 0: zapret (nfqws DPI-desync) — сервис + прямой canary |
 | `vpn doh on\|off\|status` | DoH-резолвер cloudflared (127.0.0.1:5053) |
-| `vpn amneziawg status\|add-client\|remove-client\|tunnel\|qr` | AWG: локальный туннель, клиенты на сервере, QR-конфиг для телефона |
+| `vpn amneziawg status\|add-client\|remove-client\|tunnel\|qr` | AWG: локальный туннель, клиенты на сервере, QR-конфиг для телефона. `vpn amneziawg qr` — legacy (низкоуровневая, по локальному имени) — остаётся без слома |
 | `vpn doctor` | Диагностика: бинари, порты, v2rayA, ssh, DNS, zapret |
 | `vpn repair` | Снимок состояния в лог + вернуть трафик/DNS |
 | `vpn monitor [--json]` | Матрица каналов: vpnm / cdn / ZeroTier / amneziawg / xray-split / zapret / dns-doh (N/7) |
@@ -268,7 +272,7 @@ vpn speed --out /tmp/speed.json           # свой путь отчёта
   "channels": [
     {"name": "phone", "protocol": "xray-reality", "status": "готово",
      "latency_s": 0.33, "speed_mbps": 74.6, "endpoint": "ovh10",
-     "egress": "103.45.247.172", "speed_samples": [74.6, 72.1],
+     "egress": "198.51.100.172", "speed_samples": [74.6, 72.1],
      "latency_samples": [0.33, 0.34], "error": ""}
   ],
   "verdict": {"fastest": "xhttp-web", "most_stable": "awg", "notes": []}
@@ -374,7 +378,7 @@ SAMPLES=2 bash scripts/bench-cdn-mux.sh    # короткий прогон
 
 Что делает:
 
-1. **Контроль** — 3× прямой TLS к `https://asvpersonal.ru/` без socks,
+1. **Контроль** — 3× прямой TLS к `https://example.invalid/` без socks,
    печатает p50 `time_appconnect`. Это проверка «канал до CF жив сейчас»:
    p50 ≤ 2 с — ок; > 2 с (или контроль не измерился) — предупреждение
    «возможен TSPU-эпизод, результаты туннеля могут быть искажены».
@@ -449,12 +453,12 @@ QR строит системный `qrencode` (`sudo apt install qrencode`); sha
 передаётся ему через stdin, поэтому секрет не попадает в argv/логи.
 Сканируется v2rayNG, Hiddify, Streisand и другими Xray-клиентами.
 
-### `vpn qr` — профиль под маршрут, протокол и ОС
+### `vpn qr` — профиль под маршрут, протокол и ОС (v1.1)
 
 Одна команда вместо ручного выбора профиля: сама находит подходящий источник
 (профиль из store или AWG-конфиг), собирает клиентский payload и рендерит QR.
-Полностью офлайн, без root (системный AWG-каталог читается через
-read-only `sudo -n cat`), состояние не меняет.
+Полностью офлайн по умолчанию, без root (системный AWG-каталог читается через
+read-only `sudo -n cat`); сеть — только opt-in `--sync` (см. `vpn sync` ниже).
 
 ```bash
 vpn qr --direct --awg --android       # AWG-конфиг активного direct-пира (.conf)
@@ -465,23 +469,118 @@ vpn qr --direct --reality --ios --client streisand
 vpn qr --relay --awg --android --format uri          # ссылка/INI в stdout (| xclip)
 vpn qr --direct --awg --android --format png --out ~/awg-android.png
 vpn qr --direct --reality --android --format json    # контракт vpnm.qr/1
-vpn qr --direct --reality --android --show-uri       # URI под QR (секрет!)
+vpn qr --direct --reality --android --reveal         # URI под QR (секрет! алиас --show-uri)
+
+vpn qr --direct --awg --android --sync               # сначала read-only пулл с сервера
+vpn qr --direct --awg --android --no-save            # поведение v1: вывод без записи файлов
 ```
 
 - **Маршрут × протокол:** релей даёт только AWG (udp/443) и Reality (tcp/443);
   `--relay --xhttp` и `--relay --hy` завершаются кодом 3.
 - **По умолчанию секретов в выводе нет:** печатаются шапка (профиль, endpoint,
-  размер и sha256 payload), warnings, подсказка импорта и QR. Сырой URI/INI —
-  только с `--show-uri` (или `--format uri`).
+  размер и sha256 payload, пути артефактов), warnings, подсказка импорта и QR.
+  Сырой URI/INI — только с `--reveal`/`--show-uri` (или `--format uri`).
+- **Авто-сохранение (v1.1, закрывает R3):** QR-формат по умолчанию
+  автоматически сохраняет PNG **и** sanitized `.conf` (для AWG — без
+  `Table = off`, готовый к переносу на устройство) в ARTIFACTS_DIR с правами
+  0600 и печатает оба пути в шапке; при изменении `payload_sha256` файл
+  перезаписывается атомарно. `--no-save` отключает запись и восстанавливает
+  поведение v1.
 - **`--out`** пишется атомарно с правами 0600; существующий файл — только с
-  `--force`.
-- **Неоднозначность** (два профиля одного маршрута/протокола) — код 4 со
+  `--force`; `--out` в world-readable каталог (например `/tmp`) — WARNING в
+  stderr.
+- **Неоднозначность** (≥2 кандидатов после алиасов устройств) — код 4 со
   списком кандидатов; выбрать явно: `--profile <NAME>`.
 - Коды возврата: `0` ok, `2` ошибка флагов, `3` неподдерживаемая комбинация,
-  `4` нет валидного источника, `5` ошибка рендера/записи.
+  `4` нет валидного источника / fail-closed резолвера (в т.ч. archived),
+  `5` ошибка рендера/записи.
 
-ТЗ и матрица совместимости — [SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md)
-(G2 PASS, FROZEN).
+### `vpn conf` — гарантированный локальный файл (v1.1)
+
+```bash
+vpn conf --direct --awg --android            # .conf 0600 в artifacts + masked-вывод
+vpn conf --relay --awg --android --qr        # + QR в терминал и PNG 0600
+vpn conf --direct --reality --android --out ~/relay-awg.conf --force
+vpn conf --relay --awg --android --reveal    # сырой INI в stdout (секреты!)
+vpn conf --direct --awg --android --sync     # сначала read-only пулл с сервера
+```
+
+- Шапка: `route | proto | os | client | profile | endpoint | sha256 |
+  origin (local/synced, mtime)` + пути `Conf: <path> (0600)` / `QR PNG: <path>
+  (0600)`.
+- Тело конфига/URI по умолчанию masked (`PrivateKey = <redacted>`,
+  `PresharedKey = <redacted>`, `vless://<redacted>…`) + подсказка про
+  `--reveal`; `--reveal` печатает сырой payload и WARNING в stderr
+  («вывод содержит секреты — не вставляйте в логи/чаты/git»).
+- `--no-save` — только вывод без записи (`--out` с ним несовместим, код 2).
+
+### Секрет-политика qr/conf (v1.1)
+
+- **PNG QR-кода = секрет уровня `.conf`**: PNG для AWG содержит PrivateKey
+  в открытом виде (читается zbarimg), для Reality/Hy2 — uuid/auth/obfs.
+  Каталог артефактов `~/.local/share/vpn-manager/artifacts/` — 0700,
+  все файлы внутри (`*.png`/`*.conf`/`*.uri`) — 0600 (mkstemp + fchmod + fsync
+  + атомарный rename). Путь переопределяется env
+  `VPN_MANAGER_ARTIFACTS_DIR` (изоляция тестов).
+- **Канонические имена артефактов:**
+  `<ARTIFACTS_DIR>/<route>-<proto>-<os>-<profile>.{png,conf,uri}`
+  (например `direct-awg-android-mobile.png`).
+- Секреты никогда не попадают в argv, в stdout/stderr ошибок (redact_error),
+  в vpn guard, логи и git; дефолтный вывод всегда masked, сырой текст —
+  только `--reveal`/`--show-uri` с WARNING в stderr.
+
+### Namespace `~/.awg/`, алиасы устройств и archive (v1.1)
+
+| Каталог | Содержимое | Резолвер |
+|---------|-----------|----------|
+| `~/.awg/direct/<stem>.conf` | direct-конфиги (пулл с exit-узла) | да |
+| `~/.awg/relay/<stem>.conf` | relay-конфиги (пулл с релея) | да |
+| `~/.awg/archive/<name>-<stem>.conf` | выведенные из эксплуатации | **нет** (кроме явного `--include-archived` с WARNING `ARCHIVED`) |
+
+- Legacy `~/.awg/<stem>.conf` (без подкаталога) читается как fallback с
+  WARNING «устаревшее расположение, выполните `vpn sync` или перенесите в
+  `direct/`/`relay/`/`archive/`»; при существовании namespace-копии root-файл
+  игнорируется.
+- **Алиасы устройств** (без переименования серверных пиров):
+  `mobile`/`phone` → android, `win` → windows, `laptop`/`desktop` → linux,
+  `iphone`/`ipad` → ios, `mac` → macos. При ≥2 кандидатах — fail-closed код 4
+  со списком имён и подсказкой `--profile`.
+- **`status=archived`:** профиль в `profiles.json` с
+  `"status": "archived"`/`"archived_reason"` или `.conf` с заголовком
+  `# vpnm:status=archived reason=...` пропускается авто-резолвером (даже если
+  это единственный non-relay кандидат — код 4), а при явном `--profile` — код 4
+  с пометкой ARCHIVED.
+- `vpn sync` печатает **STALE-отчёт** (локальные активные профили, которых
+  нет на сервере, → `STALE (absent on server)` с подсказкой
+  `vpn profile archive <name> --reason "..." --apply`) и **не удаляет**
+  локальные файлы.
+
+### `vpn sync` — read-only пулл с серверов (v1.1)
+
+```bash
+vpn sync                      # оба маршрута (direct + relay)
+vpn sync --direct             # только exit-узел
+vpn sync --relay --dry-run    # только отчёт, ничего не писать
+vpn sync --exit-host root@203.0.113.10 --relay-host root@198.51.100.20
+vpn sync --include-obfs       # + obfs-профили hysteria2
+```
+
+Источники: `vds gateway links` по ssh (Reality/XHTTP/Hy2-ссылки) и scp
+клиентских `*.conf` из `AWG_CLIENTS_DIR` (exit) / `RELAY_CLIENTS_DIR`
+(релей) в `~/.awg/direct|relay/`. Хосты берутся из флагов либо из
+`settings.json` (`ssh_host` = exit, `relay_ssh_host`). Отчёт:
+imported / updated / skipped + STALE. Сервера только читаются.
+
+### Legacy-команды (не сломаны)
+
+`vpn profile qr <name>`, `vpn profile config <name>` и `vpn amneziawg qr` —
+**низкоуровневые legacy-команды**: оперируют локальными именами профилей, а
+не осью route × proto × os, и остаются работоспособными без изменений. Для
+новых сценариев используйте `vpn qr` / `vpn conf`.
+
+ТЗ и матрица совместимости —
+[SPEC-20261118-vpn-qr](specs/SPEC-20261118-vpn-qr.md) (v1: G2 PASS, FROZEN;
+v1.1 — rev.4, §9).
 
 ## Интеграция с VDS-сервером (profile pull)
 
@@ -807,7 +906,7 @@ lockdown). Поэтому по умолчанию `vpn scout` работает �
 - **маршрут AWG определяется по Endpoint, а не по имени файла**:
   `android.conf`, `windows.conf`, `relay.conf` — это один и тот же физический
   туннель, если их endpoint совпадает. Relay-хосты берутся из факта: `Endpoint`
-  из `relay.conf` (если есть) + канонический `relay.asvpersonal.ru` + опциональный
+  из `relay.conf` (если есть) + канонический `relay.example.invalid` (пример; реальный домен берётся из settings/relay.conf) + опциональный
   `relay_endpoint`/`relay_host` в `settings.json`; сравнение хоста без учёта
   регистра и точки в конце. Конфиг с relay-endpoint получает `route=relay`,
   любой другой — `direct`. Поэтому клиентские копии на один endpoint
