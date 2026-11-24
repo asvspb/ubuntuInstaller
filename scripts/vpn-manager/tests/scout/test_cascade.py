@@ -31,9 +31,11 @@ from vpnm.scout.models import (  # noqa: E402
     ProbeResult,
 )
 from vpnm.scout.rank import (  # noqa: E402
+    G04_PENALTY,
     LOCAL_ROUTE_PENALTY,
     RECENT_INCIDENT_PENALTY,
     TLS_ONLY_PENALTY,
+    base_score,
     pre_score,
     presort,
     rank_cascade,
@@ -135,18 +137,18 @@ def test_recent_g04_drops_the_direct_awg_candidate() -> None:
                       recent_g04_endpoints=[f"{direct_awg.host}:"
                                             f"{direct_awg.port}"])
     scores = {candidate.key: score for candidate, score, _r in ordered}
-    assert scores[direct_awg.key] == 90 - 60
-    assert scores[direct_tls.key] == 88
+    assert scores[direct_awg.key] == base_score("direct", "awg") - G04_PENALTY
+    assert scores[direct_tls.key] == base_score("direct", "xray-reality")
     assert ordered[0][0].key == direct_tls.key
 
 
 def test_recent_g01_g03_demotes_the_profile_in_pre_score() -> None:
     hy2 = cand("direct", "hy2", "hy2-main")
     score, reasons = pre_score(hy2, recent_incident_profiles=["hy2-main"])
-    assert score == 85 - RECENT_INCIDENT_PENALTY
+    assert score == base_score("direct", "hy2") - RECENT_INCIDENT_PENALTY
     assert any("G-01/G-03" in reason for reason in reasons)
     # another profile's incident does not touch this candidate
-    assert pre_score(hy2, recent_incident_profiles=["other"])[0] == 85
+    assert pre_score(hy2, recent_incident_profiles=["other"])[0] == base_score("direct", "hy2")
 
 
 def test_presort_is_deterministic_with_equal_scores() -> None:
@@ -192,14 +194,14 @@ def test_no_jitter_when_the_first_node_is_good(
 def test_local_route_costs_the_inconclusive_penalty() -> None:
     hy2 = cand("direct", "hy2", "hy2-main")
     score, reasons = score_candidate(hy2, ProbeResult(STATUS_LOCAL_ROUTE))
-    assert score == 85 - LOCAL_ROUTE_PENALTY
+    assert score == base_score("direct", "hy2") - LOCAL_ROUTE_PENALTY
     assert any("0 байт в эфир" in reason for reason in reasons)
 
 
 def test_tls_only_costs_less_than_a_full_ok() -> None:
     reality = cand("direct", "xray-reality", "phone")
     score, reasons = score_candidate(reality, ProbeResult(STATUS_TLS_ONLY))
-    assert score == 88 - TLS_ONLY_PENALTY
+    assert score == base_score("direct", "xray-reality") - TLS_ONLY_PENALTY
     assert any("TLS ok, HTTP-ответа нет" in reason for reason in reasons)
 
 
@@ -208,7 +210,7 @@ def test_recent_incident_is_not_a_hard_fail() -> None:
     probe = ProbeResult(STATUS_RECENT_INCIDENT, detail="G-01 по hy2-main")
     score, reasons = score_candidate(hy2, probe)
     assert probe.hard_fail is False
-    assert score == 85 - RECENT_INCIDENT_PENALTY
+    assert score == base_score("direct", "hy2") - RECENT_INCIDENT_PENALTY
     assert any("recent_incident" in reason for reason in reasons)
 
 
@@ -216,23 +218,31 @@ def test_g04_status_penalises_any_udp_protocol() -> None:
     hy2 = cand("direct", "hy2", "hy2-main")
     score, _reasons = score_candidate(
         hy2, ProbeResult(STATUS_RECENT_UDP_BLACKHOLE))
-    assert score == 85 - 60
+    # штраф больше базы direct hy2 → пол 0 (floor)
+    assert score == max(0, base_score("direct", "hy2") - G04_PENALTY)
+    assert score == 0
 
 
 # --- 5. rank_cascade: winner is the cascade's stop, fallback is untried --------------
 
 
 def test_rank_cascade_prefers_the_winner_over_a_higher_scoring_attempt() -> None:
-    reality = cand("direct", "xray-reality", "phone", "203.0.113.10", 443)
-    hy2 = cand("direct", "hy2", "hy2-main", "203.0.113.11", 443)
+    # WP-QX-3 матрица: attempt = relay reality (pre 86) с TLS_ONLY — не good;
+    # cascade падает к winner = direct reality (pre 60) с LOCAL_ROUTE — good,
+    # score 54 ≥ RECOMMENDED_MIN. Winner важнее более высокого pre-score.
+    attempt = cand("relay", "xray-reality", "relay-reality",
+                   "203.0.113.10", 443)
+    winner = cand("direct", "xray-reality", "phone", "203.0.113.11", 443)
     results: Dict[str, ProbeResult] = {
-        reality.key: ProbeResult(STATUS_TLS_ONLY),   # 88 − 4 = 84, not good
-        hy2.key: ProbeResult(STATUS_LOCAL_ROUTE),    # 85 − 6 = 79, good
+        attempt.key: ProbeResult(STATUS_TLS_ONLY),
+        winner.key: ProbeResult(STATUS_LOCAL_ROUTE),
     }
-    report = rank_cascade([reality, hy2], results,
-                          pre_scores={reality.key: 88, hy2.key: 85})
+    report = rank_cascade(
+        [attempt, winner], results,
+        pre_scores={attempt.key: base_score("relay", "xray-reality"),
+                    winner.key: base_score("direct", "xray-reality")})
     assert report.recommended is not None
-    assert report.recommended.candidate.key == hy2.key
+    assert report.recommended.candidate.key == winner.key
 
 
 def test_rank_cascade_fallback_is_a_not_probed_node() -> None:
@@ -241,7 +251,7 @@ def test_rank_cascade_fallback_is_a_not_probed_node() -> None:
     results = {winner.key: ProbeResult(STATUS_OK, rtt_ms=5.0)}
     report = rank_cascade(
         [winner, untried], results,
-        pre_scores={winner.key: 90, untried.key: 82})
+        pre_scores={winner.key: base_score("direct", "awg"), untried.key: base_score("relay", "awg")})
     assert report.recommended is not None
     assert report.fallback is not None
     assert report.fallback.candidate.key == untried.key
@@ -300,7 +310,8 @@ def test_probe_all_mode_contacts_every_candidate(
     payload = scout_cli.build_report(active_profile=None, probe_all_mode=True)
     assert payload["mode"] == "all"
     assert set(payload["probed"]) == {"laptop", "phone", "relay"}
-    assert seen == [candidate.key for candidate in candidates]
+    # порядок контактов — presort (WP-QX-3: relay-first), поэтому множество
+    assert set(seen) == {candidate.key for candidate in candidates}
     assert any(line.startswith("[scout] режим: полный опрос")
                for line in scout_cli.render_lines(payload))
     assert payload["recommended"] is not None

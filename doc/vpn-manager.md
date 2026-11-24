@@ -86,11 +86,11 @@ vpn install --linger
 | `vpn profile restore FILE [--replace] [--dry-run] [-y]` | Влить бандл: новые добавить, совпадающие skip/`--replace`; `-` — stdin |
 | `vpn up [<name>] [--scout] [--dry-run]` / `vpn down [name]` / `vpn switch <name>` | Жизненный цикл (systemd user units); `--scout` — сначала read-only разведка маршрутов и поднять рекомендованный (`--dry-run` — только план). `<name>` и `--scout` взаимоисключающие (вместе → exit 2) |
 | `vpn scout [--json] [--sync [--host H]] [--probe-all]` | Активная разведка маршрутов: по умолчанию Stealth Cascade (локальная сортировка → одна проба до первого хорошего); `--probe-all` — полный параллельный опрос. RECOMMENDED/FALLBACK/«отсеяны» (read-only; exit 0 — рекомендация есть) |
-| `vpn start [awg\|relay\|reality\|xhttp] [--proto awg\|reality]` / `vpn reset` | Основная схема: по умолчанию **AWG**+доменный split, `relay` — RU-релей (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`), `reality`/`xhttp` — xray-split / полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие |
+| `vpn start [relay\|awg\|reality\|xhttp] [--proto awg\|reality] [--allow-direct]` / `vpn reset` | Основная схема (WP-QX-3 min-risk cutover): по умолчанию **РЕЛЕЙ** (ADR-007; `--proto reality` — socks-фолбэк `relay-reality`); прямые контуры `awg` (OOB-резерв)/`reality`/`xhttp` — только с `--allow-direct`, без флага fail-closed **exit 2**; archived-профиль для xray → exit 2. `vpn start relay` идемпотентен: активный юнит с совпадающим conf и живым L3-захватом → fast-path без рестарта; иначе rebuild (off→install→on). **Fail-closed пост-проверки (QX-DR-1)**: L3 (`ip route get 1.1.1.1` → dev relay) + data-plane (`curl --interface`, ≤ 8 с) ДО записи `mode=relay` и печати «режим RELAY активен»; провал L3 → туннель снят, exit 1; L3 ok + data-plane молчит → exit 1 с раздельным диагнозом. `vpn reset` — полный сброс в состояние «как после перезагрузки». Контуры взаимоисключающие (OOB-инстансы `oob*` teardown не гасит) |
 | `vpn scheme awg\|xray-split [p]\|xhttp-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / только XHTTP / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
-После `vpn start` / `vpn reset` в хвосте печатается блок в формате `myip` (ipinfo.io: Current IP/City/Region/Country; в awg-split/relay — exit-IP, после reset — egress провайдера, у некоторых провайдеров NL-шлюз; недоступен — warning, не фатально)
+После `vpn start` / `vpn reset` в хвосте печатается блок в формате `myip` (ipinfo.io: Current IP/City/Region/Country; в awg-split/relay — exit-IP, после reset — egress провайдера, у некоторых провайдеров NL-шлюз; недоступен — warning, не фатально). В relay-режиме проба биндится к интерфейсу (`--interface relay`); зелёный Current IP — только при ответившем data-plane; если через туннель пришёл RU — warning «маршрут выпал в main» (QX-DR-1)
 
 | `vpn status` |
 | `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль / awg-схема, состояние unit, внешний IP через SOCKS. При AWG печатает `awg-схема активна: доменный split через vpn-awg-split@<iface>.service` — `no active profile` относится только к socks-профилям и в этом режиме не выводится. Если `mode.json` говорит `relay`/`direct`, а юнит **неактивен**, статус не рапортует живой режим, а печатает `mode: RELAY (юнит … неактивен — туннель не поднят)` и подсказку `vpn start relay` (direct — `vpn start`) |
@@ -122,11 +122,12 @@ vpn install --linger
 Схемы и профили включаются обычной командой в любой вкладке терминала:
 
 ```bash
-vpn start              # AWG + доменный split (по умолчанию); гасит релей
-vpn start relay        # RU-релей: весь трафик → релей → exit-нода
+vpn start              # РЕЛЕЙ (по умолчанию, WP-QX-3): весь трафик → релей → exit-нода
+vpn start relay        # то же явно; идемпотентно + L3/data-plane fail-closed (QX-DR-1)
 vpn start relay --proto reality   # фолбэк: socks-профиль relay-reality
-vpn start reality      # Reality-split (tun xray0, TCP 443)
-vpn start xhttp        # XHTTP-split (tun xray0, TCP 8443)
+vpn start awg --allow-direct      # прямой AWG-split = OOB-резерв (WARNING)
+vpn start reality --allow-direct  # Reality-split (tun xray0, TCP 443)
+vpn start xhttp --allow-direct    # XHTTP-split (tun xray0, TCP 8443)
 vpn up <profile>       # socks-профиль (Reality/XHTTP/Hy2/CDN)
 vpn down               # выключить профили и релей (guard остаётся)
 vpn reset              # выключить всё

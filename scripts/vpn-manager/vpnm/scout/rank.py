@@ -1,15 +1,16 @@
 """WP-S3: the scoring matrix that turns observations into a route choice.
 
-Base scores (WP-S3, verbatim):
+Base scores (WP-S3; WP-QX-3 min-risk cutover 2026-11-25 — relay-first,
+verbatim; правит ТОЛЬКО WP-QX-3, guard v1.1 rank.py не трогает):
 
 ========================  ====
-direct + awg               90
-direct + reality           88
-direct + hy2               85
-relay + awg                82
-relay + reality / hy2      80
-xhttp (any route)          75
-cdn (any route)            65
+relay + awg               92
+relay + reality           86
+direct + awg              80
+direct + reality          60
+hy2 (any route)           55
+xhttp (any route)         55
+cdn (any route)           50
 ========================  ====
 
 Adjustments:
@@ -73,17 +74,19 @@ from .models import (
 
 #: Base score per ``(route, proto)``; the transport-only rows apply to both
 #: routes and are looked up through :func:`base_score`.
+#: WP-QX-3 min-risk cutover: relay-first — direct+awg demoted to OOB-резерв
+#: (SPEC-20261124-quiet-exit §4); правит ТОЛЬКО WP-QX-3.
 BASE_SCORES: Mapping[Tuple[str, str], int] = {
-    (ROUTE_DIRECT, PROTO_AWG): 90,
-    (ROUTE_DIRECT, PROTO_XRAY_REALITY): 88,
-    (ROUTE_DIRECT, PROTO_HY2): 85,
-    (ROUTE_RELAY, PROTO_AWG): 82,
-    (ROUTE_RELAY, PROTO_XRAY_REALITY): 80,
-    (ROUTE_RELAY, PROTO_HY2): 80,
-    (ROUTE_DIRECT, PROTO_XRAY_XHTTP): 75,
-    (ROUTE_RELAY, PROTO_XRAY_XHTTP): 75,
-    (ROUTE_DIRECT, PROTO_XRAY_CDN): 65,
-    (ROUTE_RELAY, PROTO_XRAY_CDN): 65,
+    (ROUTE_RELAY, PROTO_AWG): 92,
+    (ROUTE_RELAY, PROTO_XRAY_REALITY): 86,
+    (ROUTE_DIRECT, PROTO_AWG): 80,
+    (ROUTE_DIRECT, PROTO_XRAY_REALITY): 60,
+    (ROUTE_DIRECT, PROTO_HY2): 55,
+    (ROUTE_RELAY, PROTO_HY2): 55,
+    (ROUTE_DIRECT, PROTO_XRAY_XHTTP): 55,
+    (ROUTE_RELAY, PROTO_XRAY_XHTTP): 55,
+    (ROUTE_DIRECT, PROTO_XRAY_CDN): 50,
+    (ROUTE_RELAY, PROTO_XRAY_CDN): 50,
 }
 
 LOCKDOWN_BONUS = 10

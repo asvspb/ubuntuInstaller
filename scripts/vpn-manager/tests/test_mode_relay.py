@@ -115,10 +115,22 @@ def _patch_teardown(monkeypatch, calls, *, failures=None):
                             calls.get("instances", []), []))
 
 
+def _patch_postchecks(monkeypatch, *, l3=(True, "dev relay via 10.10.0.1"),
+                      dp=(True, {"ip": "203.0.113.9", "country": "EE"})):
+    """QX-DR-1: моки fail-closed пост-проверок L3 + data-plane."""
+    monkeypatch.setattr(cli, "_relay_l3_ok",
+                        lambda instance="relay", run=None: l3)
+    monkeypatch.setattr(cli, "_relay_dataplane",
+                        lambda instance="relay", run=None: dp)
+
+
 def test_start_relay_stops_direct_and_records_mode(env, monkeypatch):
     (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
-    calls: dict = {"instances": ["laptop"], "control": []}
+    calls: dict = {"instances": ["laptop"], "control": [], "egress": []}
     _patch_teardown(monkeypatch, calls)
+    _patch_postchecks(monkeypatch)
+    monkeypatch.setattr(cli, "_print_egress_ip",
+                        lambda iface=None: calls["egress"].append(iface))
     monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
     monkeypatch.setattr(amneziawg, "instance_active",
                         lambda name, run=None: False)
@@ -139,6 +151,8 @@ def test_start_relay_stops_direct_and_records_mode(env, monkeypatch):
     assert payload["target"] == "203.0.113.10"
     assert "RELAY" in result.output
     assert "vpn-guard" not in json.dumps(calls)
+    # QX-DR-1: egress-проба биндится к интерфейсу релея
+    assert calls["egress"] == ["relay"]
 
 
 def test_start_relay_without_conf_is_refused(env):
@@ -178,7 +192,7 @@ def test_start_direct_stops_relay_first(env, monkeypatch):
     monkeypatch.setattr(cli, "_apply_awg_scheme", lambda: (True, "ok"))
     monkeypatch.setattr(amneziawg, "local_instance", lambda run=None: "laptop")
 
-    result = CliRunner().invoke(cli.app, ["start"])
+    result = CliRunner().invoke(cli.app, ["start", "awg", "--allow-direct"])
     assert result.exit_code == 0, result.output
     assert calls == [("relay", "off")]
     payload = mode.read_mode()
@@ -198,10 +212,131 @@ def test_start_direct_aborts_if_relay_will_not_stop(env, monkeypatch):
     monkeypatch.setattr(cli, "_apply_awg_scheme",
                         lambda: started.append(True) or (True, "ok"))
 
-    result = CliRunner().invoke(cli.app, ["start"])
+    result = CliRunner().invoke(cli.app, ["start", "awg", "--allow-direct"])
     assert result.exit_code == 1
     assert started == []  # no direct scheme on top of a live relay
     assert mode.read_mode() == {}
+
+
+# --- QX-DR-1: идемпотентный подъём + fail-closed пост-проверки -----------------
+
+
+def test_start_relay_idempotent_rebuild_when_route_slipped(env, monkeypatch):
+    """Активный юнит + слетевший маршрут → off → install → on (не no-op)."""
+    (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
+    calls: dict = {"instances": ["relay"], "control": [], "install": []}
+    _patch_teardown(monkeypatch, calls)
+    _patch_postchecks(monkeypatch)
+    monkeypatch.setattr(cli, "_print_egress_ip", lambda iface=None: None)
+    monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
+    monkeypatch.setattr(amneziawg, "instance_conf_matches",
+                        lambda name, src, run=None: True)  # conf ok…
+    monkeypatch.setattr(cli, "_relay_l3_ok",
+                        lambda instance="relay", run=None:
+                        (False, "dev eth0 via …"))  # …но маршрут слетел
+    monkeypatch.setattr(amneziawg, "install_instance_conf",
+                        lambda name, src, run=None:
+                        calls["install"].append(name) or (True, "installed"))
+    monkeypatch.setattr(amneziawg, "instance_control",
+                        lambda name, action, run=None: calls["control"].append(
+                            (name, action)) or (True, "ok"))
+    # первый вызов (fast-path чек) видит слетевший маршрут, пост-проверка — зелёный
+    l3_state = {"n": 0}
+
+    def fake_l3(instance="relay", run=None):
+        l3_state["n"] += 1
+        return (False, "dev eth0 via …") if l3_state["n"] == 1 else \
+            (True, "dev relay")
+
+    monkeypatch.setattr(cli, "_relay_l3_ok", fake_l3)
+
+    result = CliRunner().invoke(cli.app, ["start", "relay"])
+    assert result.exit_code == 0, result.output
+    assert calls["control"] == [("relay", "off"), ("relay", "on")]
+    assert calls["install"] == ["relay"]
+    assert "rebuild" in result.output
+    assert mode.read_mode()["mode"] == "relay"
+
+
+def test_start_relay_fastpath_when_healthy(env, monkeypatch):
+    """Активный юнит + conf совпадает + L3 жив → без рестарта."""
+    (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
+    calls: dict = {"instances": ["relay"], "control": []}
+    _patch_teardown(monkeypatch, calls)
+    _patch_postchecks(monkeypatch)
+    monkeypatch.setattr(cli, "_print_egress_ip", lambda iface=None: None)
+    monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
+    monkeypatch.setattr(amneziawg, "instance_conf_matches",
+                        lambda name, src, run=None: True)
+    monkeypatch.setattr(amneziawg, "install_instance_conf",
+                        lambda name, src, run=None: (_ for _ in ()).throw(
+                            AssertionError("fast-path не должен переустанавливать")))
+    monkeypatch.setattr(amneziawg, "instance_control",
+                        lambda name, action, run=None: calls["control"].append(
+                            (name, action)) or (True, "ok"))
+
+    result = CliRunner().invoke(cli.app, ["start", "relay"])
+    assert result.exit_code == 0, result.output
+    assert calls["control"] == []  # ни off, ни on — сессии не рвутся
+    assert "fast-path" in result.output
+    assert mode.read_mode()["mode"] == "relay"
+
+
+def test_start_relay_l3_fail_is_fail_closed(env, monkeypatch):
+    """L3 не захватился после start → exit 1, mode НЕ relay, туннель снят."""
+    (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
+    calls: dict = {"instances": [], "control": []}
+    _patch_teardown(monkeypatch, calls)
+    _patch_postchecks(monkeypatch, l3=(False, "маршрут мимо туннеля: dev eth0"))
+    monkeypatch.setattr(cli, "_print_egress_ip", lambda iface=None: None)
+    monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
+    monkeypatch.setattr(amneziawg, "install_instance_conf",
+                        lambda name, src, run=None: (True, "installed"))
+    monkeypatch.setattr(amneziawg, "instance_control",
+                        lambda name, action, run=None: calls["control"].append(
+                            (name, action)) or (True, "ok"))
+
+    result = CliRunner().invoke(cli.app, ["start", "relay"])
+    assert result.exit_code == 1
+    assert ("relay", "off") in calls["control"]  # анти «полу-применённый»
+    assert mode.read_mode().get("mode") != "relay"
+    assert "L3-захват не подтвердился" in result.output
+    assert "режим RELAY активен" not in result.output
+
+
+def test_start_relay_dataplane_timeout_is_fail_closed(env, monkeypatch):
+    """L3 OK, но data-plane молчит → exit 1 с раздельным диагнозом."""
+    (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
+    calls: dict = {"instances": [], "control": []}
+    _patch_teardown(monkeypatch, calls)
+    _patch_postchecks(monkeypatch, dp=(False, {}))
+    monkeypatch.setattr(cli, "_print_egress_ip", lambda iface=None: None)
+    monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
+    monkeypatch.setattr(amneziawg, "install_instance_conf",
+                        lambda name, src, run=None: (True, "installed"))
+    monkeypatch.setattr(amneziawg, "instance_control",
+                        lambda name, action, run=None: calls["control"].append(
+                            (name, action)) or (True, "ok"))
+
+    result = CliRunner().invoke(cli.app, ["start", "relay"])
+    assert result.exit_code == 1
+    assert "data-plane не отвечает" in result.output
+    assert "режим RELAY активен" not in result.output
+    assert mode.read_mode().get("mode") != "relay"
+    # L3 жив → туннель НЕ снимаем (маршрут применён — диагноз в сообщении)
+    assert calls["control"] == [("relay", "on")]
+
+
+def test_teardown_direct_never_stops_oob_instance(env, monkeypatch):
+    """QX-DR-1 oob-инвариант: oob* не гасится и не считается direct."""
+    calls: dict = {"instances": ["laptop", "oob"], "control": []}
+    _patch_teardown(monkeypatch, calls)
+    monkeypatch.setattr(amneziawg, "stop_instances",
+                        lambda keep=None, run=None: (
+                            [n for n in calls["instances"]
+                             if n != keep and not n.startswith("oob")], []))
+    failures = cli._teardown_direct()
+    assert failures == []
 
 
 # --- vpn down ----------------------------------------------------------------

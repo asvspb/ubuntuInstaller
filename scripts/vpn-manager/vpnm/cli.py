@@ -489,7 +489,73 @@ def _warn(msg: str) -> None:
     typer.secho(f"warning: {msg}", fg=typer.colors.YELLOW)
 
 
-def _print_egress_ip() -> None:
+RELAY_DATAPLANE_TIMEOUT = 8  # QX-DR-1: пост-проверка data-plane, ≤ 8 с
+RELAY_L3_PROBE_HOST = "1.1.1.1"
+
+
+def _qx3_check_not_archived(xsplit_mod: Any, default_protocol: str) -> None:
+    """WP-QX-3: авто-выбранный xray-профиль не должен быть archived.
+
+    archived (dead) профиль — fail-closed exit 2 до применения схемы.
+    """
+    from . import profiles as profiles_mod
+    try:
+        chosen = xsplit_mod.resolve_profile(default_protocol=default_protocol)
+    except Exception:
+        return  # нет кандидатов — xsplit.apply сам отчитается понятной ошибкой
+    try:
+        record = profiles_mod.get(chosen)
+    except profiles_mod.ProfileStoreError:
+        return
+    if str(record.get("status") or "active") == profiles_mod.STATUS_ARCHIVED:
+        _err(f"профиль '{chosen}' archived (dead) — прямой xray не поднимаем "
+             "(WP-QX-3); осознанный подъём: 'vpn profile unarchive' или "
+             "'vpn scheme xray-split <живой профиль>'")
+        raise typer.Exit(code=2)
+
+
+from .runners import RunCmd
+
+
+def _relay_l3_ok(instance: str = "relay",
+                 run: Optional[RunCmd] = None) -> tuple:
+    """QX-DR-1: живой L3-захват маршрута релейным туннелем.
+
+    ``(ok, detail)``; ok = ``ip route get <host>`` резолвится в
+    ``dev <instance>``. Детерминированная офлайн-проверка (без сети).
+    """
+    from .runners import run_cmd as _run
+    runner = run or _run
+    rc, out, _err = runner(["ip", "route", "get", RELAY_L3_PROBE_HOST])
+    if rc != 0:
+        return False, f"ip route get {RELAY_L3_PROBE_HOST}: rc={rc}"
+    if f"dev {instance}" in out:
+        return True, out.strip().splitlines()[0]
+    return False, (f"маршрут мимо туннеля: ip route get "
+                   f"{RELAY_L3_PROBE_HOST} → {out.strip().splitlines()[0]} "
+                   f"(ожидался dev {instance})")
+
+
+def _relay_dataplane(instance: str = "relay",
+                     run: Optional[RunCmd] = None) -> tuple:
+    """QX-DR-1: data-plane через туннель — ``curl --interface`` к ipinfo.
+
+    ``(ok, data)``; data = словарь ipinfo.io/json или {} (не фатально).
+    """
+    import json as _json
+    from .runners import run_cmd as _run
+    runner = run or _run
+    try:
+        rc, out, _err = runner(
+            ["curl", "--interface", instance, "--max-time",
+             str(RELAY_DATAPLANE_TIMEOUT), "-s", "https://ipinfo.io/json"])
+        data = _json.loads(out) if rc == 0 and out.strip() else {}
+    except Exception:  # defensive: probe must never fail the command
+        data = {}
+    return bool(data.get("ip")), data
+
+
+def _print_egress_ip(iface: Optional[str] = None) -> None:
     """Напечатать текущий внешний IP в формате `myip` (не фатально).
 
     Формат как у алиаса myip владельца (ipinfo.io: Current IP/City/Region/
@@ -497,20 +563,40 @@ def _print_egress_ip() -> None:
     awg-split (api.ipify.org — .org — может идти напрямую и показать IP
     провайдера — ловушка инцидента 2026-11-24); в relay-режиме весь трафик
     через релей; после reset — IP провайдера.
+
+    QX-DR-1 (WP-QX-3): *iface* — привязка data-plane. С iface curl биндится
+    к интерфейсу; пустой ответ → warning вместо зелёного IP; country == RU
+    через туннель релея — warning (маршрут выпал в main — ловушка поля).
     """
     import json as _json
     from .runners import CURL_TIMEOUT, run_cmd
+    cmd = ["curl", "--max-time", str(CURL_TIMEOUT), "-s",
+           "https://ipinfo.io/json"]
+    if iface:
+        cmd = ["curl", "--interface", iface, "--max-time",
+               str(RELAY_DATAPLANE_TIMEOUT), "-s", "https://ipinfo.io/json"]
     try:
-        rc, out, _err_txt = run_cmd(
-            ["curl", "--max-time", str(CURL_TIMEOUT), "-s",
-             "https://ipinfo.io/json"])
+        rc, out, _err_txt = run_cmd(cmd)
         data = _json.loads(out) if rc == 0 and out.strip() else {}
     except Exception:  # defensive: probe must never fail the command
         data = {}
     ip = data.get("ip")
     if not ip:
-        _warn("внешний IP не определён (ipinfo.io недоступен) — проверьте "
-              "вручную: myip")
+        if iface:
+            _warn("data-plane через туннель не ответил — внешний IP не "
+                  "определён (проверьте релей/exit: myip)")
+        else:
+            _warn("внешний IP не определён (ipinfo.io недоступен) — проверьте "
+                  "вручную: myip")
+        return
+    country = data.get("country")
+    if iface and country == "RU":
+        _warn(f"Current IP: {ip} ({country}) — через туннель релея пришёл RU: "
+              "маршрут выпал в main / policy релея не делит — проверьте "
+              "'ip route get 1.1.1.1' и carrier на реле")
+        for label, key in (("City", "city"), ("Region", "region")):
+            if data.get(key):
+                typer.secho(f"{label}: {data[key]}")
         return
     typer.secho(f"Current IP: {ip}", fg=typer.colors.GREEN)
     for label, key in (("City", "city"), ("Region", "region"),
@@ -1190,18 +1276,63 @@ def _start_relay(proto: Optional[str]) -> None:
                  "(ничего не изменено); настройте sudo -n или поднимите "
                  "релей вручную (DEPLOY-RU-RELAY.md §2.0)")
             raise typer.Exit(code=1)
-        failures = _teardown_direct()
-        if failures:
-            _err("прямой контур не снят полностью: " + "; ".join(failures)
-                 + " — релей не поднят, чтобы не смешать маршруты")
+        # QX-DR-1: идемпотентный подъём. systemctl start на активном
+        # RemainAfterExit=yes юните — no-op (rc=0): перезаписанный conf не
+        # перечитывается, слетевшие ip rule/route не восстанавливаются.
+        # Поэтому: уже активен + conf совпадает + L3 захвачен → fast-path;
+        # любое расхождение → честный rebuild (off → install → on).
+        already = RELAY_INSTANCE in awg.active_instances()
+        fast_path = False
+        if already:
+            conf_ok = awg.instance_conf_matches(RELAY_INSTANCE, conf)
+            l3_ok, l3_detail = _relay_l3_ok(RELAY_INSTANCE)
+            if conf_ok and l3_ok:
+                fast_path = True
+                _ok("релей уже активен: conf совпадает, L3-захват жив — "
+                    "fast-path без рестарта (сессии не рвутся)")
+            else:
+                _warn("релей уже активен, но " +
+                      ("conf разошёлся" if not conf_ok
+                       else f"маршрут слетел ({l3_detail})") +
+                      " — rebuild: off → install → on")
+        if not fast_path:
+            failures = _teardown_direct()
+            if failures:
+                _err("прямой контур не снят полностью: " + "; ".join(failures)
+                     + " — релей не поднят, чтобы не смешать маршруты")
+                raise typer.Exit(code=1)
+            if already:
+                ok_off, msg_off = awg.instance_control(RELAY_INSTANCE, "off")
+                if not ok_off:
+                    _err(msg_off)
+                    raise typer.Exit(code=1)
+            ok_c, msg_c = awg.install_instance_conf(RELAY_INSTANCE, conf)
+            (_ok if ok_c else _err)(msg_c)
+            if not ok_c:
+                raise typer.Exit(code=1)
+            ok_t, msg_t = awg.instance_control(RELAY_INSTANCE, "on")
+            (_ok if ok_t else _err)(msg_t)
+            if not ok_t:
+                raise typer.Exit(code=1)
+        # QX-DR-1: fail-closed пост-проверки ДО записи mode.json и печати
+        # «режим RELAY активен» (полевой дефект 2026-11-25: mode.json писал
+        # "relay" при выпавшем в main маршруте).
+        l3_ok, l3_detail = _relay_l3_ok(RELAY_INSTANCE)
+        if not l3_ok:
+            _err(f"L3-захват не подтвердился: {l3_detail} — mode=relay НЕ "
+                 "записан; туннель остановлен (анти «полу-применённый "
+                 "захват»); диагностика: 'ip rule show; ip route show table "
+                 "all | head'")
+            awg.instance_control(RELAY_INSTANCE, "off")
             raise typer.Exit(code=1)
-        ok_c, msg_c = awg.install_instance_conf(RELAY_INSTANCE, conf)
-        (_ok if ok_c else _err)(msg_c)
-        if not ok_c:
-            raise typer.Exit(code=1)
-        ok_t, msg_t = awg.instance_control(RELAY_INSTANCE, "on")
-        (_ok if ok_t else _err)(msg_t)
-        if not ok_t:
+        _ok(f"L3-захват жив: {l3_detail}")
+        dp_ok, dp_data = _relay_dataplane(RELAY_INSTANCE)
+        if not dp_ok:
+            _err("маршрут на relay применён, но data-plane не отвечает "
+                 f"(curl --interface {RELAY_INSTANCE} за "
+                 f"{RELAY_DATAPLANE_TIMEOUT} с без ответа) — проверьте релей/"
+                 "exit ('awg show' handshake, vds relay carrier status) — "
+                 "mode=relay НЕ записан")
             raise typer.Exit(code=1)
         target = _endpoint_host(conf)
         if not mode_mod.write_mode(
@@ -1212,7 +1343,7 @@ def _start_relay(proto: Optional[str]) -> None:
         _ok(f"режим RELAY активен: весь трафик → {target or 'релей'} → "
             "exit-нода; RU-CIDR релей ведёт напрямую (ADR-007). "
             "Доменный split не применяется — его роль играет policy на релее")
-        _print_egress_ip()
+        _print_egress_ip(iface=RELAY_INSTANCE)
         return
 
     if want in ("reality", "xray", "relay-reality"):
@@ -1254,32 +1385,35 @@ def _start_relay(proto: Optional[str]) -> None:
 
 @app.command()
 def start(scheme: str = typer.Argument(
-        "awg", help="'awg' (по умолчанию) | 'relay' | 'reality' | 'xhttp'"),
+        "relay", help="'relay' (по умолчанию, WP-QX-3) | 'awg' | 'reality' | "
+                      "'xhttp' — прямые только с --allow-direct"),
         proto: Optional[str] = typer.Option(
             None, "--proto",
             help="для relay: 'awg' (по умолчанию, весь трафик через релей) "
-                 "| 'reality' (socks-фолбэк relay-reality)")) -> None:
-    """Поднять основную схему: AWG / релей / Reality-split / XHTTP-split.
+                 "| 'reality' (socks-фолбэк relay-reality)"),
+        allow_direct: bool = typer.Option(
+            False, "--allow-direct",
+            help="Разрешить ПРЯМОЙ контур (awg/reality/xhttp) — fail-closed "
+                 "без флага (WP-QX-3 min-risk cutover: прямой awg = OOB-резерв, "
+                 "archived-профили не поднимаются)")) -> None:
+    """Поднять основную схему: релей (по умолчанию) / AWG / Reality / XHTTP.
 
-    vpn start          — AWG-туннель + доменный split (по умолчанию, как
-                         'vpn scheme awg'; зеркало 'vpn reset'); гасит релей,
-                         если он был активен
-    vpn start relay    — RU-релей (ADR-007): весь трафик → awg-туннель до
-                         релея, его policy сам делит RU-CIDR/мир; гасит прямой
-                         контур (профили + AWG-split + xray-split)
+    vpn start          — РЕЛЕЙ (WP-QX-3, ADR-007): весь трафик → awg-туннель
+                         до релея, policy на реле делит RU-CIDR/мир; гасит
+                         прямой контур; идемпотентный подъём + L3/data-plane
+                         пост-проверки fail-closed (QX-DR-1)
     vpn start relay --proto reality
                        — фолбэк: socks-профиль relay-reality
-    vpn start reality  — Reality-split: tun xray0 → VLESS Reality (TCP 443)
-    vpn start xhttp    — XHTTP-split: tun xray0 → VLESS XHTTP (TCP 8443)
+    vpn start awg --allow-direct
+                       — прямой AWG-split = OOB-резерв (WARNING)
+    vpn start reality --allow-direct
+                       — Reality-split (tun xray0), archived-профиль → exit 2
+    vpn start xhttp --allow-direct
+                       — XHTTP-split (tun xray0)
 
-    Протоколы, которые можно активировать: awg (AmneziaWG, UDP 443 через
-    релей или 51825 напрямую), relay (awg; --proto reality — socks-фолбэк),
-    reality (VLESS Reality, TCP 443), xhttp (VLESS XHTTP, TCP 8443).
-    Hysteria2 (QUIC UDP 443) поднимается профилем: 'vpn up asv2-hy2'.
-
-    Контуры взаимоисключающие: одновременно живёт либо прямой, либо релейный.
-    Reality/XHTTP берут первый подходящий профиль из 'vpn profile list'
-    (конкретный — 'vpn scheme xray-split <profile>'). Идемпотентно.
+    Прямые контуры (awg/reality/xhttp) БЕЗ --allow-direct — fail-closed
+    exit 2: дефолт после cutover — relay-only (min-risk, SPEC-20261124
+    quiet-exit §4). Идемпотентно.
     """
     name = scheme.strip().lower()
     if name in ("relay", "relay-reality"):
@@ -1291,6 +1425,13 @@ def start(scheme: str = typer.Argument(
     is_direct_awg = name in ("awg", "default")
     if name in ("awg", "default", "reality", "xray", "xray-split",
                 "xhttp", "xhttp-split"):
+        if not allow_direct:
+            _err(f"'vpn start {name}' — прямой контур: после min-risk "
+                 "cutover дефолт relay-only (SPEC-20261124 quiet-exit §4). "
+                 "Осознанный обход: 'vpn start "
+                 + ("awg" if is_direct_awg else name)
+                 + " --allow-direct' (прямой awg = OOB-резерв)")
+            raise typer.Exit(code=2)
         ok_r, msg_r = _stop_relay_contour()
         (_ok if ok_r else _err)(msg_r)
         if not ok_r:
@@ -1307,12 +1448,15 @@ def start(scheme: str = typer.Argument(
         instance = awg.local_instance() or awg.DEFAULT_LOCAL_INSTANCE
         _write_direct_mode("amneziawg", iface=instance,
                            unit=f"{awg.AWG_UNIT_PREFIX}{instance}.service")
+        _warn("прямой AWG-контур поднят как OOB-резерв (не min-risk): "
+              "для рабочего контура — 'vpn start relay'")
         _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
         _print_egress_ip()
         return
     if name in ("reality", "xray", "xray-split"):
         from . import xsplit as xsplit_mod
+        _qx3_check_not_archived(xsplit_mod, "xray-reality")
         ok, msg = xsplit_mod.apply(default_protocol="xray-reality")
         (_ok if ok else _err)(f"reality: {msg}")
         if not ok:
@@ -1328,6 +1472,7 @@ def start(scheme: str = typer.Argument(
         return
     if name in ("xhttp", "xhttp-split"):
         from . import xsplit as xsplit_mod
+        _qx3_check_not_archived(xsplit_mod, "xray-xhttp")
         ok, msg = xsplit_mod.apply(default_protocol="xray-xhttp")
         (_ok if ok else _err)(f"xhttp: {msg}")
         if not ok:

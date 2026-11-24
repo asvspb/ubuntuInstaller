@@ -172,11 +172,11 @@ def test_cli_start_awg_order_tunnel_then_split(monkeypatch):
                         lambda a, run=None: calls.append(("tun", a)) or (True, "ok"))
     monkeypatch.setattr(awg, "domain_split_apply",
                         lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
-    result = CliRunner().invoke(cli_app, ["start", "awg"])
+    result = CliRunner().invoke(cli_app, ["start", "awg", "--allow-direct"])
     assert result.exit_code == 0, result.output
     assert calls == [("tun", "on"), ("split", "on")]
     assert "основная схема активна" in result.output
-    result2 = CliRunner().invoke(cli_app, ["start", "awg"])
+    result2 = CliRunner().invoke(cli_app, ["start", "awg", "--allow-direct"])
     assert result2.exit_code == 0, result2.output
 
 
@@ -189,7 +189,7 @@ def test_cli_start_tunnel_fail_no_split_attempt(monkeypatch):
                         lambda a, run=None: calls.append(("tun", a)) or (False, "no tunnel"))
     monkeypatch.setattr(awg, "domain_split_apply",
                         lambda a, run=None: calls.append(("split", a)) or (True, "ok"))
-    result = CliRunner().invoke(cli_app, ["start", "awg"])
+    result = CliRunner().invoke(cli_app, ["start", "awg", "--allow-direct"])
     assert result.exit_code == 1
     assert calls == [("tun", "on")]  # split не пытаемся без iface
 
@@ -282,17 +282,30 @@ def test_cli_scheme_cdn_without_profile_fails(monkeypatch):
     assert called == []
 
 
-def test_cli_start_default_is_awg(monkeypatch):
+def test_cli_start_default_is_relay(monkeypatch):
+    """WP-QX-3: bare `vpn start` = relay (min-risk cutover)."""
+    from vpnm import cli as cli_mod
+    from typer.testing import CliRunner
+    calls: list = []
+    monkeypatch.setattr(cli_mod, "_start_relay",
+                        lambda proto: calls.append(proto))
+    result = CliRunner().invoke(cli_mod.app, ["start"])
+    assert result.exit_code == 0, result.output
+    assert calls == [None]  # --proto не передан → awg внутри _start_relay
+
+
+def test_cli_start_direct_awg_without_flag_exits_2(monkeypatch):
+    """WP-QX-3: прямой awg без --allow-direct — fail-closed exit 2."""
     from vpnm import cli as cli_mod
     from typer.testing import CliRunner
     calls: list = []
     monkeypatch.setattr(
         cli_mod, "_apply_awg_scheme",
         lambda: calls.append("awg") or (True, "AWG + доменный split"))
-    result = CliRunner().invoke(cli_mod.app, ["start"])
-    assert result.exit_code == 0, result.output
-    assert calls == ["awg"]
-    assert "AWG" in result.output
+    result = CliRunner().invoke(cli_mod.app, ["start", "awg"])
+    assert result.exit_code == 2, result.output
+    assert calls == []
+    assert "--allow-direct" in result.output
 
 
 def test_cli_start_xhttp(monkeypatch):
@@ -306,7 +319,7 @@ def test_cli_start_xhttp(monkeypatch):
         return True, "xhttp ok"
 
     monkeypatch.setattr(xsplit, "apply", fake_apply)
-    result = CliRunner().invoke(cli_app, ["start", "xhttp"])
+    result = CliRunner().invoke(cli_app, ["start", "xhttp", "--allow-direct"])
     assert result.exit_code == 0, result.output
     assert calls == [(None, "xray-xhttp")]
     assert "XHTTP-split" in result.output
@@ -318,7 +331,7 @@ def test_cli_start_reality_failure_exits(monkeypatch):
     from typer.testing import CliRunner
     monkeypatch.setattr(xsplit, "apply",
                         lambda **kw: (False, "нет профиля"))
-    result = CliRunner().invoke(cli_app, ["start", "reality"])
+    result = CliRunner().invoke(cli_app, ["start", "reality", "--allow-direct"])
     assert result.exit_code == 1
 
 

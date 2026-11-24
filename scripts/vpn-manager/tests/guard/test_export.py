@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import stat
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -25,12 +26,21 @@ def isolated_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VPN_MANAGER_CONFIG_DIR", str(tmp_path / "config"))
 
 
+def _iso(base: datetime) -> str:
+    """ISO-8601 UTC stamp, ms-precision, trailing Z (формат window в store)."""
+    return base.strftime("%Y-%m-%dT%H:%M:%S.") + f"{base.microsecond // 1000:03d}Z"
+
+
 def finding(seconds: int = 0, *, host: str = "203.0.113.10") -> dict:
+    # P35 (fix 2026-11-25): окно — относительное «сейчас»; фиксированная дата
+    # стареет из окна --since 7d и export начинает возвращать 0 findings.
+    window_first = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    window_last = window_first + timedelta(seconds=30)
     return rules.build_finding(
         rule="G-03", unit="vpnm-asv2.service", profile="asv2",
         endpoint={"host": host, "port": 443},
-        window_first=f"2026-11-16T12:{seconds % 60:02d}:00.000Z",
-        window_last=f"2026-11-16T12:{seconds % 60:02d}:30.000Z", count=3,
+        window_first=_iso(window_first),
+        window_last=_iso(window_last), count=3,
         evidence=[{"kind": "signal_count", "signal": "conn_reset", "value": 3}],
         fp_checks=["no auth_fail"], severity="high", confidence="medium",
         category="censorship_suspect", stage_hint="data_phase",
@@ -93,12 +103,13 @@ def test_export_manifest_carries_no_values_from_scanned_fields() -> None:
 
 def test_export_trims_oldest_findings_to_fit_the_budget() -> None:
     items = [finding(seconds) for seconds in range(10)]
+    newest_first = items[9]["window"]["first"]  # seconds=9 — самый свежий
     bundle = store.build_export(items, coverage(), keep_hosts=False,
                                 max_bytes=2500)
     assert bundle["manifest"]["findings"] < 10
     assert bundle["manifest"]["findings_dropped"] > 0
     # newest findings survive, oldest are dropped
-    assert bundle["findings"][0]["window"]["first"].endswith("09:00.000Z")
+    assert bundle["findings"][0]["window"]["first"] == newest_first
 
 
 def test_write_export_directory_layout_and_modes(tmp_path: Path) -> None:
@@ -134,11 +145,12 @@ def test_export_since_filter_uses_findings_window(tmp_path: Path) -> None:
     old["window"] = {"first": "2020-01-01T00:00:00.000Z",
                      "last": "2020-01-01T00:01:00.000Z"}
     sink.append(old)
-    sink.append(finding(10))
+    fresh = finding(10)  # expected-штамп фиксируем ДО append — без гонки за T+
+    expected_first = fresh["window"]["first"]
+    sink.append(fresh)
     import time
-    fresh = sink.read(since_ts=time.time() - 7 * 86400, limit=0)
-    assert [item["window"]["first"] for item in fresh] == [
-        "2026-11-16T12:10:00.000Z"]
+    items = sink.read(since_ts=time.time() - 7 * 86400, limit=0)
+    assert [item["window"]["first"] for item in items] == [expected_first]
 
 
 def test_exported_findings_still_validate_as_guard_finding() -> None:

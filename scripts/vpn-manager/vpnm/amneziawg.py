@@ -236,9 +236,23 @@ def instance_control(name: str, action: str,
                    f"{AWG_UNIT_PREFIX}{name}.service")
 
 
+#: OOB-инстансы (quiet-exit, SPEC-20261124 WP-QX-3 / QX-DR-1): клиент oob
+#: (AllowedIPs 10.9.0.1/32) — административный канал на exit; ``vpn start
+#: relay`` и teardown прямого контура его никогда не гасят.
+OOB_INSTANCE_PREFIX = "oob"
+
+
+def is_oob_instance(name: str) -> bool:
+    """True для OOB-инстансов (имя начинается с ``oob``) — вне direct/relay."""
+    return name.startswith(OOB_INSTANCE_PREFIX)
+
+
 def stop_instances(keep: Optional[str] = None,
                    run: Optional[RunCmd] = None) -> Tuple[List[str], List[str]]:
     """Stop every active AWG instance except *keep*.
+
+    OOB-инстансы (``oob*``, QX-DR-1) не останавливаются никогда — это
+    административный канал на exit-ноду, не direct-маршрут.
 
     Returns ``(stopped, failures)``; used for the direct↔relay mutual
     exclusion.  Never touches ``vpn-guard.service`` (different unit family).
@@ -248,12 +262,28 @@ def stop_instances(keep: Optional[str] = None,
     for name in active_instances(run):
         if keep is not None and name == keep:
             continue
+        if is_oob_instance(name):
+            continue
         ok, msg = instance_control(name, "off", run)
         if ok:
             stopped.append(name)
         else:
             failures.append(msg)
     return stopped, failures
+
+
+def instance_conf_matches(name: str, source: Path,
+                          run: Optional[RunCmd] = None) -> bool:
+    """True when the installed root conf equals *source* byte-for-byte.
+
+    ``sudo -n cmp -s`` (QX-DR-1: идемпотентный подъём — перезаписанный conf
+    при активном RemainAfterExit юните не перечитывается, расхождение
+    означает, что юнит нужно пересобрать).  Never raises.
+    """
+    runner: RunCmd = run or run_cmd
+    target = f"{AWG_SYSTEM_CONF_DIR}/{name}.conf"
+    rc, _out, _err = runner(["sudo", "-n", "cmp", "-s", str(source), target])
+    return rc == 0
 
 
 def sudo_available(run: Optional[RunCmd] = None) -> bool:
