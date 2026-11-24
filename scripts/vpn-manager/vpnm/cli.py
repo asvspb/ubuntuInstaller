@@ -489,6 +489,36 @@ def _warn(msg: str) -> None:
     typer.secho(f"warning: {msg}", fg=typer.colors.YELLOW)
 
 
+def _print_egress_ip() -> None:
+    """Напечатать текущий внешний IP в формате `myip` (не фатально).
+
+    Формат как у алиаса myip владельца (ipinfo.io: Current IP/City/Region/
+    Country). Endpoint на .io — гарантированно уходит через туннель в
+    awg-split (api.ipify.org — .org — может идти напрямую и показать IP
+    провайдера — ловушка инцидента 2026-11-24); в relay-режиме весь трафик
+    через релей; после reset — IP провайдера.
+    """
+    import json as _json
+    from .runners import CURL_TIMEOUT, run_cmd
+    try:
+        rc, out, _err_txt = run_cmd(
+            ["curl", "--max-time", str(CURL_TIMEOUT), "-s",
+             "https://ipinfo.io/json"])
+        data = _json.loads(out) if rc == 0 and out.strip() else {}
+    except Exception:  # defensive: probe must never fail the command
+        data = {}
+    ip = data.get("ip")
+    if not ip:
+        _warn("внешний IP не определён (ipinfo.io недоступен) — проверьте "
+              "вручную: myip")
+        return
+    typer.secho(f"Current IP: {ip}", fg=typer.colors.GREEN)
+    for label, key in (("City", "city"), ("Region", "region"),
+                       ("Country", "country")):
+        if data.get(key):
+            typer.secho(f"{label}: {data[key]}")
+
+
 @profile_app.command("import")
 def profile_import(link: str, name: Optional[str] = typer.Option(
         None, "--name", "-n", help="Override profile name"),
@@ -1182,6 +1212,7 @@ def _start_relay(proto: Optional[str]) -> None:
         _ok(f"режим RELAY активен: весь трафик → {target or 'релей'} → "
             "exit-нода; RU-CIDR релей ведёт напрямую (ADR-007). "
             "Доменный split не применяется — его роль играет policy на релее")
+        _print_egress_ip()
         return
 
     if want in ("reality", "xray", "relay-reality"):
@@ -1214,6 +1245,7 @@ def _start_relay(proto: Optional[str]) -> None:
         _warn("socks-фолбэк не маршрутизирует весь трафик сам — включите "
               "'vpn sysproxy on' или укажите приложению socks "
               f"127.0.0.1:{port}")
+        _print_egress_ip()
         return
 
     _err(f"неизвестный proto '{proto}': ожидается 'awg' | 'reality'")
@@ -1277,6 +1309,7 @@ def start(scheme: str = typer.Argument(
                            unit=f"{awg.AWG_UNIT_PREFIX}{instance}.service")
         _ok("основная схема активна: TLD-зоны/youtube/telegram через AWG, "
             "GLM/RU напрямую (браузер — перезапустить, если sysproxy менялся)")
+        _print_egress_ip()
         return
     if name in ("reality", "xray", "xray-split"):
         from . import xsplit as xsplit_mod
@@ -1291,6 +1324,7 @@ def start(scheme: str = typer.Argument(
         _ok("основная схема активна: Reality-split через tun xray0 (TCP 443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
         _browser_restart_hint()
+        _print_egress_ip()
         return
     if name in ("xhttp", "xhttp-split"):
         from . import xsplit as xsplit_mod
@@ -1305,6 +1339,7 @@ def start(scheme: str = typer.Argument(
         _ok("основная схема активна: XHTTP-split через tun xray0 (TCP 8443), "
             "GLM/RU напрямую; откат — 'vpn scheme awg'/'vpn reset'")
         _browser_restart_hint()
+        _print_egress_ip()
         return
     _err("unknown scheme: expected 'awg' | 'relay' | 'reality' | 'xhttp'")
     raise typer.Exit(code=2)
@@ -1367,6 +1402,7 @@ def reset() -> None:
         raise typer.Exit(code=1)
     _ok("система в состоянии чистого старта: DNS у провайдера, "
         "туннелей и прокси нет")
+    _print_egress_ip()
 
 
 @app.command()

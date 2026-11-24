@@ -90,6 +90,9 @@ vpn install --linger
 | `vpn scheme awg\|xray-split [p]\|xhttp-split [p]\|cdn\|proxy <p>\|private <p>` | Пресеты: AWG+split / tun xray0 (Reality/XHTTP) / только XHTTP / CDN / общий прокси / частный прокси |
 | `vpn probe` | Замер задержек + bulk-скорость (один эндпоинт), переключение на быстрейший |
 | `vpn speed` | **Живой замер скорости**: все каналы, несколько эндпоинтов, real-time таблица |
+После `vpn start` / `vpn reset` в хвосте печатается блок в формате `myip` (ipinfo.io: Current IP/City/Region/Country; в awg-split/relay — exit-IP, после reset — egress провайдера, у некоторых провайдеров NL-шлюз; недоступен — warning, не фатально)
+
+| `vpn status` |
 | `vpn status` | Режим (`DIRECT`/`RELAY` из `mode.json` + live-юниты), активный профиль / awg-схема, состояние unit, внешний IP через SOCKS. При AWG печатает `awg-схема активна: доменный split через vpn-awg-split@<iface>.service` — `no active profile` относится только к socks-профилям и в этом режиме не выводится. Если `mode.json` говорит `relay`/`direct`, а юнит **неактивен**, статус не рапортует живой режим, а печатает `mode: RELAY (юнит … неактивен — туннель не поднят)` и подсказку `vpn start relay` (direct — `vpn start`) |
 | `vpn sysproxy on\|off\|status` | GNOME системный прокси → SOCKS активного профиля |
 | `vpn autostart on\|off\|status` | Автозапуск активного профиля при входе (systemctl --user enable) |
