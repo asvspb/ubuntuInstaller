@@ -9,6 +9,7 @@ invoked without arguments.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -529,7 +530,8 @@ def _relay_l3_ok(instance: str = "relay",
     rc, out, _err = runner(["ip", "route", "get", RELAY_L3_PROBE_HOST])
     if rc != 0:
         return False, f"ip route get {RELAY_L3_PROBE_HOST}: rc={rc}"
-    if f"dev {instance}" in out:
+    # ревью WP-QX-3 P2: токенный матч — "dev relay" не должен сматчить dev relay2
+    if re.search(rf"\bdev\s+{re.escape(instance)}\b", out):
         return True, out.strip().splitlines()[0]
     return False, (f"маршрут мимо туннеля: ip route get "
                    f"{RELAY_L3_PROBE_HOST} → {out.strip().splitlines()[0]} "
@@ -555,6 +557,33 @@ def _relay_dataplane(instance: str = "relay",
     return bool(data.get("ip")), data
 
 
+def _print_egress_data(data: dict) -> None:
+    """Напечатать уже полученный ipinfo-словарь (формат `myip`).
+
+    QX-DR-1: country == RU — warning «маршрут выпал в main» (ловушка поля);
+    обычный случай — зелёный Current IP. Второй запрос к ipinfo.io не делается.
+    """
+    ip = data.get("ip")
+    if not ip:
+        _warn("data-plane через туннель не ответил — внешний IP не "
+              "определён (проверьте релей/exit: myip)")
+        return
+    country = data.get("country")
+    if country == "RU":
+        _warn(f"Current IP: {ip} ({country}) — через туннель релея пришёл RU: "
+              "маршрут выпал в main / policy релея не делит — проверьте "
+              "'ip route get 1.1.1.1' и carrier на реле")
+        for label, key in (("City", "city"), ("Region", "region")):
+            if data.get(key):
+                typer.secho(f"{label}: {data[key]}")
+        return
+    typer.secho(f"Current IP: {ip}", fg=typer.colors.GREEN)
+    for label, key in (("City", "city"), ("Region", "region"),
+                       ("Country", "country")):
+        if data.get(key):
+            typer.secho(f"{label}: {data[key]}")
+
+
 def _print_egress_ip(iface: Optional[str] = None) -> None:
     """Напечатать текущий внешний IP в формате `myip` (не фатально).
 
@@ -564,9 +593,8 @@ def _print_egress_ip(iface: Optional[str] = None) -> None:
     провайдера — ловушка инцидента 2026-11-24); в relay-режиме весь трафик
     через релей; после reset — IP провайдера.
 
-    QX-DR-1 (WP-QX-3): *iface* — привязка data-plane. С iface curl биндится
-    к интерфейсу; пустой ответ → warning вместо зелёного IP; country == RU
-    через туннель релея — warning (маршрут выпал в main — ловушка поля).
+    QX-DR-1 (WP-QX-3): *iface* — привязка data-plane (curl --interface).
+    Ревью P2: печать — в _print_egress_data; здесь только запрос.
     """
     import json as _json
     from .runners import CURL_TIMEOUT, run_cmd
@@ -580,29 +608,11 @@ def _print_egress_ip(iface: Optional[str] = None) -> None:
         data = _json.loads(out) if rc == 0 and out.strip() else {}
     except Exception:  # defensive: probe must never fail the command
         data = {}
-    ip = data.get("ip")
-    if not ip:
-        if iface:
-            _warn("data-plane через туннель не ответил — внешний IP не "
-                  "определён (проверьте релей/exit: myip)")
-        else:
-            _warn("внешний IP не определён (ipinfo.io недоступен) — проверьте "
-                  "вручную: myip")
+    if not data.get("ip") and iface:
+        _warn("data-plane через туннель не ответил — внешний IP не "
+              "определён (проверьте релей/exit: myip)")
         return
-    country = data.get("country")
-    if iface and country == "RU":
-        _warn(f"Current IP: {ip} ({country}) — через туннель релея пришёл RU: "
-              "маршрут выпал в main / policy релея не делит — проверьте "
-              "'ip route get 1.1.1.1' и carrier на реле")
-        for label, key in (("City", "city"), ("Region", "region")):
-            if data.get(key):
-                typer.secho(f"{label}: {data[key]}")
-        return
-    typer.secho(f"Current IP: {ip}", fg=typer.colors.GREEN)
-    for label, key in (("City", "city"), ("Region", "region"),
-                       ("Country", "country")):
-        if data.get(key):
-            typer.secho(f"{label}: {data[key]}")
+    _print_egress_data(data)
 
 
 @profile_app.command("import")
@@ -1343,7 +1353,9 @@ def _start_relay(proto: Optional[str]) -> None:
         _ok(f"режим RELAY активен: весь трафик → {target or 'релей'} → "
             "exit-нода; RU-CIDR релей ведёт напрямую (ADR-007). "
             "Доменный split не применяется — его роль играет policy на релее")
-        _print_egress_ip(iface=RELAY_INSTANCE)
+        # ревью WP-QX-3 P2: dp_data уже получен _relay_dataplane — не дёргаем
+        # ipinfo.io второй раз (rate-limit); печатаем из него напрямую
+        _print_egress_data(dp_data)
         return
 
     if want in ("reality", "xray", "relay-reality"):

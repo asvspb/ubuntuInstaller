@@ -128,9 +128,12 @@ def test_start_relay_stops_direct_and_records_mode(env, monkeypatch):
     (env / "awg" / "relay.conf").write_text(RELAY_CONF, encoding="utf-8")
     calls: dict = {"instances": ["laptop"], "control": [], "egress": []}
     _patch_teardown(monkeypatch, calls)
-    _patch_postchecks(monkeypatch)
-    monkeypatch.setattr(cli, "_print_egress_ip",
-                        lambda iface=None: calls["egress"].append(iface))
+    dp_payload = {"ip": "203.0.113.9", "country": "EE"}
+    _patch_postchecks(monkeypatch, dp=(True, dp_payload))
+    # ревью WP-QX-3 P2: печать идёт из dp_data (_print_egress_data),
+    # второй запрос к ipinfo.io не делается
+    monkeypatch.setattr(cli, "_print_egress_data",
+                        lambda data: calls["egress"].append(data))
     monkeypatch.setattr(amneziawg, "sudo_available", lambda run=None: True)
     monkeypatch.setattr(amneziawg, "instance_active",
                         lambda name, run=None: False)
@@ -151,8 +154,8 @@ def test_start_relay_stops_direct_and_records_mode(env, monkeypatch):
     assert payload["target"] == "203.0.113.10"
     assert "RELAY" in result.output
     assert "vpn-guard" not in json.dumps(calls)
-    # QX-DR-1: egress-проба биндится к интерфейсу релея
-    assert calls["egress"] == ["relay"]
+    # QX-DR-1 + ревью P2: печать из data-plane ответа, без второго curl
+    assert calls["egress"] == [dp_payload]
 
 
 def test_start_relay_without_conf_is_refused(env):
